@@ -70,7 +70,10 @@ router.get('/stats', (req, res) => {
 // GET /api/admin/settings
 router.get('/settings', (req, res, next) => {
   try {
-    res.json({ settings: getAllSettings() });
+    const all = getAllSettings();
+    // Strip password but add passSet flag so frontend knows if one is saved
+    if (all.smtp?.pass) { all.smtp = { ...all.smtp, passSet: true, pass: undefined }; }
+    res.json({ settings: all });
   } catch (err) { next(err); }
 });
 
@@ -170,7 +173,7 @@ router.put('/smtp', (req, res, next) => {
     setSetting('smtp', current);
 
     const { pass: _p, ...safeSmtp } = current;
-    res.json({ message: 'SMTP settings saved', smtp: safeSmtp });
+    res.json({ message: 'SMTP settings saved', smtp: { ...safeSmtp, passSet: !!current.pass } });
   } catch (err) { next(err); }
 });
 

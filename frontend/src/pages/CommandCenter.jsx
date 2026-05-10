@@ -170,7 +170,7 @@ export default function CommandCenter({ onLogout }) {
         firm:         String(s.accountantPricing?.firm         ?? 2999),
         agency:       String(s.accountantPricing?.agency       ?? 4999),
       });
-      if (s.smtp) setSmtpForm(f => ({
+      if (s.smtp) setSmtpForm(f => ({ ...f, passSet: !!s.smtp.passSet,
         ...f,
         host:      s.smtp.host      ?? '',
         port:      String(s.smtp.port ?? 587),
@@ -1082,7 +1082,8 @@ export default function CommandCenter({ onLogout }) {
                 </div>
                 <div>
                   <label style={{ fontSize: 12, color: T.muted, display: 'block', marginBottom: 4 }}>SMTP Password / App Password</label>
-                  <input type="password" style={{ ...inp, width: '100%' }} placeholder="Leave blank to keep current"
+                  <input type="password" style={{ ...inp, width: '100%' }}
+                    placeholder={smtpForm.passSet ? '●●●● saved — type to change' : 'App Password'}
                     value={smtpForm.pass} onChange={e => setSmtpForm(f => ({ ...f, pass: e.target.value }))} />
                 </div>
                 <div>
