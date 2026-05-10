@@ -8,6 +8,7 @@
 import { DatabaseSync } from 'node:sqlite';
 import { join, dirname } from 'path';
 import { fileURLToPath } from 'url';
+import { mkdirSync } from 'fs';
 import bcrypt from 'bcryptjs';
 import { v4 as uuidv4 } from 'uuid';
 
@@ -15,6 +16,9 @@ const __dirname = dirname(fileURLToPath(import.meta.url));
 // In production (Railway), set DB_PATH=/data/myledger.db with a mounted volume.
 // Locally it stays next to the backend folder.
 const DB_PATH   = process.env.DB_PATH || join(__dirname, 'myledger.db');
+
+// Ensure the directory exists (required when Railway mounts a volume at /data)
+mkdirSync(dirname(DB_PATH), { recursive: true });
 
 export const db = new DatabaseSync(DB_PATH);
 
