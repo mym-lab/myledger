@@ -1,0 +1,2222 @@
+// ─── ClientInterface.jsx ─────────────────────────────────────────────────────
+// MyLedger — Client self-service portal (Apple light theme)
+// Business owner logs in to capture their own income, expenses, and VAT.
+
+import { useState, useEffect, useRef } from 'react';
+import {
+  getClients, createClient, updateClient, deleteClient, backupClient,
+  getTransactions, createTransaction, voidTransaction,
+  getIncomeReport, getBalanceReport, getCashFlowReport, getBooksReport,
+  getAssets, createAsset, deleteAsset, getLapsing,
+  getBirDeadlines, getBirVatBalance,
+  assignAccountant,
+  getPendingInvite, cancelPendingInvite,
+  getSettings,
+  createUpgradeRequest,
+  scanReceipt,
+} from '../api.js';
+
+// ─── Design tokens ───────────────────────────────────────────────────────────
+const T = {
+  bg: '#f5f5f7', surface: '#ffffff', border: '#d2d2d7',
+  text: '#1d1d1f', muted: '#6e6e73', accent: '#0071e3',
+  green: '#34c759', orange: '#ff9500', red: '#ff3b30', yellow: '#ffcc00',
+  purple: '#af52de',
+  radius: '12px', shadow: '0 2px 12px rgba(0,0,0,0.08)', shadowMd: '0 4px 24px rgba(0,0,0,0.12)',
+};
+
+const SUBSCRIPTION_TIERS = [
+  { value: 'free',         label: 'Free',         color: T.muted,   desc: 'Transactions only — no reports or reminders' },
+  { value: 'starter',      label: 'Starter',      color: T.accent,  desc: 'Charts · BIR reminders · VAT position · Backup' },
+  { value: 'professional', label: 'Professional', color: T.purple,  desc: 'Everything + accountant access & collaboration' },
+  { value: 'enterprise',   label: 'Enterprise',   color: '#ff9500', desc: 'Multi-entity · priority support · white-label' },
+];
+
+// Monthly transaction caps per tier (null = unlimited)
+const TIER_LIMITS = { free: 80, starter: 300, professional: 500, enterprise: null };
+
+// Default settings (overridden by live fetch from /api/admin/settings)
+const DEFAULT_SETTINGS = {
+  pricing:      { starter: 399, professional: 699, enterprise: 999 },
+  payment: {
+    maya:  { name: 'Kaiman & Co.', number: '09989919660' },
+    gcash: { name: 'Kaiman & Co.', number: '09989919660' },
+  },
+  contactEmail: 'mym@kaimanco.com',
+};
+
+const TAX_TYPES = [
+  { code: '2550M',  label: '2550M — Monthly VAT Return' },
+  { code: '2550Q',  label: '2550Q — Quarterly VAT Return' },
+  { code: '2551M',  label: '2551M — Monthly Percentage Tax (Non-VAT)' },
+  { code: '2551Q',  label: '2551Q — Quarterly Percentage Tax (Non-VAT)' },
+  { code: '1601C',  label: '1601-C — WHT on Compensation' },
+  { code: '1601EQ', label: '1601-EQ — Expanded WHT (Quarterly)' },
+  { code: '1702Q',  label: '1702Q — Quarterly IT (Corp)' },
+  { code: '1702',   label: '1702 — Annual IT (Corp)' },
+  { code: '1701Q',  label: '1701Q — Quarterly IT (Individual)' },
+  { code: '1701',   label: '1701 — Annual IT (Individual)' },
+  { code: '1550',   label: '1550 — Documentary Stamp Tax' },
+];
+
+const INCOME_CATS  = ['Sale of Goods','Sale of Services','Professional Fees','Rental Income','Interest Income','Commission Income','Dividend Income','Other Income'];
+const EXPENSE_CATS = ['Cost of Goods Sold','Salaries & Wages','Rent','Utilities','Office Supplies','Advertising & Marketing','Transportation & Travel','Professional Fees','Repairs & Maintenance','Bank Charges & Fees','Taxes & Licenses','Depreciation','Insurance','Interest Expense','Other Expenses'];
+const CUSTOM_OPT   = '＋ Other (specify)';
+
+const peso   = n => '₱' + (n ?? 0).toLocaleString('en-PH', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+const fmtDt  = d => new Date(d).toLocaleDateString('en-PH', { month: 'short', day: 'numeric', year: 'numeric' });
+const monthLabel = d => new Date(d).toLocaleDateString('en-PH', { month: 'short', year: '2-digit' });
+
+// ─── Tier gating ─────────────────────────────────────────────────────────────
+const TIER_RANK = { free: 0, starter: 1, professional: 2, enterprise: 3 };
+const tierMeets = (clientTier, required) =>
+  (TIER_RANK[clientTier] ?? 0) >= (TIER_RANK[required] ?? 0);
+
+// ─── Module-level UI atoms ────────────────────────────────────────────────────
+
+const inp = {
+  width: '100%', padding: '9px 12px', borderRadius: 8, border: `1px solid ${T.border}`,
+  fontSize: 14, color: T.text, background: '#fafafa', boxSizing: 'border-box',
+  outline: 'none', fontFamily: 'inherit',
+};
+
+function Btn({ children, onClick, variant = 'primary', size = 'md', disabled, type = 'button', style: x = {} }) {
+  const sz = { sm: { padding: '5px 12px', fontSize: 13 }, md: { padding: '9px 18px', fontSize: 14 }, lg: { padding: '12px 24px', fontSize: 15 } };
+  const vr = {
+    primary: { background: T.accent, color: '#fff', border: 'none' },
+    danger:  { background: T.red,    color: '#fff', border: 'none' },
+    ghost:   { background: 'transparent', color: T.accent, border: `1px solid ${T.accent}` },
+    neutral: { background: T.border, color: T.text, border: 'none' },
+    ocr:     { background: '#f5f0ff', color: T.purple, border: `1px solid ${T.purple}40` },
+  };
+  return (
+    <button type={type} onClick={onClick} disabled={disabled}
+      style={{ borderRadius: 8, cursor: disabled ? 'not-allowed' : 'pointer', fontWeight: 500,
+        fontFamily: 'inherit', opacity: disabled ? 0.55 : 1, transition: 'opacity .15s',
+        display: 'inline-flex', alignItems: 'center', gap: 6,
+        ...sz[size], ...vr[variant], ...x }}>
+      {children}
+    </button>
+  );
+}
+
+function ModalShell({ title, onClose, children, wide }) {
+  return (
+    <div style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.35)',
+      display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 1000, padding: 20 }}
+      onClick={onClose}>
+      <div style={{ background: T.surface, borderRadius: 16, padding: 28, width: '100%',
+        maxWidth: wide ? 720 : 480, boxShadow: T.shadowMd, maxHeight: '90vh', overflowY: 'auto' }}
+        onClick={e => e.stopPropagation()}>
+        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 20 }}>
+          <h3 style={{ margin: 0, fontSize: 17, fontWeight: 600 }}>{title}</h3>
+          <button onClick={onClose} style={{ background: 'none', border: 'none', fontSize: 22,
+            cursor: 'pointer', color: T.muted, lineHeight: 1, padding: '0 4px' }}>✕</button>
+        </div>
+        {children}
+      </div>
+    </div>
+  );
+}
+
+function Fld({ label, children, half }) {
+  return (
+    <div style={{ marginBottom: 14, ...(half ? {} : {}) }}>
+      <label style={{ display: 'block', fontSize: 13, fontWeight: 500, color: T.muted, marginBottom: 5 }}>{label}</label>
+      {children}
+    </div>
+  );
+}
+
+function SectionHead({ children }) {
+  return <div style={{ fontSize: 11, fontWeight: 700, color: T.muted, marginBottom: 12,
+    textTransform: 'uppercase', letterSpacing: '0.6px' }}>{children}</div>;
+}
+
+function Card({ children, style = {} }) {
+  return <div style={{ background: T.surface, borderRadius: T.radius, padding: '20px 24px',
+    boxShadow: T.shadow, border: `1px solid ${T.border}`, ...style }}>{children}</div>;
+}
+
+// ─── UpgradeGate ─────────────────────────────────────────────────────────────
+// Wraps any section. If the client's tier < required, shows a blur overlay
+// with an upgrade prompt instead of the live content.
+function UpgradeGate({ tier, required, onUpgrade, children }) {
+  if (tierMeets(tier, required)) return children;
+  const reqInfo  = SUBSCRIPTION_TIERS.find(t => t.value === required) || SUBSCRIPTION_TIERS[1];
+  return (
+    <div style={{ position: 'relative', borderRadius: T.radius, overflow: 'hidden' }}>
+      {/* Blurred preview of actual content */}
+      <div style={{ filter: 'blur(4px)', pointerEvents: 'none', userSelect: 'none', opacity: 0.6 }}>
+        {children}
+      </div>
+      {/* Overlay */}
+      <div style={{ position: 'absolute', inset: 0, display: 'flex', flexDirection: 'column',
+        alignItems: 'center', justifyContent: 'center', gap: 10,
+        background: 'rgba(245,245,247,0.75)', backdropFilter: 'blur(2px)',
+        borderRadius: T.radius, border: `1.5px dashed ${reqInfo.color}50` }}>
+        <div style={{ fontSize: 26 }}>🔒</div>
+        <div style={{ fontWeight: 700, fontSize: 15, color: T.text }}>
+          {reqInfo.label} feature
+        </div>
+        <div style={{ fontSize: 13, color: T.muted, textAlign: 'center', maxWidth: 260, lineHeight: 1.5 }}>
+          {reqInfo.desc}
+        </div>
+        <button onClick={onUpgrade}
+          style={{ marginTop: 4, padding: '8px 20px', borderRadius: 8, border: 'none',
+            background: reqInfo.color, color: '#fff', fontWeight: 600, fontSize: 13,
+            cursor: 'pointer', fontFamily: 'inherit' }}>
+          Upgrade to {reqInfo.label}
+        </button>
+      </div>
+    </div>
+  );
+}
+
+// ─── PaymentModal (module-level) ──────────────────────────────────────────────
+// Maya / GCash manual-transfer upgrade flow.
+function PaymentModal({ clientId, currentTier, settings, onClose, onUpgradeSuccess }) {
+  const pricing    = settings?.pricing      || DEFAULT_SETTINGS.pricing;
+  const payAccts   = settings?.payment      || DEFAULT_SETTINGS.payment;
+  const contactEmail = settings?.contactEmail || DEFAULT_SETTINGS.contactEmail;
+
+  // Build tiers with live prices
+  const tiersWithPrice = SUBSCRIPTION_TIERS.map(t => ({
+    ...t,
+    price: t.value === 'free' ? 0 : (pricing[t.value] ?? 0),
+  }));
+
+  const upgradeable = tiersWithPrice.filter(t => t.value !== 'free' &&
+    (TIER_RANK[t.value] ?? 0) > (TIER_RANK[currentTier] ?? 0));
+  const [selTier,    setSelTier]    = useState(upgradeable[0]?.value || 'starter');
+  const [method,     setMethod]     = useState(null);   // 'maya' | 'gcash'
+  const [step,       setStep]       = useState(1);      // 1=pick tier, 1.5=method, 2=pay, 3=confirm
+  const [refNo,      setRefNo]      = useState('');
+  const [submitting, setSubmitting] = useState(false);
+
+  const tierObj  = tiersWithPrice.find(t => t.value === selTier);
+  const acct     = method ? { ...payAccts[method], type: method === 'maya' ? 'Maya' : 'GCash' } : null;
+  // Generate a reference number on entering step 2
+  function goToPay(m) {
+    setMethod(m);
+    const rand = Math.floor(100000 + Math.random() * 900000);
+    setRefNo(`ML-${rand}`);
+    setStep(2);
+  }
+
+  return (
+    <ModalShell title="Upgrade Your Plan" onClose={onClose} wide>
+      {/* Step indicators */}
+      <div style={{ display: 'flex', gap: 8, marginBottom: 24 }}>
+        {['Select Plan','Pay','Confirm'].map((s, i) => (
+          <div key={s} style={{ display: 'flex', alignItems: 'center', gap: 6, fontSize: 13 }}>
+            <div style={{ width: 22, height: 22, borderRadius: '50%', display: 'flex',
+              alignItems: 'center', justifyContent: 'center', fontSize: 12, fontWeight: 700,
+              background: step > i + 1 ? T.green : step === i + 1 ? T.accent : T.border,
+              color: step >= i + 1 ? '#fff' : T.muted }}>
+              {step > i + 1 ? '✓' : i + 1}
+            </div>
+            <span style={{ color: step === i + 1 ? T.text : T.muted }}>{s}</span>
+            {i < 2 && <span style={{ color: T.border }}>›</span>}
+          </div>
+        ))}
+      </div>
+
+      {/* ── Step 1: Pick tier ── */}
+      {step === 1 && (
+        <div>
+          <p style={{ fontSize: 14, color: T.muted, marginBottom: 18 }}>
+            Choose the plan that fits your business. Billed monthly.
+          </p>
+          <div style={{ display: 'flex', flexDirection: 'column', gap: 12, marginBottom: 24 }}>
+            {upgradeable.map(t => (
+              <div key={t.value} onClick={() => setSelTier(t.value)}
+
+                style={{ borderRadius: 12, padding: '14px 18px', cursor: 'pointer', transition: 'all .15s',
+                  border: selTier === t.value ? `2px solid ${t.color}` : `1.5px solid ${T.border}`,
+                  background: selTier === t.value ? `${t.color}08` : T.surface,
+                  display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                <div>
+                  <div style={{ fontWeight: 700, fontSize: 15, color: t.color }}>{t.label}</div>
+                  <div style={{ fontSize: 13, color: T.muted, marginTop: 3 }}>{t.desc}</div>
+                  <div style={{ fontSize: 12, color: T.muted, marginTop: 4 }}>
+                    {t.value === 'starter' && '≤ 300 transactions/month'}
+                    {t.value === 'professional' && '≤ 500 transactions/month'}
+                    {t.value === 'enterprise' && 'Unlimited transactions'}
+                  </div>
+                </div>
+                <div style={{ textAlign: 'right', minWidth: 90 }}>
+                  <div style={{ fontSize: 22, fontWeight: 700, color: t.color }}>₱{t.price}</div>
+                  <div style={{ fontSize: 12, color: T.muted }}>/month</div>
+                </div>
+              </div>
+            ))}
+          </div>
+          <div style={{ fontSize: 13, color: T.muted, marginBottom: 20, lineHeight: 1.6,
+            background: '#f0f7ff', borderRadius: 10, padding: '10px 14px' }}>
+            💡 Payment is via <strong>Maya</strong> or <strong>GCash</strong> manual transfer.
+            Your plan activates within <strong>1–2 hours</strong> after we confirm receipt.
+          </div>
+          <div style={{ display: 'flex', gap: 10, justifyContent: 'flex-end' }}>
+            <Btn variant="ghost" onClick={onClose}>Cancel</Btn>
+            <Btn onClick={() => setStep(1.5)}
+              style={{ background: tierObj?.color }}>
+              Pay ₱{tierObj?.price}/month →
+            </Btn>
+          </div>
+        </div>
+      )}
+
+      {/* ── Step 1.5: Choose payment method ── */}
+      {step === 1.5 && (
+        <div>
+          <p style={{ fontSize: 14, color: T.muted, marginBottom: 20 }}>
+            Upgrading to <strong style={{ color: tierObj?.color }}>{tierObj?.label}</strong> — ₱{tierObj?.price}/month.
+            Choose your payment method:
+          </p>
+          <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 16, marginBottom: 24 }}>
+            {/* Maya */}
+            <div onClick={() => goToPay('maya')}
+              style={{ borderRadius: 14, padding: '24px 20px', cursor: 'pointer',
+                border: `1.5px solid #00a8e0`, background: '#f0fbff',
+                textAlign: 'center', transition: 'all .15s' }}>
+              <div style={{ fontWeight: 700, fontSize: 22, color: '#00a8e0', marginBottom: 6 }}>Maya</div>
+              <div style={{ fontSize: 12, color: T.muted }}>PayMaya / Maya Wallet</div>
+            </div>
+            {/* GCash */}
+            <div onClick={() => goToPay('gcash')}
+              style={{ borderRadius: 14, padding: '24px 20px', cursor: 'pointer',
+                border: `1.5px solid #007dff`, background: '#f0f5ff',
+                textAlign: 'center', transition: 'all .15s' }}>
+              <div style={{ fontWeight: 700, fontSize: 22, color: '#007dff', marginBottom: 6 }}>GCash</div>
+              <div style={{ fontSize: 12, color: T.muted }}>Globe GCash</div>
+            </div>
+          </div>
+          <Btn variant="ghost" onClick={() => setStep(1)}>← Back</Btn>
+        </div>
+      )}
+
+      {/* ── Step 2: Payment instructions ── */}
+      {step === 2 && acct && (
+        <div>
+          <div style={{ background: `${method === 'maya' ? '#00a8e0' : '#007dff'}10`,
+            border: `1.5px solid ${method === 'maya' ? '#00a8e0' : '#007dff'}30`,
+            borderRadius: 14, padding: '18px 20px', marginBottom: 20 }}>
+            <div style={{ fontSize: 13, color: T.muted, marginBottom: 6 }}>Send payment to</div>
+            <div style={{ fontSize: 22, fontWeight: 700, color: method === 'maya' ? '#00a8e0' : '#007dff' }}>
+              {acct.type}
+            </div>
+            <div style={{ fontSize: 20, fontWeight: 600, marginTop: 4 }}>{acct.number}</div>
+            <div style={{ fontSize: 14, color: T.muted }}>{acct.name}</div>
+            <hr style={{ border: 'none', borderTop: `1px solid ${T.border}`, margin: '14px 0' }} />
+            <div style={{ display: 'flex', justifyContent: 'space-between' }}>
+              <div>
+                <div style={{ fontSize: 12, color: T.muted }}>Amount</div>
+                <div style={{ fontSize: 22, fontWeight: 700 }}>₱{tierObj?.price}.00</div>
+              </div>
+              <div style={{ textAlign: 'right' }}>
+                <div style={{ fontSize: 12, color: T.muted }}>Reference No.</div>
+                <div style={{ fontSize: 18, fontWeight: 700, fontFamily: 'monospace',
+                  color: T.accent, letterSpacing: '1px' }}>{refNo}</div>
+                <div style={{ fontSize: 11, color: T.muted }}>Include in payment notes</div>
+              </div>
+            </div>
+          </div>
+          <div style={{ background: '#fffbe6', borderRadius: 10, padding: '10px 14px',
+            fontSize: 13, color: '#856404', marginBottom: 20, lineHeight: 1.6 }}>
+            ⚠️ <strong>Important:</strong> Include the reference number <strong>{refNo}</strong> in your
+            payment notes/description so we can match your payment automatically.
+          </div>
+          <div style={{ fontSize: 13, color: T.muted, marginBottom: 20 }}>
+            After sending, tap the button below to notify us. Your plan will be activated within 1–2 hours on business days.
+          </div>
+          <div style={{ display: 'flex', gap: 10, justifyContent: 'flex-end' }}>
+            <Btn variant="ghost" onClick={() => setStep(1.5)}>← Back</Btn>
+            <Btn disabled={submitting}
+              onClick={async () => {
+                setSubmitting(true);
+                try {
+                  if (clientId) {
+                    await createUpgradeRequest({
+                      clientId,
+                      targetTier: selTier,
+                      method,
+                      refNo,
+                      amount: tierObj?.price || 0,
+                    });
+                  }
+                  setStep(3);
+                } catch (err) {
+                  // Still move to confirmation even if logging fails
+                  console.error('Upgrade request error:', err);
+                  setStep(3);
+                } finally { setSubmitting(false); }
+              }}
+              style={{ background: method === 'maya' ? '#00a8e0' : '#007dff' }}>
+              {submitting ? 'Sending…' : "I've sent the payment ✓"}
+            </Btn>
+          </div>
+        </div>
+      )}
+
+      {/* ── Step 3: Confirmation ── */}
+      {step === 3 && (
+        <div style={{ textAlign: 'center', padding: '16px 0 8px' }}>
+          <div style={{ fontSize: 56, marginBottom: 16 }}>🎉</div>
+          <h3 style={{ fontSize: 20, fontWeight: 700, marginBottom: 8 }}>Payment Notified!</h3>
+          <p style={{ fontSize: 14, color: T.muted, lineHeight: 1.7, marginBottom: 6 }}>
+            We've received your upgrade request for<br />
+            <strong style={{ color: tierObj?.color }}>{tierObj?.label} Plan</strong> — ₱{tierObj?.price}/month.
+          </p>
+          <div style={{ background: '#f0fff4', borderRadius: 10, padding: '12px 16px',
+            fontSize: 13, color: T.green, fontWeight: 600, marginBottom: 20 }}>
+            Reference: {refNo} · via {acct?.type}
+          </div>
+          <p style={{ fontSize: 13, color: T.muted, marginBottom: 24 }}>
+            Your plan will be activated within <strong>1–2 hours</strong> on business days.<br />
+            Questions? Message us at <strong>{contactEmail}</strong>
+          </p>
+          <Btn onClick={onClose} size="lg">Done</Btn>
+        </div>
+      )}
+    </ModalShell>
+  );
+}
+
+// ─── SVG Bar Chart ─────────────────────────────────────────────────────────────
+function MonthlyBarChart({ transactions }) {
+  // Build last 6 months
+  const now    = new Date();
+  const months = [];
+  for (let i = 5; i >= 0; i--) {
+    const d   = new Date(now.getFullYear(), now.getMonth() - i, 1);
+    const key = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}`;
+    months.push({ key, label: d.toLocaleDateString('en-PH', { month: 'short' }), income: 0, expense: 0 });
+  }
+
+  transactions.forEach(t => {
+    const key = t.createdAt?.substring(0, 7);
+    const m   = months.find(x => x.key === key);
+    if (m) {
+      if (t.type === 'income')  m.income  += (t.net || 0);
+      if (t.type === 'expense') m.expense += (t.net || 0);
+    }
+  });
+
+  const hasData = months.some(m => m.income > 0 || m.expense > 0);
+  if (!hasData) return (
+    <div style={{ height: 140, display: 'flex', alignItems: 'center', justifyContent: 'center',
+      color: T.muted, fontSize: 13, fontStyle: 'italic' }}>No transaction data yet</div>
+  );
+
+  const maxVal  = Math.max(...months.flatMap(m => [m.income, m.expense]), 1);
+  const cH      = 110;  // chart area height
+  const barW    = 14;
+  const gap     = 4;
+  const groupW  = 44;
+  const W       = months.length * groupW + 16;
+
+  return (
+    <div>
+      <svg width={W} height={cH + 28} style={{ width: '100%', overflow: 'visible' }}
+        viewBox={`0 0 ${W} ${cH + 28}`} preserveAspectRatio="xMinYMid meet">
+        {/* Gridlines */}
+        {[0, 0.5, 1].map(pct => {
+          const y = (1 - pct) * cH;
+          return <line key={pct} x1={0} y1={y} x2={W} y2={y} stroke={T.border} strokeWidth={0.5} strokeDasharray="3,3" />;
+        })}
+        {months.map((m, i) => {
+          const x  = i * groupW + 8;
+          const ih = (m.income  / maxVal) * cH;
+          const eh = (m.expense / maxVal) * cH;
+          return (
+            <g key={m.key}>
+              {/* Income bar */}
+              <rect x={x} y={cH - ih} width={barW} height={Math.max(ih, 1)}
+                fill={T.green} rx={3} opacity={0.85} />
+              {/* Expense bar */}
+              <rect x={x + barW + gap} y={cH - eh} width={barW} height={Math.max(eh, 1)}
+                fill={T.red} rx={3} opacity={0.75} />
+              {/* Month label */}
+              <text x={x + barW + 1} y={cH + 18} textAnchor="middle"
+                fontSize={10} fill={T.muted} fontFamily="-apple-system, sans-serif">{m.label}</text>
+            </g>
+          );
+        })}
+        {/* Baseline */}
+        <line x1={0} y1={cH} x2={W} y2={cH} stroke={T.border} strokeWidth={1} />
+      </svg>
+      <div style={{ display: 'flex', gap: 16, marginTop: 6, fontSize: 12, color: T.muted }}>
+        <span><span style={{ display: 'inline-block', width: 10, height: 10, background: T.green, borderRadius: 2, marginRight: 4, verticalAlign: 'middle' }}></span>Revenue</span>
+        <span><span style={{ display: 'inline-block', width: 10, height: 10, background: T.red, borderRadius: 2, marginRight: 4, verticalAlign: 'middle' }}></span>Expenses</span>
+      </div>
+    </div>
+  );
+}
+
+// ─── VAT Calc Preview ─────────────────────────────────────────────────────────
+function VatCalc({ type, amount, vatType = 'vatable', supplierVatType = 'vat', isOPT = false, optRate = 0.03 }) {
+  if (!amount || isNaN(amount) || Number(amount) <= 0) return null;
+  const n = parseFloat(amount);
+  const r = v => Math.round(v * 100) / 100;
+  let net, vat = 0, gross, ptax = 0, msg;
+  if (type === 'income') {
+    if (isOPT) {
+      net = n; gross = n; ptax = r(n * optRate);
+      msg = `OPT — Gross = Sales. ${(optRate * 100).toFixed(1)}% percentage tax = ${peso(ptax)}`;
+    } else if (vatType === 'zero_rated') {
+      net = n; gross = n; msg = 'Zero-rated — 0% VAT. NET = GROSS.';
+    } else if (vatType === 'exempt') {
+      net = n; gross = n; msg = 'VAT-exempt — 0% VAT. NET = GROSS.';
+    } else {
+      net = n; vat = r(n * 0.12); gross = r(n * 1.12);
+      msg = 'Vatable — customer pays GROSS (NET + 12% VAT).';
+    }
+  } else {
+    if (supplierVatType === 'non_vat') {
+      gross = n; net = n; msg = 'Non-VAT supplier — no input VAT extracted. NET = GROSS.';
+    } else {
+      gross = n; net = r(n / 1.12); vat = r(gross - net);
+      msg = 'VAT supplier — extracting 12% input VAT from GROSS.';
+    }
+  }
+  return (
+    <div style={{ background: '#f0f7ff', borderRadius: 8, padding: '10px 14px', fontSize: 13, marginTop: 6, marginBottom: 4 }}>
+      <div style={{ color: T.muted, marginBottom: 6 }}>{msg}</div>
+      <div style={{ display: 'flex', gap: 20, flexWrap: 'wrap' }}>
+        <span>NET <strong style={{ color: T.text }}>{peso(net)}</strong></span>
+        {vat > 0  && <span>VAT <strong style={{ color: T.orange }}>{peso(vat)}</strong></span>}
+        {ptax > 0 && <span>% TAX <strong style={{ color: T.purple }}>{peso(ptax)}</strong></span>}
+        {vat > 0  && <span>GROSS <strong style={{ color: T.accent }}>{peso(gross)}</strong></span>}
+      </div>
+    </div>
+  );
+}
+
+// ─── TxModal (module-level — own state, no parent remount) ───────────────────
+function TxModal({ clientId, client, onSaved, onClose }) {
+  const isOPT   = client?.taxRegime === 'opt';
+  const optRate = Number(client?.optRate) || 0.03;
+
+  const blank = {
+    type: 'income', amount: '', description: '', category: '', customCat: '',
+    vatType: 'vatable', supplierVatType: 'vat',
+    settlement: 'cash', account: '',
+    counterpartyName: '', counterpartyTin: '', counterpartyAddress: '',
+    referenceNo: '', notes: '',
+  };
+  const [form,       setForm]       = useState(blank);
+  const [saving,     setSaving]     = useState(false);
+  const [ocrLoading, setOcrLoading] = useState(false);
+  const [ocrMsg,     setOcrMsg]     = useState('');
+  const fileRef = useRef(null);
+
+  async function handleOcrFile(e) {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    setOcrLoading(true);
+    setOcrMsg('');
+    try {
+      const data = await scanReceipt(file);
+      // Pre-fill form with whatever was extracted
+      setForm(f => ({
+        ...f,
+        type:             'expense',   // receipts are almost always expenses
+        amount:           data.amountGross ? String(data.amountGross) : f.amount,
+        description:      data.description || data.vendor || f.description,
+        counterpartyName: data.vendor      || f.counterpartyName,
+        counterpartyTin:  data.tin         || f.counterpartyTin,
+      }));
+      const extracted = [
+        data.amountGross ? `₱${data.amountGross.toLocaleString()} gross` : null,
+        data.amountVat   ? `₱${data.amountVat.toLocaleString()} VAT`     : null,
+        data.vendor      ? data.vendor                                    : null,
+        data.date        ? data.date                                      : null,
+      ].filter(Boolean).join(' · ');
+      setOcrMsg(extracted ? `✅ Extracted: ${extracted}` : '⚠️ Scanned but could not read amounts — please fill in manually.');
+    } catch (err) {
+      setOcrMsg(`❌ ${err.message}`);
+    } finally {
+      setOcrLoading(false);
+      e.target.value = '';   // allow re-scanning same file
+    }
+  }
+
+  const cats     = form.type === 'income' ? INCOME_CATS : EXPENSE_CATS;
+  const isCustom = form.category === CUSTOM_OPT;
+  const set      = key => e => setForm(f => ({ ...f, [key]: e.target.value }));
+
+  const incomeSettlements  = [
+    { value: 'cash',          label: 'Cash on Hand' },
+    { value: 'ar',            label: 'Accounts Receivable' },
+    { value: 'ewallet',       label: 'E-wallet (GCash/Maya)' },
+    { value: 'bank_transfer', label: 'Bank Transfer' },
+  ];
+  const expenseSettlements = [
+    { value: 'cash',          label: 'Cash on Hand' },
+    { value: 'ap',            label: 'Accounts Payable' },
+    { value: 'ewallet',       label: 'E-wallet' },
+    { value: 'bank_transfer', label: 'Bank Transfer' },
+    { value: 'check',         label: 'Check' },
+    { value: 'credit_card',   label: 'Credit Card' },
+  ];
+  const settlements = form.type === 'income' ? incomeSettlements : expenseSettlements;
+
+  async function handleSubmit(e) {
+    e.preventDefault(); setSaving(true);
+    const finalCat = isCustom ? form.customCat.trim() || 'Other' : form.category;
+    try {
+      await createTransaction({
+        clientId, type: form.type, amount: parseFloat(form.amount),
+        description: form.description,
+        category: finalCat || undefined,
+        vatType: form.type === 'income' ? (isOPT ? 'opt' : form.vatType) : undefined,
+        supplierVatType: form.type === 'expense' ? form.supplierVatType : undefined,
+        settlement: form.settlement,
+        account: form.account || undefined,
+        counterpartyName: form.counterpartyName, counterpartyTin: form.counterpartyTin,
+        counterpartyAddress: form.counterpartyAddress,
+        referenceNo: form.referenceNo, notes: form.notes,
+      });
+      onSaved(); onClose();
+    } catch (e) { alert(e.message); setSaving(false); }
+  }
+
+  return (
+    <ModalShell title="Add Transaction" onClose={onClose} wide>
+      <form onSubmit={handleSubmit}>
+        {/* ── OCR Receipt Scanner ── */}
+        <input ref={fileRef} type="file" accept="image/*" capture="environment"
+          style={{ display: 'none' }} onChange={handleOcrFile} />
+        <div style={{ background: '#f5f0ff', border: `1px solid ${T.purple}30`, borderRadius: 10,
+          padding: '10px 14px', marginBottom: 16 }}>
+          <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
+            <span style={{ fontSize: 18 }}>📸</span>
+            <div style={{ flex: 1 }}>
+              <div style={{ fontSize: 13, fontWeight: 600, color: T.purple }}>Scan Receipt</div>
+              <div style={{ fontSize: 12, color: T.muted }}>
+                {ocrLoading ? 'Reading receipt…' : 'Photo → auto-fill amount, vendor & TIN'}
+              </div>
+            </div>
+            <Btn variant="ocr" size="sm" disabled={ocrLoading}
+              onClick={() => fileRef.current?.click()}>
+              {ocrLoading ? '⏳ Scanning…' : '📷 Scan'}
+            </Btn>
+          </div>
+          {ocrMsg && (
+            <div style={{ marginTop: 8, fontSize: 12,
+              color: ocrMsg.startsWith('✅') ? T.green : ocrMsg.startsWith('⚠️') ? T.orange : T.red }}>
+              {ocrMsg}
+            </div>
+          )}
+        </div>
+
+        {/* ── Type + Amount ── */}
+        <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '0 16px' }}>
+          <Fld label="Type">
+            <select style={inp} value={form.type} onChange={e => setForm(f => ({
+              ...f, type: e.target.value, category: '', customCat: '', settlement: 'cash',
+              vatType: 'vatable', supplierVatType: 'vat',
+            }))}>
+              <option value="income">Income</option>
+              <option value="expense">Expense</option>
+            </select>
+          </Fld>
+          <Fld label={form.type === 'income' ? (isOPT ? 'Amount — GROSS (Sales)' : 'Amount — NET (ex-VAT)') : 'Amount — GROSS (inc. VAT)'}>
+            <input style={inp} type="number" step="0.01" min="0.01" required
+              value={form.amount} onChange={set('amount')} placeholder="0.00" />
+          </Fld>
+        </div>
+
+        {/* ── VAT / Tax type ── */}
+        {form.type === 'income' && (
+          isOPT ? (
+            <div style={{ background: '#fff8ec', border: `1px solid ${T.orange}40`, borderRadius: 8,
+              padding: '9px 14px', fontSize: 13, marginBottom: 10, color: '#7a5800' }}>
+              <strong style={{ color: T.orange }}>OPT Client</strong> — Percentage Tax at {(optRate * 100).toFixed(1)}%.
+              Gross amount = Sales. Input amount as gross sales.
+            </div>
+          ) : (
+            <Fld label="VAT Type">
+              <select style={inp} value={form.vatType} onChange={set('vatType')}>
+                <option value="vatable">Vatable — 12% Output VAT</option>
+                <option value="zero_rated">Zero-rated — 0% (exports, etc.)</option>
+                <option value="exempt">VAT-exempt — 0% (no VAT at all)</option>
+              </select>
+            </Fld>
+          )
+        )}
+        {form.type === 'expense' && (
+          <Fld label="Supplier VAT Status">
+            <select style={inp} value={form.supplierVatType} onChange={set('supplierVatType')}>
+              <option value="vat">VAT Supplier — extract 12% input VAT from gross</option>
+              <option value="non_vat">Non-VAT Supplier — no input VAT, gross = net</option>
+            </select>
+          </Fld>
+        )}
+
+        <VatCalc
+          type={form.type} amount={form.amount}
+          vatType={form.vatType} supplierVatType={form.supplierVatType}
+          isOPT={form.type === 'income' && isOPT} optRate={optRate}
+        />
+
+        {/* ── Description + Reference ── */}
+        <div style={{ marginTop: 10, display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '0 16px' }}>
+          <Fld label="Description *">
+            <input style={inp} required value={form.description} onChange={set('description')}
+              placeholder="Brief description" />
+          </Fld>
+          <Fld label="Reference / OR No.">
+            <input style={inp} value={form.referenceNo} onChange={set('referenceNo')}
+              placeholder="Invoice or OR number" />
+          </Fld>
+        </div>
+
+        {/* ── Settlement + Account ── */}
+        <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '0 16px' }}>
+          <Fld label="Settlement / Payment Method">
+            <select style={inp} value={form.settlement} onChange={set('settlement')}>
+              {settlements.map(s => <option key={s.value} value={s.value}>{s.label}</option>)}
+            </select>
+          </Fld>
+          <Fld label="Account (optional)">
+            <input style={inp} value={form.account} onChange={set('account')}
+              placeholder={form.type === 'income' ? 'e.g. Sales Revenue' : 'e.g. Cost of Sales'} />
+          </Fld>
+        </div>
+
+        {/* ── Category ── */}
+        <div style={{ display: 'grid', gridTemplateColumns: isCustom ? '1fr 1fr' : '1fr', gap: '0 16px' }}>
+          <Fld label="Category">
+            <select style={inp} value={form.category} onChange={set('category')}>
+              <option value="">— Select category —</option>
+              {cats.map(c => <option key={c}>{c}</option>)}
+              <option value={CUSTOM_OPT}>{CUSTOM_OPT}</option>
+            </select>
+          </Fld>
+          {isCustom && (
+            <Fld label="Specify category">
+              <input style={inp} value={form.customCat} onChange={set('customCat')}
+                placeholder="Type category name…" autoFocus />
+            </Fld>
+          )}
+        </div>
+
+        {/* ── Counterparty ── */}
+        <div style={{ marginTop: 4, paddingTop: 14, borderTop: `1px solid ${T.border}` }}>
+          <SectionHead>{form.type === 'income' ? 'Customer Details — SLSP' : 'Vendor Details — SLSP / Alphalist'}</SectionHead>
+          <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr', gap: '0 16px' }}>
+            <Fld label={form.type === 'income' ? 'Customer Name' : 'Vendor Name'}>
+              <input style={inp} value={form.counterpartyName} onChange={set('counterpartyName')} placeholder="Optional" />
+            </Fld>
+            <Fld label="TIN">
+              <input style={inp} value={form.counterpartyTin} onChange={set('counterpartyTin')} placeholder="000-000-000-000" />
+            </Fld>
+            <Fld label="Address">
+              <input style={inp} value={form.counterpartyAddress} onChange={set('counterpartyAddress')} placeholder="Optional" />
+            </Fld>
+          </div>
+        </div>
+
+        <Fld label="Notes">
+          <textarea style={{ ...inp, resize: 'vertical', minHeight: 52 }}
+            value={form.notes} onChange={set('notes')} placeholder="Internal notes (not printed on reports)" />
+        </Fld>
+
+        <div style={{ display: 'flex', gap: 10, justifyContent: 'flex-end', marginTop: 4 }}>
+          <Btn variant="ghost" onClick={onClose}>Cancel</Btn>
+          <Btn type="submit" disabled={saving}>{saving ? 'Saving…' : 'Add Transaction'}</Btn>
+        </div>
+      </form>
+    </ModalShell>
+  );
+}
+
+// ─── BusinessModal (module-level — own state) ─────────────────────────────────
+function BusinessModal({ initialValues, isEdit, onSave, onClose }) {
+  const blank = { tradeName: '', tin: '', type: 'Corporation', address: '',
+                  taxTypes: [], ownerBirthdate: '', subscriptionTier: 'free',
+                  taxRegime: 'vat', optRate: '0.03' };
+  const [form,   setForm]   = useState(() => initialValues ? { ...blank, ...initialValues } : blank);
+  const [err,    setErr]    = useState('');
+  const [saving, setSaving] = useState(false);
+
+  const isSoleProp = form.type === 'Sole Proprietor';
+  const set        = key => e => setForm(f => ({ ...f, [key]: e.target.value }));
+
+  function toggleTT(code) {
+    setForm(f => ({
+      ...f,
+      taxTypes: f.taxTypes.includes(code) ? f.taxTypes.filter(x => x !== code) : [...f.taxTypes, code],
+    }));
+  }
+
+  async function handleSubmit(e) {
+    e.preventDefault();
+    if (!form.tradeName || !form.tin) { setErr('Trade Name and TIN are required.'); return; }
+    if (isSoleProp && !form.ownerBirthdate) { setErr('Date of Birth is required for Sole Proprietors (needed for Form 1701).'); return; }
+    setSaving(true); setErr('');
+    try { await onSave(form); }
+    catch (e) { setErr(e.message); setSaving(false); }
+  }
+
+  const tier = SUBSCRIPTION_TIERS.find(t => t.value === form.subscriptionTier) || SUBSCRIPTION_TIERS[0];
+
+  return (
+    <ModalShell title={isEdit ? 'Edit Business Details' : 'Set Up Your Business'} onClose={onClose} wide>
+      <form onSubmit={handleSubmit}>
+
+        {/* ── Subscription tier ── */}
+        <div style={{ marginBottom: 20, padding: '14px 16px', borderRadius: 10,
+          background: '#fafafa', border: `1px solid ${T.border}` }}>
+          <SectionHead>Subscription Plan</SectionHead>
+          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(4, 1fr)', gap: 8 }}>
+            {SUBSCRIPTION_TIERS.map(t => (
+              <div key={t.value} onClick={() => setForm(f => ({ ...f, subscriptionTier: t.value }))}
+                style={{ padding: '10px 12px', borderRadius: 10, cursor: 'pointer', transition: 'all .15s',
+                  border: `2px solid ${form.subscriptionTier === t.value ? t.color : T.border}`,
+                  background: form.subscriptionTier === t.value ? `${t.color}14` : T.surface }}>
+                <div style={{ fontSize: 13, fontWeight: 700, color: t.color, marginBottom: 3 }}>{t.label}</div>
+                <div style={{ fontSize: 11, color: T.muted, lineHeight: 1.3 }}>{t.desc}</div>
+              </div>
+            ))}
+          </div>
+        </div>
+
+        {/* ── Basic info ── */}
+        <SectionHead>Business Information</SectionHead>
+        <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '0 16px' }}>
+          <Fld label="Trade Name *">
+            <input style={inp} required value={form.tradeName} onChange={set('tradeName')} placeholder="ABC Corporation" />
+          </Fld>
+          <Fld label="TIN *">
+            <input style={inp} required value={form.tin} onChange={set('tin')} placeholder="000-000-000-000" />
+          </Fld>
+        </div>
+        <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '0 16px' }}>
+          <Fld label="Business Type">
+            <select style={inp} value={form.type} onChange={set('type')}>
+              {['Corporation','Sole Proprietor','One Person Corporation (OPC)','Partnership'].map(t => (
+                <option key={t}>{t}</option>
+              ))}
+            </select>
+          </Fld>
+          <Fld label="Address">
+            <input style={inp} value={form.address} onChange={set('address')} placeholder="Registered business address" />
+          </Fld>
+        </div>
+
+        {/* ── Sole Proprietor birthday (1701 requirement) ── */}
+        {isSoleProp && (
+          <div style={{ background: '#fffbec', border: `1px solid ${T.yellow}60`, borderRadius: 10,
+            padding: '12px 16px', marginBottom: 14 }}>
+            <div style={{ fontSize: 13, fontWeight: 600, color: '#a07000', marginBottom: 8 }}>
+              📋 Required for BIR Form 1701 (Annual IT — Individual)
+            </div>
+            <Fld label="Owner's Date of Birth *">
+              <input style={inp} type="date" value={form.ownerBirthdate} onChange={set('ownerBirthdate')} />
+            </Fld>
+          </div>
+        )}
+
+        {/* ── Tax types ── */}
+        <Fld label="Tax Obligations (check all that apply)">
+          <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '6px 12px',
+            padding: '12px', background: T.bg, borderRadius: 8 }}>
+            {TAX_TYPES.map(o => (
+              <label key={o.code} style={{ display: 'flex', alignItems: 'center', gap: 8, fontSize: 13, cursor: 'pointer' }}>
+                <input type="checkbox" checked={form.taxTypes.includes(o.code)} onChange={() => toggleTT(o.code)} />
+                {o.label}
+              </label>
+            ))}
+          </div>
+        </Fld>
+
+        {/* ── Tax regime ── */}
+        <div style={{ marginTop: 4, paddingTop: 14, borderTop: `1px solid ${T.border}` }}>
+          <SectionHead>VAT / Tax Regime</SectionHead>
+          <Fld label="Tax Regime">
+            <select style={inp} value={form.taxRegime} onChange={set('taxRegime')}>
+              <option value="vat">VAT Registered — 12% Output VAT on vatable sales</option>
+              <option value="opt">Percentage Tax / OPT — Section 116 NIRC (Non-VAT)</option>
+              <option value="non_vat_exempt">Non-VAT Exempt — no VAT, no percentage tax</option>
+            </select>
+          </Fld>
+          {form.taxRegime === 'opt' && (
+            <Fld label="OPT Rate (decimal)">
+              <input style={inp} type="number" step="0.001" min="0.001" max="0.1"
+                value={form.optRate} onChange={set('optRate')} placeholder="0.03" />
+              <div style={{ fontSize: 12, color: T.muted, marginTop: 4 }}>
+                Enter as decimal: 0.03 = 3%, 0.01 = 1%. Common: 3% (general), 1% (TRAIN Law 2023-2025)
+              </div>
+            </Fld>
+          )}
+        </div>
+
+        {err && <div style={{ color: T.red, fontSize: 13, marginBottom: 10 }}>{err}</div>}
+        <div style={{ display: 'flex', gap: 10, justifyContent: 'flex-end' }}>
+          <Btn variant="ghost" onClick={onClose}>Cancel</Btn>
+          <Btn type="submit" disabled={saving}>{saving ? 'Saving…' : isEdit ? 'Update' : 'Create Business'}</Btn>
+        </div>
+      </form>
+    </ModalShell>
+  );
+}
+
+// ─── AssignModal ──────────────────────────────────────────────────────────────
+function AssignModal({ clientId, onSaved, onClose }) {
+  const [email,     setEmail]     = useState('');
+  const [saving,    setSaving]    = useState(false);
+  const [err,       setErr]       = useState('');
+  const [result,    setResult]    = useState(null);  // { type: 'assigned'|'invited', message, inviteUrl?, emailSent? }
+  const [copied,    setCopied]    = useState(false);
+
+  async function handleSubmit(e) {
+    e.preventDefault(); setSaving(true); setErr('');
+    try {
+      const r = await assignAccountant(clientId, email);
+      if (r.assigned) {
+        setResult({ type: 'assigned', message: r.message });
+        setTimeout(() => { onSaved(); onClose(); }, 1500);
+      } else if (r.invited) {
+        setResult({ type: 'invited', message: r.message, inviteUrl: r.inviteUrl, emailSent: r.emailSent });
+        onSaved(); // refresh client list so pending invite shows in Business Setup
+      }
+    } catch (e) { setErr(e.message); setSaving(false); }
+  }
+
+  function copyLink() {
+    if (!result?.inviteUrl) return;
+    navigator.clipboard.writeText(result.inviteUrl).then(() => {
+      setCopied(true);
+      setTimeout(() => setCopied(false), 2000);
+    });
+  }
+
+  // ── Result screen (after submit) ─────────────────────────────────────────────
+  if (result) {
+    return (
+      <ModalShell title="Assign Accountant" onClose={onClose}>
+        <div style={{ textAlign: 'center', padding: '8px 0 16px' }}>
+          <div style={{ fontSize: 40, marginBottom: 12 }}>
+            {result.type === 'assigned' ? '✅' : result.emailSent ? '📧' : '🔗'}
+          </div>
+          <div style={{ fontSize: 15, fontWeight: 600, color: T.text, marginBottom: 8 }}>
+            {result.type === 'assigned' ? 'Accountant Assigned!' : 'Invitation Sent!'}
+          </div>
+          <div style={{ fontSize: 13, color: T.muted, lineHeight: 1.6 }}>{result.message}</div>
+
+          {/* Show copyable link when SMTP is not configured */}
+          {result.type === 'invited' && result.inviteUrl && !result.emailSent && (
+            <div style={{ marginTop: 16, background: '#f5f5f7', borderRadius: 10, padding: '12px 14px',
+              textAlign: 'left', border: `1px solid ${T.border}` }}>
+              <div style={{ fontSize: 12, color: T.muted, marginBottom: 6, fontWeight: 500 }}>
+                📋 Share this invitation link with your accountant:
+              </div>
+              <div style={{ fontSize: 12, color: T.accent, wordBreak: 'break-all',
+                fontFamily: 'monospace', lineHeight: 1.5, marginBottom: 10 }}>
+                {result.inviteUrl}
+              </div>
+              <Btn size="sm" onClick={copyLink} style={{ width: '100%' }}>
+                {copied ? '✓ Copied!' : 'Copy Link'}
+              </Btn>
+            </div>
+          )}
+        </div>
+        <div style={{ display: 'flex', justifyContent: 'flex-end', marginTop: 8 }}>
+          <Btn onClick={onClose}>Done</Btn>
+        </div>
+      </ModalShell>
+    );
+  }
+
+  // ── Entry form ────────────────────────────────────────────────────────────────
+  return (
+    <ModalShell title="Assign Accountant" onClose={onClose}>
+      <p style={{ fontSize: 14, color: T.muted, marginBottom: 16, lineHeight: 1.6 }}>
+        Enter your accountant's email. If they're already on MyLedger they'll be assigned immediately.
+        Otherwise we'll send them an invitation to create a free accountant account.
+      </p>
+      <form onSubmit={handleSubmit}>
+        <Fld label="Accountant's Email">
+          <input style={inp} type="email" required value={email}
+            onChange={e => setEmail(e.target.value)} placeholder="accountant@kaimanco.com" />
+        </Fld>
+        {err && <div style={{ color: T.red, fontSize: 13, marginBottom: 10 }}>{err}</div>}
+        <div style={{ display: 'flex', gap: 10, justifyContent: 'flex-end' }}>
+          <Btn variant="ghost" onClick={onClose}>Cancel</Btn>
+          <Btn type="submit" disabled={saving}>{saving ? 'Please wait…' : 'Assign / Invite'}</Btn>
+        </div>
+      </form>
+    </ModalShell>
+  );
+}
+
+// ─── MetricCard ───────────────────────────────────────────────────────────────
+function MetricCard({ label, value, sub, color }) {
+  return (
+    <div style={{ background: T.surface, borderRadius: T.radius, padding: '18px 22px',
+      boxShadow: T.shadow, border: `1px solid ${T.border}`, flex: 1, minWidth: 150 }}>
+      <div style={{ fontSize: 12, color: T.muted, marginBottom: 6 }}>{label}</div>
+      <div style={{ fontSize: 24, fontWeight: 600, color: color || T.text, letterSpacing: '-0.5px' }}>{value}</div>
+      {sub && <div style={{ fontSize: 12, color: T.muted, marginTop: 4 }}>{sub}</div>}
+    </div>
+  );
+}
+
+// ─── AssetModal (module-level) ────────────────────────────────────────────────
+const ASSET_CATS = ['Machinery & Equipment','Furniture & Fixtures','Computer & IT Equipment',
+  'Office Equipment','Transportation Equipment','Leasehold Improvements','Buildings','Other'];
+
+function AssetModal({ clientId, onSaved, onClose }) {
+  const blank = { name: '', category: 'Machinery & Equipment', cost: '', salvageValue: '0',
+                  usefulLifeMonths: '60', startDate: '', notes: '' };
+  const [form, setForm] = useState(blank);
+  const [saving, setSaving] = useState(false);
+  const set = k => e => setForm(f => ({ ...f, [k]: e.target.value }));
+
+  const cost    = parseFloat(form.cost) || 0;
+  const salvage = parseFloat(form.salvageValue) || 0;
+  const months  = parseInt(form.usefulLifeMonths) || 1;
+  const depPM   = cost > 0 ? Math.round((cost - salvage) / months * 100) / 100 : 0;
+
+  async function handleSubmit(e) {
+    e.preventDefault(); setSaving(true);
+    try {
+      await createAsset({ clientId, ...form,
+        cost, salvageValue: salvage, usefulLifeMonths: months });
+      onSaved(); onClose();
+    } catch (err) { alert(err.message); setSaving(false); }
+  }
+
+  return (
+    <ModalShell title="Add Fixed Asset" onClose={onClose} wide>
+      <form onSubmit={handleSubmit}>
+        <Fld label="Asset Name *">
+          <input style={inp} required value={form.name} onChange={set('name')}
+            placeholder="Office printer, Delivery van, etc." />
+        </Fld>
+        <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '0 16px' }}>
+          <Fld label="Category">
+            <select style={inp} value={form.category} onChange={set('category')}>
+              {ASSET_CATS.map(c => <option key={c}>{c}</option>)}
+            </select>
+          </Fld>
+          <Fld label="Acquisition Date *">
+            <input style={inp} type="date" required value={form.startDate} onChange={set('startDate')} />
+          </Fld>
+        </div>
+        <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr', gap: '0 16px' }}>
+          <Fld label="Cost (₱) *">
+            <input style={inp} type="number" required step="0.01" min="0.01"
+              value={form.cost} onChange={set('cost')} placeholder="0.00" />
+          </Fld>
+          <Fld label="Salvage Value (₱)">
+            <input style={inp} type="number" step="0.01" min="0"
+              value={form.salvageValue} onChange={set('salvageValue')} placeholder="0.00" />
+          </Fld>
+          <Fld label="Useful Life (months)">
+            <input style={inp} type="number" min="1"
+              value={form.usefulLifeMonths} onChange={set('usefulLifeMonths')} placeholder="60" />
+          </Fld>
+        </div>
+        {depPM > 0 && (
+          <div style={{ background: '#f0f7ff', borderRadius: 8, padding: '10px 14px', fontSize: 13, marginBottom: 10 }}>
+            Monthly Depreciation (Straight-Line): <strong>{peso(depPM)}</strong> ·
+            Total: <strong>{peso(Math.round((cost - salvage) * 100) / 100)}</strong> over {months} months
+          </div>
+        )}
+        <Fld label="Notes">
+          <textarea style={{ ...inp, resize: 'vertical', minHeight: 48 }}
+            value={form.notes} onChange={set('notes')} placeholder="Optional notes" />
+        </Fld>
+        <div style={{ display: 'flex', gap: 10, justifyContent: 'flex-end' }}>
+          <Btn variant="ghost" onClick={onClose}>Cancel</Btn>
+          <Btn type="submit" disabled={saving}>{saving ? 'Saving…' : 'Add Asset'}</Btn>
+        </div>
+      </form>
+    </ModalShell>
+  );
+}
+
+// ─── LapsingModal (module-level) ──────────────────────────────────────────────
+function LapsingModal({ data, onClose }) {
+  if (!data) return null;
+  const { asset, schedule } = data;
+  return (
+    <ModalShell title={`Lapsing Schedule — ${asset.name}`} onClose={onClose} wide>
+      <div style={{ display: 'flex', gap: 24, flexWrap: 'wrap', marginBottom: 16,
+        background: T.bg, padding: '12px 16px', borderRadius: 10 }}>
+        {[['Cost', peso(asset.cost)], ['Salvage', peso(asset.salvageValue)],
+          ['Monthly Dep.', peso(asset.monthlyDepreciation)],
+          ['Total Dep.', peso(asset.totalDepreciation)],
+          ['Method', asset.method]].map(([l,v]) => (
+          <div key={l}>
+            <div style={{ fontSize: 11, color: T.muted }}>{l}</div>
+            <div style={{ fontWeight: 600, fontSize: 13 }}>{v}</div>
+          </div>
+        ))}
+      </div>
+      <div style={{ overflowY: 'auto', maxHeight: 400, border: `1px solid ${T.border}`, borderRadius: 10 }}>
+        <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 13 }}>
+          <thead>
+            <tr style={{ background: T.bg, position: 'sticky', top: 0 }}>
+              {['Period','Depreciation','Accumulated','Book Value'].map(h => (
+                <th key={h} style={{ padding: '8px 14px', textAlign: 'left', fontWeight: 600,
+                  color: T.muted, fontSize: 11, borderBottom: `1px solid ${T.border}` }}>{h}</th>
+              ))}
+            </tr>
+          </thead>
+          <tbody>
+            {schedule.map((r, i) => (
+              <tr key={r.period} style={{ borderBottom: i < schedule.length - 1 ? `1px solid ${T.border}` : 'none' }}>
+                <td style={{ padding: '7px 14px', fontFamily: 'monospace', fontSize: 12, color: T.muted }}>{r.period}</td>
+                <td style={{ padding: '7px 14px' }}>{peso(r.depreciation)}</td>
+                <td style={{ padding: '7px 14px', color: T.orange }}>{peso(r.accumulated)}</td>
+                <td style={{ padding: '7px 14px', fontWeight: 600, color: T.accent }}>{peso(r.bookValue)}</td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
+    </ModalShell>
+  );
+}
+
+const TABS = ['Overview', 'Transactions', 'Income Statement', 'Balance Sheet', 'Cash Flow', 'Books', 'Assets', 'BIR Reminders', 'Business Setup'];
+// Minimum tier required per tab (undefined = always accessible)
+const TAB_TIER = {
+  'BIR Reminders':   'starter',
+  'Income Statement':'starter',
+  'Balance Sheet':   'starter',
+  'Cash Flow':       'starter',
+  'Assets':          'starter',
+  'Books':           'professional',
+};
+
+// ─── Main Component ───────────────────────────────────────────────────────────
+export default function ClientInterface({ onLogout }) {
+  const [tab,       setTab]      = useState('Overview');
+  const [clients,   setClients]  = useState([]);
+  const [active,    setActive]   = useState(null);
+  const [clLoading, setCLL]      = useState(true);
+
+  // Overview data
+  const [income,    setIncome]   = useState(null);
+  const [vatBal,    setVatBal]   = useState(null);
+  const [overTxns,  setOverTxns] = useState([]);   // all txns for chart
+  const [deadlines, setDL]       = useState([]);
+
+  // Transactions tab
+  const [txns,   setTxns]   = useState([]);
+  const [txLoad, setTxLoad] = useState(false);
+
+  // BIR tab
+  const [birLoad, setBirLoad] = useState(false);
+
+  // Income Statement tab
+  const [incFrom, setIncFrom] = useState('');
+  const [incTo,   setIncTo]   = useState('');
+  const [incRep,  setIncRep]  = useState(null);
+  const [incLoad, setIncLoad] = useState(false);
+
+  // Balance Sheet tab
+  const [balAsOf,  setBalAsOf]  = useState('');
+  const [balRep,   setBalRep]   = useState(null);
+  const [balLoad,  setBalLoad]  = useState(false);
+
+  // Cash Flow tab
+  const [cfFrom,  setCfFrom]  = useState('');
+  const [cfTo,    setCfTo]    = useState('');
+  const [cfRep,   setCfRep]   = useState(null);
+  const [cfLoad,  setCfLoad]  = useState(false);
+
+  // Books tab
+  const [booksType, setBooksType] = useState('sales');
+  const [booksFrom, setBooksFrom] = useState('');
+  const [booksTo,   setBooksTo]   = useState('');
+  const [booksData, setBooksData] = useState(null);
+  const [booksLoad, setBooksLoad] = useState(false);
+
+  // Assets tab
+  const [assets,       setAssets]       = useState([]);
+  const [assetLoad,    setAssetLoad]    = useState(false);
+  const [showAsset,    setShowAsset]    = useState(false);
+  const [showLapsing,  setShowLapsing]  = useState(false);
+  const [lapsingData,  setLapsingData]  = useState(null);
+
+  // Site settings (pricing, payment accounts)
+  const [siteSettings, setSiteSettings] = useState(DEFAULT_SETTINGS);
+
+  // Modals
+  const [showTx,      setShowTx]      = useState(false);
+  const [showBiz,     setShowBiz]     = useState(false);
+  const [bizIsEdit,   setBizIsEdit]   = useState(false);
+  const [showAssign,    setShowAssign]    = useState(false);
+  const [pendingInvite, setPendingInvite] = useState(null);  // { email, expires_at } or null
+  const [showPayment,   setShowPayment]   = useState(false);
+
+  useEffect(() => {
+    loadClients();
+    getSettings().then(r => { if (r?.settings) setSiteSettings(r.settings); }).catch(() => {});
+  }, []);
+
+  useEffect(() => {
+    if (!active) return;
+    if (tab === 'Overview')      loadOverview();
+    if (tab === 'Transactions')  loadTxns();
+    if (tab === 'BIR Reminders') loadBIR();
+    if (tab === 'Assets')        loadAssets();
+  }, [active?.id, tab]);
+
+  // Load pending accountant invite whenever active client changes
+  useEffect(() => {
+    loadPendingInvite(active?.id || null);
+  }, [active?.id]);
+
+  async function loadClients() {
+    setCLL(true);
+    try {
+      const r = await getClients();
+      setClients(r.clients || []);
+      if (r.clients?.length > 0) setActive(r.clients[0]);
+    } catch (e) { console.error(e); }
+    finally { setCLL(false); }
+  }
+
+  async function loadPendingInvite(clientId) {
+    if (!clientId) { setPendingInvite(null); return; }
+    try {
+      const r = await getPendingInvite(clientId);
+      setPendingInvite(r.invite || null);
+    } catch (e) {
+      setPendingInvite(null);
+    }
+  }
+
+  async function loadOverview() {
+    try {
+      const [inc, vat, txRes, dl] = await Promise.all([
+        getIncomeReport(active.id),
+        getBirVatBalance(active.id),
+        getTransactions(active.id),
+        getBirDeadlines(active.id),
+      ]);
+      setIncome(inc); setVatBal(vat);
+      setOverTxns(txRes.transactions || []);
+      setDL(dl.deadlines || []);
+    } catch (e) { console.error(e); }
+  }
+
+  async function loadTxns() {
+    setTxLoad(true);
+    try { const r = await getTransactions(active.id); setTxns(r.transactions || []); }
+    catch (e) { console.error(e); }
+    finally { setTxLoad(false); }
+  }
+
+  async function loadBIR() {
+    setBirLoad(true);
+    try {
+      const [dl, vat] = await Promise.all([getBirDeadlines(active.id), getBirVatBalance(active.id)]);
+      setDL(dl.deadlines || []); setVatBal(vat);
+    } catch (e) { console.error(e); }
+    finally { setBirLoad(false); }
+  }
+
+  async function loadAssets() {
+    setAssetLoad(true);
+    try { const r = await getAssets(active.id); setAssets(r.assets || []); }
+    catch (e) { console.error(e); } finally { setAssetLoad(false); }
+  }
+
+  async function loadIncReport() {
+    setIncLoad(true);
+    try { setIncRep(await getIncomeReport(active.id, incFrom || undefined, incTo || undefined)); }
+    catch (e) { console.error(e); } finally { setIncLoad(false); }
+  }
+
+  async function loadBalReport() {
+    setBalLoad(true);
+    try { setBalRep(await getBalanceReport(active.id, balAsOf || undefined)); }
+    catch (e) { console.error(e); } finally { setBalLoad(false); }
+  }
+
+  async function loadCfReport() {
+    setCfLoad(true);
+    try { setCfRep(await getCashFlowReport(active.id, cfFrom || undefined, cfTo || undefined)); }
+    catch (e) { console.error(e); } finally { setCfLoad(false); }
+  }
+
+  async function loadBooksReport() {
+    setBooksLoad(true);
+    try { setBooksData(await getBooksReport(active.id, booksType, booksFrom || undefined, booksTo || undefined)); }
+    catch (e) { console.error(e); } finally { setBooksLoad(false); }
+  }
+
+  async function deleteAssetItem(id) {
+    if (!confirm('Delete this asset? This cannot be undone.')) return;
+    await deleteAsset(id); loadAssets();
+  }
+
+  async function viewLapsing(id) {
+    try { const r = await getLapsing(id); setLapsingData(r); setShowLapsing(true); }
+    catch (e) { alert(e.message); }
+  }
+
+  async function voidTx(id) {
+    const reason = window.prompt('Void reason (required for audit trail):');
+    if (reason === null) return;
+    if (!reason.trim()) { alert('A void reason is required.'); return; }
+    try { await voidTransaction(id, reason.trim()); loadTxns(); loadOverview(); }
+    catch (e) { alert(e.message); }
+  }
+
+  async function handleBackup() {
+    try {
+      const data = await backupClient(active.id);
+      const blob = new Blob([JSON.stringify(data, null, 2)], { type: 'application/json' });
+      const url  = URL.createObjectURL(blob);
+      const a    = document.createElement('a');
+      a.href = url; a.download = `myledger-${active.tradeName.replace(/\s+/g, '-')}-${Date.now()}.json`;
+      a.click(); URL.revokeObjectURL(url);
+    } catch (e) { alert(e.message); }
+  }
+
+  async function handleDeleteBiz() {
+    if (!confirm(`Delete "${active.tradeName}" and ALL transactions? Cannot be undone.`)) return;
+    await deleteClient(active.id);
+    const rest = clients.filter(c => c.id !== active.id);
+    setClients(rest); setActive(rest[0] || null);
+    setTxns([]); setIncome(null); setVatBal(null); setDL([]); setOverTxns([]);
+  }
+
+  async function saveBusiness(form) {
+    if (bizIsEdit) {
+      const r = await updateClient(active.id, form);
+      setActive(r.client);
+      setClients(cs => cs.map(c => c.id === r.client.id ? r.client : c));
+    } else {
+      const r = await createClient(form);
+      setClients(cs => [r.client, ...cs]); setActive(r.client);
+    }
+    setShowBiz(false);
+  }
+
+  const tierInfo     = SUBSCRIPTION_TIERS.find(t => t.value === active?.subscriptionTier) || SUBSCRIPTION_TIERS[0];
+  const tier         = active?.subscriptionTier || 'free';
+  const upcomingTop3 = deadlines.slice(0, 3);
+  const openUpgrade  = () => setShowPayment(true);
+
+  // Transaction limit for current tier
+  const txLimit      = TIER_LIMITS[tier] ?? null;
+  const thisMonthKey = `${new Date().getFullYear()}-${String(new Date().getMonth() + 1).padStart(2, '0')}`;
+  const txThisMonth  = overTxns.filter(t => t.createdAt?.startsWith(thisMonthKey)).length;
+  const txPct        = txLimit ? Math.min((txThisMonth / txLimit) * 100, 100) : 0;
+  const txAtLimit    = txLimit !== null && txThisMonth >= txLimit;
+  const txNearLimit  = txLimit !== null && txThisMonth >= txLimit * 0.8 && !txAtLimit;
+
+  // ── No-business onboarding ────────────────────────────────────────────────
+  if (!clLoading && clients.length === 0) {
+    return (
+      <div style={{ minHeight: '100vh', background: T.bg, display: 'flex', flexDirection: 'column',
+        alignItems: 'center', justifyContent: 'center',
+        fontFamily: '-apple-system, BlinkMacSystemFont, "SF Pro Display", sans-serif' }}>
+        <div style={{ textAlign: 'center', maxWidth: 440 }}>
+          <div style={{ fontSize: 56, marginBottom: 16 }}>🏢</div>
+          <h2 style={{ fontSize: 24, fontWeight: 600, color: T.text, marginBottom: 10 }}>Welcome to MyLedger</h2>
+          <p style={{ color: T.muted, lineHeight: 1.6, marginBottom: 28 }}>
+            Set up your business profile to start tracking income, expenses, and VAT.
+          </p>
+          <Btn size="lg" onClick={() => { setBizIsEdit(false); setShowBiz(true); }}>+ Set Up My Business</Btn>
+        </div>
+        {showBiz && <BusinessModal isEdit={false} onSave={saveBusiness} onClose={() => setShowBiz(false)} />}
+      </div>
+    );
+  }
+
+  return (
+    <div style={{ minHeight: '100vh', background: T.bg,
+      fontFamily: '-apple-system, BlinkMacSystemFont, "SF Pro Display", "Helvetica Neue", sans-serif',
+      color: T.text }}>
+
+      {/* ── Header ── */}
+      <div style={{ background: 'rgba(255,255,255,0.88)', backdropFilter: 'blur(20px)',
+        borderBottom: `1px solid ${T.border}`, position: 'sticky', top: 0, zIndex: 100 }}>
+        <div style={{ maxWidth: 1140, margin: '0 auto', padding: '0 24px',
+          display: 'flex', alignItems: 'center', justifyContent: 'space-between', height: 56 }}>
+          <div style={{ display: 'flex', alignItems: 'center', gap: 14 }}>
+            <div>
+              <span style={{ fontWeight: 700, fontSize: 16 }}>MyLedger</span>
+              <span style={{ color: T.muted, fontSize: 14 }}> by Kaiman & Co.</span>
+            </div>
+            {clients.length > 0 && (
+              <>
+                <span style={{ color: T.border, fontSize: 18 }}>|</span>
+                <select value={active?.id || ''} onChange={e => {
+                  const c = clients.find(x => x.id === e.target.value);
+                  setActive(c); setTxns([]); setIncome(null); setVatBal(null); setDL([]); setOverTxns([]);
+                }} style={{ border: 'none', background: 'transparent', fontSize: 14, fontWeight: 600,
+                  color: T.text, cursor: 'pointer', outline: 'none', fontFamily: 'inherit' }}>
+                  {clients.map(c => <option key={c.id} value={c.id}>{c.tradeName}</option>)}
+                </select>
+                {/* Subscription badge */}
+                {active && (
+                  <span style={{ background: `${tierInfo.color}18`, color: tierInfo.color,
+                    fontSize: 11, fontWeight: 700, padding: '2px 8px', borderRadius: 6,
+                    textTransform: 'uppercase', letterSpacing: '0.4px' }}>
+                    {tierInfo.label}
+                  </span>
+                )}
+              </>
+            )}
+          </div>
+          <div style={{ display: 'flex', gap: 10 }}>
+            <Btn variant="ghost" size="sm" onClick={() => { setBizIsEdit(false); setShowBiz(true); }}>+ Business</Btn>
+            <Btn variant="neutral" size="sm" onClick={onLogout}>Sign out</Btn>
+          </div>
+        </div>
+      </div>
+
+      <div style={{ maxWidth: 1140, margin: '0 auto', padding: '28px 24px 56px' }}>
+
+        {/* ── Tab bar ── */}
+        <div style={{ display: 'flex', gap: 4, marginBottom: 28, background: T.surface, padding: 4,
+          borderRadius: 10, boxShadow: T.shadow, flexWrap: 'wrap' }}>
+          {TABS.map(t => {
+            const locked = TAB_TIER[t] && !tierMeets(tier, TAB_TIER[t]);
+            return (
+              <button key={t} onClick={() => setTab(t)} style={{
+                padding: '7px 18px', borderRadius: 7, border: 'none', cursor: 'pointer',
+                fontSize: 14, fontWeight: 500, fontFamily: 'inherit', transition: 'all .15s',
+                background: tab === t ? T.accent : 'transparent',
+                color: tab === t ? '#fff' : locked ? T.border : T.muted,
+                display: 'flex', alignItems: 'center', gap: 5 }}>
+                {t}{locked && <span style={{ fontSize: 11 }}>🔒</span>}
+              </button>
+            );
+          })}
+        </div>
+
+        {!active && <div style={{ color: T.muted, textAlign: 'center', padding: 60 }}>Add a business to get started.</div>}
+
+        {/* ══════════ OVERVIEW ══════════ */}
+        {tab === 'Overview' && active && (
+          <div>
+            <div style={{ display: 'flex', alignItems: 'baseline', gap: 10, marginBottom: 22 }}>
+              <h2 style={{ margin: 0, fontSize: 22, fontWeight: 600 }}>{active.tradeName}</h2>
+              <span style={{ fontSize: 13, color: T.muted }}>TIN {active.tin} · {active.type}</span>
+            </div>
+
+            {/* P&L cards */}
+            <div style={{ display: 'flex', gap: 14, flexWrap: 'wrap', marginBottom: 20 }}>
+              <MetricCard label="Net Revenue"  value={income ? peso(income.revenue)  : '—'} sub="VAT-exclusive" color={T.green} />
+              <MetricCard label="Net Expenses" value={income ? peso(income.expenses) : '—'} sub="VAT-exclusive" color={T.red} />
+              <MetricCard label="Net Profit"   value={income ? peso(income.profit)   : '—'}
+                sub={income ? (income.profit >= 0 ? 'Profitable ✓' : 'Net loss') : ''}
+                color={!income ? T.text : income.profit >= 0 ? T.accent : T.red} />
+              <MetricCard label="Total Transactions" value={overTxns.length} sub="recorded" color={T.text} />
+            </div>
+
+            {/* Chart + Upcoming filings — Starter+ */}
+            <UpgradeGate tier={tier} required="starter" onUpgrade={openUpgrade}>
+            <div style={{ display: 'grid', gridTemplateColumns: '3fr 2fr', gap: 20, marginBottom: 20 }}>
+              {/* Monthly chart */}
+              <Card>
+                <SectionHead>Monthly Revenue vs. Expenses (last 6 months)</SectionHead>
+                <MonthlyBarChart transactions={overTxns} />
+              </Card>
+
+              {/* Upcoming filings */}
+              <Card>
+                <SectionHead>Upcoming BIR Filings</SectionHead>
+                {(active.taxTypes || []).length === 0 ? (
+                  <div style={{ fontSize: 13, color: T.muted, lineHeight: 1.6 }}>
+                    No tax types configured.<br />
+                    <span style={{ color: T.accent, cursor: 'pointer' }}
+                      onClick={() => setTab('Business Setup')}>Set up in Business Setup →</span>
+                  </div>
+                ) : upcomingTop3.length === 0 ? (
+                  <div style={{ fontSize: 13, color: T.muted }}>No upcoming deadlines found.</div>
+                ) : (
+                  <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
+                    {upcomingTop3.map((d, i) => {
+                      const uc  = d.urgency === 'urgent' ? T.red : d.urgency === 'upcoming' ? T.orange : T.green;
+                      const ubg = d.urgency === 'urgent' ? '#fff5f5' : d.urgency === 'upcoming' ? '#fff8ec' : '#f0fff4';
+                      return (
+                        <div key={i} style={{ background: ubg, borderRadius: 10, padding: '10px 14px',
+                          display: 'flex', justifyContent: 'space-between', alignItems: 'center',
+                          border: `1px solid ${uc}20` }}>
+                          <div>
+                            <div style={{ fontWeight: 600, fontSize: 13 }}>{d.form}</div>
+                            <div style={{ fontSize: 11, color: T.muted, marginTop: 1 }}>{fmtDt(d.dueDate)}</div>
+                          </div>
+                          <div style={{ textAlign: 'right' }}>
+                            <div style={{ fontWeight: 700, fontSize: 16, color: uc }}>{d.daysUntil}d</div>
+                            <div style={{ fontSize: 10, color: uc, textTransform: 'uppercase', fontWeight: 600 }}>{d.urgency}</div>
+                          </div>
+                        </div>
+                      );
+                    })}
+                    {deadlines.length > 3 && (
+                      <div onClick={() => setTab('BIR Reminders')}
+                        style={{ fontSize: 12, color: T.accent, cursor: 'pointer', paddingTop: 4 }}>
+                        View all {deadlines.length} deadlines →
+                      </div>
+                    )}
+                  </div>
+                )}
+              </Card>
+            </div>
+            </UpgradeGate>
+
+            {/* VAT position — Starter+ */}
+            <UpgradeGate tier={tier} required="starter" onUpgrade={openUpgrade}>
+              <Card style={{ marginTop: 20 }}>
+                <SectionHead>VAT Position</SectionHead>
+                <div style={{ display: 'flex', gap: 36, flexWrap: 'wrap' }}>
+                  <div>
+                    <div style={{ fontSize: 12, color: T.muted }}>Input VAT (recoverable)</div>
+                    <div style={{ fontSize: 22, fontWeight: 600, color: T.green }}>{peso(vatBal?.inputVAT)}</div>
+                  </div>
+                  <div>
+                    <div style={{ fontSize: 12, color: T.muted }}>Output VAT (payable)</div>
+                    <div style={{ fontSize: 22, fontWeight: 600, color: T.orange }}>{peso(vatBal?.outputVAT)}</div>
+                  </div>
+                  <div>
+                    <div style={{ fontSize: 12, color: T.muted }}>Net to BIR</div>
+                    <div style={{ fontSize: 22, fontWeight: 600, color: (vatBal?.netVATPayable ?? 0) >= 0 ? T.red : T.green }}>
+                      {peso(Math.abs(vatBal?.netVATPayable ?? 0))}
+                      <span style={{ fontSize: 12, fontWeight: 400, marginLeft: 8, color: T.muted }}>{vatBal?.status}</span>
+                    </div>
+                  </div>
+                </div>
+              </Card>
+            </UpgradeGate>
+          </div>
+        )}
+
+        {/* ══════════ TRANSACTIONS ══════════ */}
+        {tab === 'Transactions' && active && (
+          <div>
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: txLimit ? 14 : 20 }}>
+              <h2 style={{ margin: 0, fontSize: 22, fontWeight: 600 }}>Transactions</h2>
+              {txAtLimit
+                ? <Btn variant="danger" onClick={() => setShowPayment(true)}>Limit reached — Upgrade ↑</Btn>
+                : <Btn onClick={() => setShowTx(true)}>+ Add Transaction</Btn>
+              }
+            </div>
+
+            {/* Transaction usage bar */}
+            {txLimit && (
+              <div style={{ marginBottom: 20 }}>
+                <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: 12,
+                  color: txAtLimit ? T.red : txNearLimit ? T.orange : T.muted, marginBottom: 5 }}>
+                  <span>
+                    {txAtLimit   && '🚫 Monthly limit reached — '}
+                    {txNearLimit && '⚠️ Approaching limit — '}
+                    {txThisMonth} / {txLimit} transactions this month
+                  </span>
+                  <span style={{ fontWeight: 600 }}>{tierInfo.label} Plan</span>
+                </div>
+                <div style={{ height: 6, background: T.border, borderRadius: 3, overflow: 'hidden' }}>
+                  <div style={{ height: '100%', borderRadius: 3, transition: 'width .4s',
+                    width: `${txPct}%`,
+                    background: txAtLimit ? T.red : txNearLimit ? T.orange : T.green }} />
+                </div>
+                {(txAtLimit || txNearLimit) && (
+                  <div style={{ marginTop: 8, fontSize: 13, color: txAtLimit ? T.red : T.orange }}>
+                    {txAtLimit
+                      ? <>You've hit the {txLimit}-transaction limit for the <strong>{tierInfo.label}</strong> plan. <span onClick={() => setShowPayment(true)} style={{ color: T.accent, cursor: 'pointer', fontWeight: 600 }}>Upgrade now →</span></>
+                      : <>Only {txLimit - txThisMonth} transactions remaining this month. <span onClick={() => setShowPayment(true)} style={{ color: T.accent, cursor: 'pointer', fontWeight: 600 }}>Upgrade to get more →</span></>
+                    }
+                  </div>
+                )}
+              </div>
+            )}
+
+            {txLoad ? <div style={{ color: T.muted, padding: 20 }}>Loading…</div>
+            : txns.length === 0 ? (
+              <div style={{ textAlign: 'center', padding: '60px 20px', color: T.muted }}>
+                <div style={{ fontSize: 40, marginBottom: 12 }}>🧾</div>
+                <div>No transactions yet. Add your first one above.</div>
+              </div>
+            ) : (
+              <Card style={{ padding: 0, overflow: 'hidden' }}>
+                <div style={{ overflowX: 'auto' }}>
+                  <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 13 }}>
+                    <thead>
+                      <tr style={{ background: T.bg }}>
+                        {['Date','Type','Category','Description','Ref. No.','Counterparty','NET','VAT','GROSS','Settlement',''].map(h => (
+                          <th key={h} style={{ padding: '10px 14px', textAlign: 'left', fontWeight: 600,
+                            color: T.muted, fontSize: 11, borderBottom: `1px solid ${T.border}`, whiteSpace: 'nowrap' }}>{h}</th>
+                        ))}
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {txns.map((t, i) => (
+                        <tr key={t.id} style={{
+                          borderBottom: i < txns.length - 1 ? `1px solid ${T.border}` : 'none',
+                          opacity: t.voided ? 0.5 : 1,
+                          background: t.voided ? '#fafafa' : undefined,
+                        }}
+                          title={t.notes || undefined}>
+                          <td style={{ padding: '10px 14px', color: T.muted, whiteSpace: 'nowrap',
+                            textDecoration: t.voided ? 'line-through' : 'none' }}>{fmtDt(t.createdAt)}</td>
+                          <td style={{ padding: '10px 14px' }}>
+                            {t.voided
+                              ? <span style={{ background: '#f0f0f0', color: T.muted, padding: '2px 8px', borderRadius: 6, fontSize: 11, fontWeight: 600 }}>VOID</span>
+                              : <>
+                                  <span style={{ background: t.type === 'income' ? '#e3f7ed' : '#fff0f0',
+                                    color: t.type === 'income' ? T.green : T.red,
+                                    padding: '2px 8px', borderRadius: 6, fontSize: 11, fontWeight: 600 }}>{t.type}</span>
+                                  {t.vatType && t.vatType !== 'vatable' && (
+                                    <div style={{ fontSize: 10, color: T.muted, marginTop: 2 }}>{t.vatType.replace('_',' ')}</div>
+                                  )}
+                                </>
+                            }
+                          </td>
+                          <td style={{ padding: '10px 14px', color: T.muted, fontSize: 12,
+                            textDecoration: t.voided ? 'line-through' : 'none' }}>{t.category}</td>
+                          <td style={{ padding: '10px 14px' }}>
+                            <span style={{ textDecoration: t.voided ? 'line-through' : 'none' }}>{t.description}</span>
+                            {t.voided && t.voidReason && <div style={{ fontSize: 11, color: T.red, marginTop: 2 }}>Void: {t.voidReason}</div>}
+                            {!t.voided && t.notes && <div style={{ fontSize: 11, color: T.muted, marginTop: 2 }}>📝 {t.notes}</div>}
+                          </td>
+                          <td style={{ padding: '10px 14px', color: T.accent, fontSize: 12,
+                            textDecoration: t.voided ? 'line-through' : 'none' }}>
+                            {t.referenceNo || <span style={{ opacity: 0.3 }}>—</span>}
+                          </td>
+                          <td style={{ padding: '10px 14px', color: T.muted, fontSize: 12 }}>
+                            {t.counterpartyName || <span style={{ opacity: 0.3 }}>—</span>}
+                            {t.counterpartyTin && <div style={{ fontSize: 11 }}>TIN: {t.counterpartyTin}</div>}
+                          </td>
+                          <td style={{ padding: '10px 14px', fontWeight: 500, whiteSpace: 'nowrap',
+                            textDecoration: t.voided ? 'line-through' : 'none' }}>{peso(t.net)}</td>
+                          <td style={{ padding: '10px 14px', color: T.orange, whiteSpace: 'nowrap',
+                            textDecoration: t.voided ? 'line-through' : 'none' }}>{peso(t.vat)}</td>
+                          <td style={{ padding: '10px 14px', color: T.muted, whiteSpace: 'nowrap',
+                            textDecoration: t.voided ? 'line-through' : 'none' }}>{peso(t.gross)}</td>
+                          <td style={{ padding: '10px 14px', color: T.muted, fontSize: 12, whiteSpace: 'nowrap',
+                            textDecoration: t.voided ? 'line-through' : 'none' }}>
+                            {t.settlement ? t.settlement.replace('_',' ') : 'cash'}
+                          </td>
+                          <td style={{ padding: '10px 14px' }}>
+                            {!t.voided && (
+                              <button onClick={() => voidTx(t.id)}
+                                style={{ background: 'none', border: 'none', cursor: 'pointer',
+                                  color: T.red, fontSize: 13, padding: '3px 6px', borderRadius: 5 }}>
+                                ⊘ Void
+                              </button>
+                            )}
+                          </td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              </Card>
+            )}
+          </div>
+        )}
+
+        {/* ══════════ INCOME STATEMENT ══════════ */}
+        {tab === 'Income Statement' && active && (
+          <div>
+            <h2 style={{ margin: '0 0 20px', fontSize: 22, fontWeight: 600 }}>Income Statement</h2>
+            <UpgradeGate tier={tier} required="starter" onUpgrade={openUpgrade}>
+              <Card style={{ marginBottom: 20 }}>
+                <SectionHead>Date Range</SectionHead>
+                <div style={{ display: 'flex', gap: 12, alignItems: 'flex-end', flexWrap: 'wrap' }}>
+                  <Fld label="From"><input style={{ ...inp, width: 160 }} type="date" value={incFrom} onChange={e => setIncFrom(e.target.value)} /></Fld>
+                  <Fld label="To"><input style={{ ...inp, width: 160 }} type="date" value={incTo} onChange={e => setIncTo(e.target.value)} /></Fld>
+                  <Btn onClick={loadIncReport} disabled={incLoad} style={{ marginBottom: 14 }}>{incLoad ? 'Loading…' : 'Run Report'}</Btn>
+                  {(incFrom || incTo) && <Btn variant="ghost" onClick={() => { setIncFrom(''); setIncTo(''); setIncRep(null); }} style={{ marginBottom: 14 }}>All Periods</Btn>}
+                </div>
+              </Card>
+              {incRep ? (
+                <div>
+                  <div style={{ fontSize: 12, color: T.muted, marginBottom: 16 }}>Period: {incRep.period}</div>
+                  <div style={{ display: 'flex', gap: 14, flexWrap: 'wrap', marginBottom: 20 }}>
+                    <MetricCard label="Net Revenue"  value={peso(incRep.revenue)}  sub="VAT-exclusive" color={T.green} />
+                    <MetricCard label="Net Expenses" value={peso(incRep.expenses)} sub="VAT-exclusive" color={T.red} />
+                    <MetricCard label="Net Profit"   value={peso(incRep.profit)}
+                      sub={incRep.profit >= 0 ? 'Profitable ✓' : 'Net loss'}
+                      color={incRep.profit >= 0 ? T.accent : T.red} />
+                    {(incRep.optTax ?? 0) > 0 && <MetricCard label="Percentage Tax" value={peso(incRep.optTax)} sub="OPT payable" color={T.orange} />}
+                  </div>
+                  <Card>
+                    <SectionHead>Revenue Breakdown by VAT Type</SectionHead>
+                    {[
+                      ['Vatable Sales (12% VAT)', incRep.revenueBreakdown?.vatable,   T.accent],
+                      ['Zero-rated Sales',         incRep.revenueBreakdown?.zeroRated, T.green],
+                      ['Exempt Sales',             incRep.revenueBreakdown?.exempt,    T.muted],
+                      ['OPT / Percentage Tax Sales', incRep.revenueBreakdown?.optSales, T.orange],
+                    ].filter(([,v]) => (v ?? 0) > 0).map(([label, val, color]) => (
+                      <div key={label} style={{ display: 'flex', justifyContent: 'space-between',
+                        padding: '9px 0', borderBottom: `1px solid ${T.border}`, fontSize: 14 }}>
+                        <span style={{ color: T.muted }}>{label}</span>
+                        <span style={{ fontWeight: 600, color }}>{peso(val)}</span>
+                      </div>
+                    ))}
+                    <div style={{ fontSize: 12, color: T.muted, marginTop: 12 }}>{incRep.note}</div>
+                  </Card>
+                </div>
+              ) : (
+                <div style={{ color: T.muted, textAlign: 'center', padding: 48 }}>
+                  Select a date range above and click <strong>Run Report</strong>.<br />
+                  <span style={{ fontSize: 12 }}>Leave dates blank to include all periods.</span>
+                </div>
+              )}
+            </UpgradeGate>
+          </div>
+        )}
+
+        {/* ══════════ BALANCE SHEET ══════════ */}
+        {tab === 'Balance Sheet' && active && (
+          <div>
+            <h2 style={{ margin: '0 0 20px', fontSize: 22, fontWeight: 600 }}>Balance Sheet</h2>
+            <UpgradeGate tier={tier} required="starter" onUpgrade={openUpgrade}>
+              <Card style={{ marginBottom: 20 }}>
+                <SectionHead>As-of Date</SectionHead>
+                <div style={{ display: 'flex', gap: 12, alignItems: 'flex-end', flexWrap: 'wrap' }}>
+                  <Fld label="As Of"><input style={{ ...inp, width: 160 }} type="date" value={balAsOf} onChange={e => setBalAsOf(e.target.value)} /></Fld>
+                  <Btn onClick={loadBalReport} disabled={balLoad} style={{ marginBottom: 14 }}>{balLoad ? 'Loading…' : 'Run Report'}</Btn>
+                  {balAsOf && <Btn variant="ghost" onClick={() => { setBalAsOf(''); setBalRep(null); }} style={{ marginBottom: 14 }}>Today</Btn>}
+                </div>
+              </Card>
+              {balRep ? (
+                <div>
+                  <div style={{ fontSize: 12, color: T.muted, marginBottom: 16 }}>As of: {balRep.asOf}</div>
+                  <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 20, marginBottom: 20 }}>
+                    <Card>
+                      <SectionHead>Assets</SectionHead>
+                      {Object.entries(balRep.assets).filter(([k]) => k !== 'note').map(([k, v]) =>
+                        typeof v === 'number' ? (
+                          <div key={k} style={{ display: 'flex', justifyContent: 'space-between',
+                            padding: '9px 0', borderBottom: `1px solid ${T.border}`, fontSize: 14 }}>
+                            <span style={{ color: T.muted, textTransform: 'capitalize' }}>{k.replace(/_/g,' ')}</span>
+                            <span style={{ fontWeight: 600, color: v >= 0 ? T.green : T.red }}>{peso(v)}</span>
+                          </div>
+                        ) : null
+                      )}
+                      <div style={{ fontSize: 12, color: T.muted, marginTop: 10 }}>{balRep.assets.note}</div>
+                    </Card>
+                    <Card>
+                      <SectionHead>Liabilities</SectionHead>
+                      {Object.entries(balRep.liabilities).filter(([k]) => k !== 'note').map(([k, v]) =>
+                        typeof v === 'number' ? (
+                          <div key={k} style={{ display: 'flex', justifyContent: 'space-between',
+                            padding: '9px 0', borderBottom: `1px solid ${T.border}`, fontSize: 14 }}>
+                            <span style={{ color: T.muted, textTransform: 'capitalize' }}>{k.replace(/_/g,' ')}</span>
+                            <span style={{ fontWeight: 600, color: T.orange }}>{peso(v)}</span>
+                          </div>
+                        ) : null
+                      )}
+                      <div style={{ fontSize: 12, color: T.muted, marginTop: 10 }}>{balRep.liabilities.note}</div>
+                    </Card>
+                  </div>
+                  <Card>
+                    <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                      <div style={{ fontWeight: 700, fontSize: 15 }}>Net VAT Position</div>
+                      <div style={{ fontWeight: 700, fontSize: 20, color: (balRep.net_vat_position ?? 0) >= 0 ? T.red : T.green }}>
+                        {peso(Math.abs(balRep.net_vat_position ?? 0))}
+                      </div>
+                    </div>
+                    <div style={{ fontSize: 13, color: T.muted, marginTop: 4 }}>{balRep.net_note}</div>
+                  </Card>
+                </div>
+              ) : (
+                <div style={{ color: T.muted, textAlign: 'center', padding: 48 }}>
+                  Select a date above and click <strong>Run Report</strong>.<br />
+                  <span style={{ fontSize: 12 }}>Leave blank to see the current balance.</span>
+                </div>
+              )}
+            </UpgradeGate>
+          </div>
+        )}
+
+        {/* ══════════ CASH FLOW ══════════ */}
+        {tab === 'Cash Flow' && active && (
+          <div>
+            <h2 style={{ margin: '0 0 20px', fontSize: 22, fontWeight: 600 }}>Cash Flow Statement</h2>
+            <UpgradeGate tier={tier} required="starter" onUpgrade={openUpgrade}>
+              <Card style={{ marginBottom: 20 }}>
+                <SectionHead>Date Range</SectionHead>
+                <div style={{ display: 'flex', gap: 12, alignItems: 'flex-end', flexWrap: 'wrap' }}>
+                  <Fld label="From"><input style={{ ...inp, width: 160 }} type="date" value={cfFrom} onChange={e => setCfFrom(e.target.value)} /></Fld>
+                  <Fld label="To"><input style={{ ...inp, width: 160 }} type="date" value={cfTo} onChange={e => setCfTo(e.target.value)} /></Fld>
+                  <Btn onClick={loadCfReport} disabled={cfLoad} style={{ marginBottom: 14 }}>{cfLoad ? 'Loading…' : 'Run Report'}</Btn>
+                  {(cfFrom || cfTo) && <Btn variant="ghost" onClick={() => { setCfFrom(''); setCfTo(''); setCfRep(null); }} style={{ marginBottom: 14 }}>All Periods</Btn>}
+                </div>
+              </Card>
+              {cfRep ? (
+                <div style={{ display: 'flex', flexDirection: 'column', gap: 20 }}>
+                  <div style={{ fontSize: 12, color: T.muted }}>Period: {cfRep.period}</div>
+                  <Card>
+                    <SectionHead>Operating Activities (Indirect Method)</SectionHead>
+                    {[
+                      ['Net Income',                          cfRep.operating.netIncome],
+                      ['+ Depreciation Add-back',             cfRep.operating.depreciationAddBack],
+                      ['± AR Change (credit sales)',          cfRep.operating.arIncrease],
+                      ['± AP Change (unpaid expenses)',       cfRep.operating.apIncrease],
+                    ].map(([label, val]) => (
+                      <div key={label} style={{ display: 'flex', justifyContent: 'space-between',
+                        padding: '8px 0', borderBottom: `1px solid ${T.border}`, fontSize: 14 }}>
+                        <span style={{ color: T.muted }}>{label}</span>
+                        <span style={{ fontWeight: 500, color: (val ?? 0) >= 0 ? T.text : T.red }}>{peso(val)}</span>
+                      </div>
+                    ))}
+                    <div style={{ display: 'flex', justifyContent: 'space-between', padding: '10px 0',
+                      fontSize: 15, fontWeight: 700, borderTop: `2px solid ${T.border}`, marginTop: 4 }}>
+                      <span>Net Cash from Operations</span>
+                      <span style={{ color: (cfRep.operating.total ?? 0) >= 0 ? T.green : T.red }}>{peso(cfRep.operating.total)}</span>
+                    </div>
+                  </Card>
+                  <Card>
+                    <SectionHead>Investing Activities</SectionHead>
+                    <div style={{ display: 'flex', justifyContent: 'space-between',
+                      padding: '8px 0', borderBottom: `1px solid ${T.border}`, fontSize: 14 }}>
+                      <span style={{ color: T.muted }}>Asset Purchases</span>
+                      <span style={{ fontWeight: 500, color: T.red }}>{peso(cfRep.investing.assetPurchases)}</span>
+                    </div>
+                    <div style={{ display: 'flex', justifyContent: 'space-between', padding: '10px 0',
+                      fontSize: 15, fontWeight: 700, borderTop: `2px solid ${T.border}`, marginTop: 4 }}>
+                      <span>Net Cash from Investing</span>
+                      <span style={{ color: (cfRep.investing.total ?? 0) >= 0 ? T.green : T.red }}>{peso(cfRep.investing.total)}</span>
+                    </div>
+                  </Card>
+                  <Card>
+                    <SectionHead>Direct Method Cross-check (Cash Settlements Only)</SectionHead>
+                    <div style={{ display: 'flex', gap: 36, flexWrap: 'wrap', marginBottom: 8 }}>
+                      <div>
+                        <div style={{ fontSize: 12, color: T.muted }}>Cash Collected</div>
+                        <div style={{ fontSize: 20, fontWeight: 600, color: T.green }}>{peso(cfRep.direct.cashCollected)}</div>
+                      </div>
+                      <div>
+                        <div style={{ fontSize: 12, color: T.muted }}>Cash Paid</div>
+                        <div style={{ fontSize: 20, fontWeight: 600, color: T.red }}>{peso(Math.abs(cfRep.direct.cashPaid ?? 0))}</div>
+                      </div>
+                      <div>
+                        <div style={{ fontSize: 12, color: T.muted }}>Net Cash Change</div>
+                        <div style={{ fontSize: 20, fontWeight: 700, color: (cfRep.netCashChange ?? 0) >= 0 ? T.green : T.red }}>{peso(cfRep.netCashChange)}</div>
+                      </div>
+                    </div>
+                    <div style={{ fontSize: 12, color: T.muted }}>{cfRep.direct.note}</div>
+                  </Card>
+                </div>
+              ) : (
+                <div style={{ color: T.muted, textAlign: 'center', padding: 48 }}>
+                  Select a date range above and click <strong>Run Report</strong>.
+                </div>
+              )}
+            </UpgradeGate>
+          </div>
+        )}
+
+        {/* ══════════ BOOKS ══════════ */}
+        {tab === 'Books' && active && (
+          <div>
+            <h2 style={{ margin: '0 0 20px', fontSize: 22, fontWeight: 600 }}>Accounting Books</h2>
+            <UpgradeGate tier={tier} required="professional" onUpgrade={openUpgrade}>
+              <Card style={{ marginBottom: 20 }}>
+                <div style={{ display: 'flex', gap: 12, alignItems: 'flex-end', flexWrap: 'wrap' }}>
+                  <Fld label="Book">
+                    <select style={{ ...inp, width: 230 }} value={booksType}
+                      onChange={e => { setBooksType(e.target.value); setBooksData(null); }}>
+                      <option value="sales">Sales Book</option>
+                      <option value="purchases">Purchases Book</option>
+                      <option value="receipts">Cash Receipts Book</option>
+                      <option value="disbursements">Cash Disbursements Book</option>
+                    </select>
+                  </Fld>
+                  <Fld label="From"><input style={{ ...inp, width: 150 }} type="date" value={booksFrom} onChange={e => setBooksFrom(e.target.value)} /></Fld>
+                  <Fld label="To"><input style={{ ...inp, width: 150 }} type="date" value={booksTo} onChange={e => setBooksTo(e.target.value)} /></Fld>
+                  <Btn onClick={loadBooksReport} disabled={booksLoad} style={{ marginBottom: 14 }}>{booksLoad ? 'Loading…' : 'Load Book'}</Btn>
+                </div>
+              </Card>
+              {booksData ? (
+                <Card style={{ padding: 0, overflow: 'hidden' }}>
+                  <div style={{ padding: '14px 20px', background: T.bg, borderBottom: `1px solid ${T.border}`,
+                    display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                    <div style={{ fontWeight: 600, fontSize: 15, textTransform: 'capitalize' }}>
+                      {booksData.type} Book — {booksData.period}
+                    </div>
+                    <div style={{ fontSize: 13, color: T.muted }}>{booksData.count} records</div>
+                  </div>
+                  <div style={{ overflowX: 'auto' }}>
+                    {booksData.rows.length === 0 ? (
+                      <div style={{ padding: 40, textAlign: 'center', color: T.muted }}>No records for this period.</div>
+                    ) : (
+                      <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 12 }}>
+                        <thead>
+                          <tr style={{ background: '#f8f8f8' }}>
+                            {Object.keys(booksData.rows[0]).map(h => (
+                              <th key={h} style={{ padding: '9px 12px', textAlign: 'left', fontWeight: 600,
+                                color: T.muted, fontSize: 11, borderBottom: `1px solid ${T.border}`,
+                                whiteSpace: 'nowrap', textTransform: 'capitalize' }}>
+                                {h.replace(/([A-Z])/g, ' $1').replace(/_/g,' ').trim()}
+                              </th>
+                            ))}
+                          </tr>
+                        </thead>
+                        <tbody>
+                          {booksData.rows.map((r, i) => (
+                            <tr key={i} style={{ borderBottom: i < booksData.rows.length - 1 ? `1px solid ${T.border}` : 'none' }}>
+                              {Object.entries(r).map(([k, v]) => (
+                                <td key={k} style={{ padding: '8px 12px', whiteSpace: 'nowrap',
+                                  color: typeof v === 'number' && v !== 0 ? T.text : T.muted,
+                                  fontWeight: typeof v === 'number' && v !== 0 ? 500 : 400 }}>
+                                  {typeof v === 'number' ? (v !== 0 ? peso(v) : '—') : (v || '—')}
+                                </td>
+                              ))}
+                            </tr>
+                          ))}
+                        </tbody>
+                        <tfoot>
+                          <tr style={{ background: T.bg, borderTop: `2px solid ${T.border}` }}>
+                            {Object.keys(booksData.rows[0]).map((k, i) => (
+                              <td key={k} style={{ padding: '9px 12px', fontWeight: 700, fontSize: 12, whiteSpace: 'nowrap' }}>
+                                {i === 0 ? 'TOTALS' : (typeof booksData.totals[k] === 'number' && booksData.totals[k] !== 0 ? peso(booksData.totals[k]) : '')}
+                              </td>
+                            ))}
+                          </tr>
+                        </tfoot>
+                      </table>
+                    )}
+                  </div>
+                </Card>
+              ) : (
+                <div style={{ color: T.muted, textAlign: 'center', padding: 48 }}>
+                  Select a book type and click <strong>Load Book</strong>.
+                </div>
+              )}
+            </UpgradeGate>
+          </div>
+        )}
+
+        {/* ══════════ ASSETS ══════════ */}
+        {tab === 'Assets' && active && (
+          <div>
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 20 }}>
+              <h2 style={{ margin: 0, fontSize: 22, fontWeight: 600 }}>Fixed Assets & Lapsing</h2>
+              <Btn onClick={() => setShowAsset(true)}>+ Add Asset</Btn>
+            </div>
+            <UpgradeGate tier={tier} required="starter" onUpgrade={openUpgrade}>
+              {assetLoad ? <div style={{ color: T.muted, padding: 20 }}>Loading…</div>
+              : assets.length === 0 ? (
+                <div style={{ textAlign: 'center', padding: '60px 20px', color: T.muted }}>
+                  <div style={{ fontSize: 40, marginBottom: 12 }}>🏭</div>
+                  <div>No fixed assets recorded yet. Click <strong>+ Add Asset</strong> to get started.</div>
+                </div>
+              ) : (
+                <div style={{ display: 'flex', flexDirection: 'column', gap: 14 }}>
+                  {assets.map(a => (
+                    <Card key={a.id} style={{ padding: '16px 20px' }}>
+                      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', flexWrap: 'wrap', gap: 12 }}>
+                        <div>
+                          <div style={{ fontWeight: 600, fontSize: 15 }}>{a.name}</div>
+                          <div style={{ fontSize: 12, color: T.muted, marginTop: 2 }}>
+                            {a.category} · Acquired {a.startDate} · {a.usefulLifeMonths} mo useful life
+                          </div>
+                          {a.fullyDepreciated && (
+                            <div style={{ fontSize: 11, color: T.orange, marginTop: 3, fontWeight: 600 }}>
+                              ✓ Fully Depreciated
+                            </div>
+                          )}
+                        </div>
+                        <div style={{ display: 'flex', gap: 20, flexWrap: 'wrap', textAlign: 'right' }}>
+                          <div><div style={{ fontSize: 11, color: T.muted }}>Cost</div><div style={{ fontWeight: 600 }}>{peso(a.cost)}</div></div>
+                          <div><div style={{ fontSize: 11, color: T.muted }}>Accum. Dep.</div><div style={{ fontWeight: 600, color: T.orange }}>{peso(a.accumulatedDepreciation)}</div></div>
+                          <div><div style={{ fontSize: 11, color: T.muted }}>Book Value</div><div style={{ fontWeight: 700, color: T.accent, fontSize: 18 }}>{peso(a.bookValue)}</div></div>
+                          <div><div style={{ fontSize: 11, color: T.muted }}>Monthly Dep.</div><div style={{ fontWeight: 600 }}>{peso(a.monthlyDepreciation)}</div></div>
+                        </div>
+                      </div>
+                      <div style={{ display: 'flex', gap: 8, marginTop: 12, paddingTop: 12,
+                        borderTop: `1px solid ${T.border}`, justifyContent: 'flex-end' }}>
+                        <Btn size="sm" variant="ghost" onClick={() => viewLapsing(a.id)}>📋 View Lapsing Schedule</Btn>
+                        <Btn size="sm" variant="danger" onClick={() => deleteAssetItem(a.id)}>Delete</Btn>
+                      </div>
+                    </Card>
+                  ))}
+                </div>
+              )}
+            </UpgradeGate>
+          </div>
+        )}
+
+        {/* ══════════ BIR REMINDERS ══════════ */}
+        {tab === 'BIR Reminders' && active && (
+          <div>
+            <h2 style={{ margin: '0 0 22px', fontSize: 22, fontWeight: 600 }}>BIR Filing Reminders</h2>
+            {!tierMeets(tier, 'starter') ? (
+              <UpgradeGate tier={tier} required="starter" onUpgrade={openUpgrade}>
+                <Card>
+                  <SectionHead>Upcoming BIR Filings</SectionHead>
+                  <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
+                    {['2550M','1702Q','1601-EQ'].map(f => (
+                      <div key={f} style={{ background: '#f0fff4', borderRadius: 10, padding: '12px 16px',
+                        display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                        <div style={{ fontWeight: 600 }}>{f}</div>
+                        <div style={{ fontWeight: 700, fontSize: 18, color: T.green }}>14d</div>
+                      </div>
+                    ))}
+                  </div>
+                </Card>
+              </UpgradeGate>
+            ) : birLoad ? <div style={{ color: T.muted }}>Loading…</div>
+            : (active.taxTypes || []).length === 0 ? (
+              <Card style={{ textAlign: 'center', color: T.muted }}>
+                No tax types configured.<br />
+                <span style={{ color: T.accent, cursor: 'pointer' }}
+                  onClick={() => setTab('Business Setup')}>Configure in Business Setup →</span>
+              </Card>
+            ) : deadlines.length === 0 ? <div style={{ color: T.muted }}>No upcoming deadlines found.</div>
+            : (
+              <div style={{ display: 'flex', flexDirection: 'column', gap: 12, marginBottom: 28 }}>
+                {deadlines.map((d, i) => {
+                  const uc  = d.urgency === 'urgent' ? T.red : d.urgency === 'upcoming' ? T.orange : T.green;
+                  const ubg = d.urgency === 'urgent' ? '#fff5f5' : d.urgency === 'upcoming' ? '#fff8ec' : '#f0fff4';
+                  return (
+                    <div key={i} style={{ background: ubg, borderRadius: T.radius, padding: '16px 20px',
+                      border: `1px solid ${uc}30`,
+                      display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                      <div>
+                        <div style={{ fontWeight: 600, fontSize: 15 }}>{d.form} — {d.name.replace(/^BIR Form \w+ — /, '')}</div>
+                        <div style={{ color: T.muted, fontSize: 13, marginTop: 3 }}>Due: {fmtDt(d.dueDate)}</div>
+                      </div>
+                      <div style={{ textAlign: 'right' }}>
+                        <div style={{ fontWeight: 700, fontSize: 22, color: uc }}>{d.daysUntil}d</div>
+                        <div style={{ fontSize: 11, color: uc, textTransform: 'uppercase', fontWeight: 600 }}>{d.urgency}</div>
+                      </div>
+                    </div>
+                  );
+                })}
+              </div>
+            )}
+            {vatBal && tierMeets(tier, 'starter') && (
+              <Card style={{ marginTop: 20 }}>
+                <SectionHead>Current VAT Balance</SectionHead>
+                <div style={{ display: 'flex', gap: 36, flexWrap: 'wrap' }}>
+                  <div><div style={{ fontSize: 12, color: T.muted }}>Input VAT (asset)</div>
+                    <div style={{ fontSize: 22, fontWeight: 600, color: T.green }}>{peso(vatBal.inputVAT)}</div></div>
+                  <div><div style={{ fontSize: 12, color: T.muted }}>Output VAT (liability)</div>
+                    <div style={{ fontSize: 22, fontWeight: 600, color: T.orange }}>{peso(vatBal.outputVAT)}</div></div>
+                  <div><div style={{ fontSize: 12, color: T.muted }}>Net position</div>
+                    <div style={{ fontSize: 20, fontWeight: 600, color: vatBal.netVATPayable >= 0 ? T.red : T.green }}>{vatBal.note}</div></div>
+                </div>
+              </Card>
+            )}
+          </div>
+        )}
+
+        {/* ══════════ BUSINESS SETUP ══════════ */}
+        {tab === 'Business Setup' && active && (
+          <div>
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: 24 }}>
+              <h2 style={{ margin: 0, fontSize: 22, fontWeight: 600 }}>Business Setup</h2>
+              <div style={{ display: 'flex', gap: 10 }}>
+                {tierMeets(tier, 'starter')
+                  ? <Btn variant="ghost" size="sm" onClick={handleBackup}>⬇ Backup</Btn>
+                  : <Btn variant="neutral" size="sm" disabled title="Starter+ required">⬇ Backup 🔒</Btn>}
+                <Btn size="sm" onClick={() => { setBizIsEdit(true); setShowBiz(true); }}>Edit Details</Btn>
+                <Btn variant="danger" size="sm" onClick={handleDeleteBiz}>Delete</Btn>
+              </div>
+            </div>
+
+            {/* Subscription tier banner */}
+            <div style={{ background: `${tierInfo.color}10`, border: `1px solid ${tierInfo.color}30`,
+              borderRadius: T.radius, padding: '14px 20px', marginBottom: 20,
+              display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+              <div>
+                <div style={{ fontSize: 11, fontWeight: 700, color: tierInfo.color, textTransform: 'uppercase',
+                  letterSpacing: '0.6px', marginBottom: 4 }}>Current Plan</div>
+                <div style={{ fontSize: 18, fontWeight: 700, color: tierInfo.color }}>{tierInfo.label}</div>
+                <div style={{ fontSize: 13, color: T.muted, marginTop: 2 }}>{tierInfo.desc}</div>
+              </div>
+              {tier !== 'enterprise' && (
+                <Btn size="sm" variant="ghost"
+                  style={{ borderColor: tierInfo.color, color: tierInfo.color }}
+                  onClick={() => setShowPayment(true)}>
+                  Upgrade Plan ↑
+                </Btn>
+              )}
+            </div>
+
+            <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 20, marginBottom: 20 }}>
+              {/* Business info */}
+              <Card>
+                <SectionHead>Business Information</SectionHead>
+                {[
+                  ['Trade Name', active.tradeName],
+                  ['TIN', active.tin],
+                  ['Type', active.type],
+                  ['Address', active.address || '—'],
+                  ['Tax Regime', active.taxRegime === 'opt' ? `OPT / Percentage Tax (${((Number(active.optRate)||0.03)*100).toFixed(1)}%)` : active.taxRegime === 'non_vat_exempt' ? 'Non-VAT Exempt' : 'VAT Registered (12%)'],
+                  ...(active.type === 'Sole Proprietor' && active.ownerBirthdate
+                    ? [['Owner Birthday', new Date(active.ownerBirthdate).toLocaleDateString('en-PH', { month: 'long', day: 'numeric', year: 'numeric' })]]
+                    : []),
+                  ['Client Since', fmtDt(active.createdAt)],
+                ].map(([k, v]) => (
+                  <div key={k} style={{ display: 'flex', justifyContent: 'space-between',
+                    padding: '9px 0', borderBottom: `1px solid ${T.border}`, fontSize: 14 }}>
+                    <span style={{ color: T.muted }}>{k}</span>
+                    <span style={{ fontWeight: 500, textAlign: 'right', maxWidth: '60%', wordBreak: 'break-word' }}>{v}</span>
+                  </div>
+                ))}
+              </Card>
+
+              {/* Tax obligations */}
+              <Card>
+                <SectionHead>Tax Obligations</SectionHead>
+                {(active.taxTypes || []).length === 0 ? (
+                  <div style={{ color: T.muted, fontSize: 14, marginBottom: 16 }}>None configured.</div>
+                ) : (
+                  <div style={{ display: 'flex', flexDirection: 'column', gap: 7, marginBottom: 16 }}>
+                    {active.taxTypes.map(code => {
+                      const o = TAX_TYPES.find(x => x.code === code);
+                      return (
+                        <div key={code} style={{ background: '#f0f7ff', borderRadius: 8,
+                          padding: '7px 12px', fontSize: 13, color: T.accent, fontWeight: 500 }}>
+                          {o?.label || code}
+                        </div>
+                      );
+                    })}
+                  </div>
+                )}
+                <Btn size="sm" variant="ghost" onClick={() => { setBizIsEdit(true); setShowBiz(true); }}>
+                  Manage Tax Types
+                </Btn>
+              </Card>
+            </div>
+
+            {/* Accountant access — Professional+ */}
+            <UpgradeGate tier={tier} required="professional" onUpgrade={openUpgrade}>
+              <Card style={{ marginTop: 20 }}>
+                <SectionHead>Accountant Access</SectionHead>
+                {active.accountantId ? (
+                  <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                    <div style={{ fontSize: 14, color: T.text }}>
+                      ✓ An accountant has been granted access to this business.
+                    </div>
+                    <Btn size="sm" variant="ghost" onClick={() => setShowAssign(true)}
+                      style={{ marginLeft: 16, whiteSpace: 'nowrap' }}>
+                      Change Accountant
+                    </Btn>
+                  </div>
+                ) : pendingInvite ? (
+                  <div>
+                    <div style={{ display: 'flex', alignItems: 'flex-start', gap: 10,
+                      background: '#fff8ec', border: '1px solid #ff950040', borderRadius: 10,
+                      padding: '12px 14px', marginBottom: 12 }}>
+                      <span style={{ fontSize: 18 }}>✉️</span>
+                      <div style={{ flex: 1 }}>
+                        <div style={{ fontSize: 14, fontWeight: 600, color: T.text }}>
+                          Invitation pending
+                        </div>
+                        <div style={{ fontSize: 13, color: T.muted, marginTop: 2 }}>
+                          Sent to <strong>{pendingInvite.email}</strong>. Waiting for them to sign up.
+                          Expires {new Date(pendingInvite.expires_at).toLocaleDateString('en-PH', { month: 'short', day: 'numeric', year: 'numeric' })}.
+                        </div>
+                      </div>
+                    </div>
+                    <div style={{ display: 'flex', gap: 8 }}>
+                      <Btn size="sm" variant="ghost" onClick={async () => {
+                        try {
+                          await cancelPendingInvite(active.id);
+                          setPendingInvite(null);
+                        } catch (e) { alert(e.message); }
+                      }}>Cancel Invitation</Btn>
+                      <Btn size="sm" onClick={() => setShowAssign(true)}>Resend / Change</Btn>
+                    </div>
+                  </div>
+                ) : (
+                  <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                    <div style={{ fontSize: 14, color: T.muted }}>
+                      No accountant assigned yet. Assign one to allow your accountant to prepare reports and BIR returns.
+                    </div>
+                    <Btn size="sm" variant="ghost" onClick={() => setShowAssign(true)}
+                      style={{ marginLeft: 16, whiteSpace: 'nowrap' }}>
+                      Assign Accountant
+                    </Btn>
+                  </div>
+                )}
+              </Card>
+            </UpgradeGate>
+
+            {/* Encoder list — read-only for client */}
+            <Card style={{ marginTop: 20 }}>
+              <SectionHead>Data Encoders</SectionHead>
+              {(active.encoderIds || []).length === 0 ? (
+                <div style={{ fontSize: 14, color: T.muted }}>
+                  No encoders assigned to this business. Your accountant can assign encoders to help with data entry.
+                </div>
+              ) : (
+                <>
+                  <div style={{ fontSize: 13, color: T.muted, marginBottom: 12 }}>
+                    The following encoder accounts have transaction data-entry access to this business.
+                    They can add and delete transactions but cannot view reports, BIR returns, or financial statements.
+                  </div>
+                  <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
+                    {(active.encoderIds || []).map((encId, i) => (
+                      <div key={encId} style={{ display: 'flex', alignItems: 'center', gap: 10,
+                        background: '#fff8ec', borderRadius: 8, padding: '9px 14px',
+                        border: '1px solid #ff950025' }}>
+                        <span style={{ fontSize: 16 }}>⌨️</span>
+                        <div>
+                          <div style={{ fontSize: 13, fontWeight: 500, color: T.text }}>Encoder #{i + 1}</div>
+                          <div style={{ fontSize: 11, color: T.muted, fontFamily: 'monospace' }}>{encId}</div>
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                  <div style={{ marginTop: 12, fontSize: 12, color: T.muted }}>
+                    To add or remove encoders, contact your assigned accountant.
+                  </div>
+                </>
+              )}
+            </Card>
+          </div>
+        )}
+
+      </div>
+
+      {/* ══ Modals (all module-level — no focus loss) ══ */}
+      {showTx && (
+        <TxModal key={active?.id} clientId={active?.id} client={active}
+          onSaved={() => { loadTxns(); loadOverview(); }}
+          onClose={() => setShowTx(false)} />
+      )}
+      {showBiz && (
+        <BusinessModal key={bizIsEdit ? (active?.id || 'edit') : 'new'}
+          initialValues={bizIsEdit ? active : null}
+          isEdit={bizIsEdit}
+          onSave={saveBusiness}
+          onClose={() => setShowBiz(false)} />
+      )}
+      {showAssign && (
+        <AssignModal clientId={active?.id}
+          onSaved={() => { loadClients(); loadPendingInvite(active?.id); }}
+          onClose={() => setShowAssign(false)} />
+      )}
+      {showPayment && (
+        <PaymentModal
+          clientId={active?.id}
+          currentTier={tier}
+          settings={siteSettings}
+          onClose={() => setShowPayment(false)}
+          onUpgradeSuccess={() => { setShowPayment(false); loadClients(); }}
+        />
+      )}
+      {showAsset && (
+        <AssetModal clientId={active?.id}
+          onSaved={() => { setShowAsset(false); loadAssets(); }}
+          onClose={() => setShowAsset(false)} />
+      )}
+      {showLapsing && lapsingData && (
+        <LapsingModal data={lapsingData} onClose={() => { setShowLapsing(false); setLapsingData(null); }} />
+      )}
+    </div>
+  );
+}
