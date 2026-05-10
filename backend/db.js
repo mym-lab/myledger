@@ -1,4 +1,6 @@
 // ─── Database (node:sqlite — built into Node 22.5+ / Node 24) ────────────────
+// Admin seed: if ADMIN_EMAIL + ADMIN_PASSWORD env vars are set and no admin
+// exists yet, one is created automatically on first startup.
 // Uses the SQLite module that ships with Node.js itself — no npm install,
 // no native compilation, no Visual Studio required.
 // Synchronous API identical to better-sqlite3 in all routes.
@@ -6,6 +8,8 @@
 import { DatabaseSync } from 'node:sqlite';
 import { join, dirname } from 'path';
 import { fileURLToPath } from 'url';
+import bcrypt from 'bcryptjs';
+import { v4 as uuidv4 } from 'uuid';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 // In production (Railway), set DB_PATH=/data/myledger.db with a mounted volume.
@@ -340,3 +344,24 @@ export function rowToAudit(r) {
     detail: r.detail, timestamp: r.timestamp,
   };
 }
+
+// ── Admin seed — runs once on startup if env vars are set ─────────────────────
+(function seedAdmin() {
+  const email    = process.env.ADMIN_EMAIL;
+  const password = process.env.ADMIN_PASSWORD;
+  if (!email || !password) return;
+
+  const existing = db.prepare("SELECT id FROM users WHERE role = 'admin' LIMIT 1").get();
+  if (existing) {
+    console.log('ℹ️  Admin account already exists — seed skipped.');
+    return;
+  }
+
+  const hash = bcrypt.hashSync(password, 10);
+  db.prepare(`
+    INSERT INTO users (id, email, name, company, role, password_hash, accountant_tier, created_at)
+    VALUES (?, ?, 'Admin', 'Kaiman & Co.', 'admin', ?, 'free', ?)
+  `).run(uuidv4(), email, hash, new Date().toISOString());
+
+  console.log(`✅  Admin account created: ${email}`);
+})();
