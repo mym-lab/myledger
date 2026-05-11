@@ -635,7 +635,8 @@ export default function CommandCenter({ onLogout }) {
               <div>
                 <h2 style={{ margin: 0, fontSize: 22, fontWeight: 600 }}>Referral Management</h2>
                 <div style={{ fontSize: 13, color: T.muted, marginTop: 4 }}>
-                  Approve pending referrals to credit ₱200 to the referrer's balance.
+                  Signup bonus: <strong>₱{settings?.referral?.signupBonus ?? 100}</strong> per referral ·
+                  Subscription commission: <strong>{settings?.referral?.subscriptionPercent ?? 10}%</strong> per approved payment.
                 </div>
               </div>
               <div style={{ display: 'flex', gap: 10, alignItems: 'center' }}>
