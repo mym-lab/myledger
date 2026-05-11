@@ -116,7 +116,7 @@ export default function AuthScreen({ onLogin }) {
             <div>
               <div style={{ fontWeight: 600, color: '#cc7700', fontSize: 14 }}>You were referred!</div>
               <div style={{ fontSize: 13, color: '#3d3d3f', marginTop: 2, lineHeight: 1.5 }}>
-                Sign up now — your referrer earns <strong>₱{signupBonus.toLocaleString('en-PH')}</strong> when you join.
+                Sign up now — your referrer earns <strong>₱{signupBonus.toLocaleString('en-PH')} credits</strong> when you join.
                 No business registration needed to get started.
               </div>
             </div>

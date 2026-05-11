@@ -123,10 +123,11 @@ export const rejectUpgradeRequest  = (id, reason) => put(`/upgrade-requests/${id
 export const getAdminStats     = ()           => get('/admin/stats');
 export const getSettings       = ()           => get('/admin/settings');
 export const updateSettings    = (data)       => put('/admin/settings', data);
-export const setAccountantTier     = (userId, tier)           => put(`/admin/users/${userId}/set-tier`,     { tier });
-export const setAccountantBranding = (userId, firmName, accentColor) =>
+export const setAccountantTier         = (userId, tier)           => put(`/admin/users/${userId}/set-tier`,     { tier });
+export const setAccountantBranding     = (userId, firmName, accentColor) =>
   put(`/admin/users/${userId}/set-branding`, { firmName, accentColor });
-export const saveSmtpSettings      = (data)                   => put('/admin/smtp', data);
+export const setClientSubscriptionTier = (clientId, tier)         => put(`/admin/clients/${clientId}/set-tier`, { tier });
+export const saveSmtpSettings          = (data)                   => put('/admin/smtp', data);
 
 // ─── Notifications ─────────────────────────────────────────────
 export const sendTestEmail      = (to)             => post('/notifications/test',           { to });

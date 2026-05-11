@@ -3425,7 +3425,7 @@ export default function AccountantPortal({ onLogout }) {
                 <h2 style={{ margin: 0, fontSize: 22, fontWeight: 600 }}>Referral Program</h2>
                 <div style={{ fontSize: 13, color: T.muted, marginTop: 4 }}>
                   Earn <strong style={{ color: '#ff9500' }}>
-                    ₱{refData?.rates?.signupBonus ?? 100} per signup
+                    ₱{refData?.rates?.signupBonus ?? 100} credits per signup
                   </strong> + <strong style={{ color: '#ff9500' }}>
                     {refData?.rates?.subscriptionPercent ?? 10}% of every subscription payment
                   </strong> they make.
@@ -3459,7 +3459,7 @@ export default function AccountantPortal({ onLogout }) {
                     </Btn>
                   </div>
                   <div style={{ marginTop: 12, fontSize: 12, color: T.muted }}>
-                    Share with business owners or colleagues. You earn ₱200 when each referred user's account is approved.
+                    Share with business owners or colleagues. You earn <strong>₱{refData?.rates?.signupBonus ?? 100} credits</strong> per signup + <strong>{refData?.rates?.subscriptionPercent ?? 10}%</strong> of every subscription payment they make.
                   </div>
                 </Card>
 

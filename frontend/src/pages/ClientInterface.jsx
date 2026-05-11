@@ -2063,7 +2063,7 @@ export default function ClientInterface({ onLogout }) {
                 <h2 style={{ margin: 0, fontSize: 22, fontWeight: 600 }}>Referral Program</h2>
                 <div style={{ fontSize: 13, color: T.muted, marginTop: 4 }}>
                   Earn <strong style={{ color: T.orange }}>
-                    ₱{refData?.rates?.signupBonus ?? 100} per signup
+                    ₱{refData?.rates?.signupBonus ?? 100} credits per signup
                   </strong> + <strong style={{ color: T.orange }}>
                     {refData?.rates?.subscriptionPercent ?? 10}% of every subscription payment
                   </strong> they make.
@@ -2098,7 +2098,7 @@ export default function ClientInterface({ onLogout }) {
                     </Btn>
                   </div>
                   <div style={{ marginTop: 12, fontSize: 12, color: T.muted }}>
-                    You earn <strong>₱{refData?.rates?.signupBonus ?? 100}</strong> when they sign up,
+                    You earn <strong>₱{refData?.rates?.signupBonus ?? 100} credits</strong> when they sign up,
                     plus <strong>{refData?.rates?.subscriptionPercent ?? 10}%</strong> of every subscription payment they make.
                   </div>
                 </Card>

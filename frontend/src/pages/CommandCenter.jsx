@@ -6,7 +6,7 @@ import { useState, useEffect } from 'react';
 import {
   getAdminStats, getSettings, updateSettings,
   getUpgradeRequests, approveUpgradeRequest, rejectUpgradeRequest,
-  setAccountantTier, setAccountantBranding,
+  setAccountantTier, setAccountantBranding, setClientSubscriptionTier,
   saveSmtpSettings, sendTestEmail, sendBIRReminders,
   getAuditLog,
   getAllReferrals, creditReferral,
@@ -218,6 +218,15 @@ export default function CommandCenter({ onLogout }) {
       }));
     }).catch(() => {});
   }, []);
+
+  async function handleSetClientTier(clientId, tier) {
+    try {
+      await setClientSubscriptionTier(clientId, tier);
+      setTierMsg(`✓ Subscription set to "${tier}"`);
+      getAdminStats().then(setStats).catch(() => {});
+      setTimeout(() => setTierMsg(''), 3000);
+    } catch (e) { alert(e.message); }
+  }
 
   async function handleSetTier(userId, tier) {
     try {
@@ -636,7 +645,7 @@ export default function CommandCenter({ onLogout }) {
               <div>
                 <h2 style={{ margin: 0, fontSize: 22, fontWeight: 600 }}>Referral Management</h2>
                 <div style={{ fontSize: 13, color: T.muted, marginTop: 4 }}>
-                  Signup bonus: <strong>₱{settings?.referral?.signupBonus ?? 100}</strong> per referral ·
+                  Signup bonus: <strong>₱{settings?.referral?.signupBonus ?? 100} credits</strong> per referral ·
                   Subscription commission: <strong>{settings?.referral?.subscriptionPercent ?? 10}%</strong> per approved payment.
                 </div>
               </div>
@@ -829,10 +838,14 @@ export default function CommandCenter({ onLogout }) {
                       {stats.users.map((u, i) => {
                         const isAcct    = u.role === 'accountant';
                         const isEncoder = u.role === 'encoder';
+                        const isClient  = !isAcct && !isEncoder;
                         const roleColor = isAcct ? '#00836e' : isEncoder ? '#e07000' : T.blue;
                         const tier      = u.accountantTier || 'free';
                         const TIER_COLORS = { free: T.muted, solo: '#0071e3', professional: '#ff9500', firm: '#34c759', agency: '#af52de' };
                         const tierColor = TIER_COLORS[tier] || T.muted;
+                        // For client users, look up their business(es)
+                        const clientBiz = isClient ? (stats.clients || []).filter(c => c.ownerId === u.id) : [];
+                        const SUB_COLORS = { free: T.muted, starter: T.blue, professional: '#af52de', enterprise: T.orange };
                         const isAgency  = isAcct && tier === 'agency';
                         const bForm     = getBrandingForm(u);
                         const rowBorder = `1px solid ${T.border}`;
@@ -853,6 +866,18 @@ export default function CommandCenter({ onLogout }) {
                                   fontWeight: 700, padding: '2px 8px', borderRadius: 5, textTransform: 'uppercase' }}>
                                   {tier}
                                 </span>
+                              ) : isClient && clientBiz.length > 0 ? (
+                                <div style={{ display: 'flex', flexDirection: 'column', gap: 3 }}>
+                                  {clientBiz.map(biz => {
+                                    const sc = SUB_COLORS[biz.subscriptionTier] || T.muted;
+                                    return (
+                                      <span key={biz.id} style={{ background: `${sc}18`, color: sc, fontSize: 11,
+                                        fontWeight: 700, padding: '2px 8px', borderRadius: 5, textTransform: 'uppercase' }}>
+                                        {biz.subscriptionTier}
+                                      </span>
+                                    );
+                                  })}
+                                </div>
                               ) : <span style={{ color: T.border }}>—</span>}
                             </td>
                             <td style={{ padding: '11px 14px', color: T.muted }}>{u.company || '—'}</td>
@@ -870,6 +895,27 @@ export default function CommandCenter({ onLogout }) {
                                   <option value="firm">Firm (₱2,999)</option>
                                   <option value="agency">Agency (₱4,999)</option>
                                 </select>
+                              ) : isClient && clientBiz.length > 0 ? (
+                                <div style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
+                                  {clientBiz.map(biz => (
+                                    <div key={biz.id} style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+                                      <span style={{ fontSize: 11, color: T.muted, maxWidth: 80,
+                                        overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                                        {biz.tradeName}
+                                      </span>
+                                      <select value={biz.subscriptionTier}
+                                        onChange={e => handleSetClientTier(biz.id, e.target.value)}
+                                        style={{ fontSize: 12, padding: '4px 8px', borderRadius: 6,
+                                          border: `1px solid ${T.border}`, background: T.surface,
+                                          color: T.text, cursor: 'pointer', fontFamily: 'inherit' }}>
+                                        <option value="free">Free</option>
+                                        <option value="starter">Starter (₱399)</option>
+                                        <option value="professional">Professional (₱699)</option>
+                                        <option value="enterprise">Enterprise (₱999)</option>
+                                      </select>
+                                    </div>
+                                  ))}
+                                </div>
                               ) : <span style={{ color: T.border, fontSize: 12 }}>—</span>}
                             </td>
                           </tr>
@@ -1123,7 +1169,7 @@ export default function CommandCenter({ onLogout }) {
                         onChange={e => setReferralForm(f => ({ ...f, signupBonus: e.target.value }))} />
                     </div>
                     <div style={{ fontSize: 11, color: T.muted, marginTop: 4 }}>
-                      Currently: <strong style={{ color: T.accent }}>₱{Number(referralForm.signupBonus).toLocaleString() || 0}</strong> per signup
+                      Currently: <strong style={{ color: T.accent }}>₱{Number(referralForm.signupBonus).toLocaleString() || 0} credits</strong> per signup
                     </div>
                   </div>
                   <div>

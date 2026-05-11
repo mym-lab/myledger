@@ -39,6 +39,7 @@ router.get('/stats', (req, res) => {
       const cnt = Number(txRow?.cnt ?? 0);
       return {
         id: c.id, tradeName: c.tradeName, tin: c.tin, type: c.type,
+        ownerId: c.ownerId,
         accountantId: c.accountantId,
         subscriptionTier: c.subscriptionTier || 'free',
         taxRegime: c.taxRegime || 'vat',
