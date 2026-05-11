@@ -59,7 +59,7 @@ router.get('/stats', (req, res) => {
       outputVAT:     round(sum(txns.filter(t => t.type === 'income'),  'amount_vat')),
     };
 
-    console.log(`   → ${users.length} users, ${clients.length} clients, ${txns.length} txns`);
+    console.log(`   → ${users.length} users (emails: ${users.map(u=>u.email).join(', ')||'none'}), ${clients.length} clients, ${txns.length} txns`);
     return res.json(payload);
   } catch (err) {
     console.error('❌ /api/admin/stats error:', err.message, err.stack);
@@ -80,7 +80,7 @@ router.get('/settings', (req, res, next) => {
 // PUT /api/admin/settings
 router.put('/settings', (req, res, next) => {
   try {
-    const { pricing, payment, contactEmail, accountantPricing } = req.body;
+    const { pricing, payment, contactEmail, accountantPricing, referral } = req.body;
 
     if (pricing) {
       const current = getSetting('pricing') || {};
@@ -104,6 +104,12 @@ router.put('/settings', (req, res, next) => {
       setSetting('payment', current);
     }
     if (contactEmail) setSetting('contactEmail', contactEmail);
+    if (referral) {
+      const current = getSetting('referral') || {};
+      if (referral.signupBonus        != null) current.signupBonus        = Number(referral.signupBonus);
+      if (referral.subscriptionPercent != null) current.subscriptionPercent = Number(referral.subscriptionPercent);
+      setSetting('referral', current);
+    }
     if (accountantPricing) {
       const current = getSetting('accountantPricing') || {};
       if (accountantPricing.solo         != null) current.solo         = Number(accountantPricing.solo);

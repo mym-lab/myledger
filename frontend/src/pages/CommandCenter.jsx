@@ -8,7 +8,7 @@ import {
   getUpgradeRequests, approveUpgradeRequest, rejectUpgradeRequest,
   setAccountantTier, setAccountantBranding,
   saveSmtpSettings, sendTestEmail, sendBIRReminders,
-  getClients, getAuditLog,
+  getAuditLog,
   getAllReferrals, creditReferral,
 } from '../api.js';
 
@@ -114,7 +114,7 @@ export default function CommandCenter({ onLogout }) {
 
   useEffect(() => {
     loadUpgradeRequests();
-    getClients().then(r => setAuditClients(r.clients || [])).catch(() => {});
+    // auditClients is derived from stats.clients (loaded below) — no separate call needed
   }, []);
 
   async function loadAllReferrals() {
@@ -124,11 +124,12 @@ export default function CommandCenter({ onLogout }) {
     finally { setRefLoading(false); }
   }
 
-  async function handleCreditReferral(id) {
-    if (!confirm('Credit this referral and add ₱200 to the referrer\'s balance?')) return;
+  async function handleCreditReferral(id, amount) {
+    const display = amount ? `₱${Number(amount).toLocaleString('en-PH')}` : 'the bonus';
+    if (!confirm(`Credit this referral and add ${display} to the referrer's balance?`)) return;
     try {
       await creditReferral(id);
-      setRefMsg('✓ Referral credited! ₱200 added to referrer balance.');
+      setRefMsg(`✓ Referral credited! ${display} added to referrer balance.`);
       loadAllReferrals();
       setTimeout(() => setRefMsg(''), 4000);
     } catch (e) { alert(e.message); }
@@ -708,7 +709,7 @@ export default function CommandCenter({ onLogout }) {
                           </td>
                           <td style={{ padding: '12px 14px' }}>
                             {r.status === 'pending' ? (
-                              <button onClick={() => handleCreditReferral(r.id)} style={{
+                              <button onClick={() => handleCreditReferral(r.id, r.rewardAmount)} style={{
                                 padding: '6px 14px', borderRadius: 7, border: 'none', cursor: 'pointer',
                                 background: T.green, color: '#fff', fontSize: 12, fontWeight: 600,
                                 fontFamily: 'inherit',
@@ -943,7 +944,7 @@ export default function CommandCenter({ onLogout }) {
                 border: `1px solid ${T.border}`, fontSize: 14, background: '#fafafa', minWidth: 240 }}
                 onChange={e => { setAuditClientId(e.target.value); setAuditEntries([]); }}>
                 <option value="">— Select client —</option>
-                {auditClients.map(c => <option key={c.id} value={c.id}>{c.tradeName}</option>)}
+                {(stats?.clients || []).map(c => <option key={c.id} value={c.id}>{c.tradeName}</option>)}
               </select>
               <button onClick={() => loadAudit(auditClientId)} disabled={!auditClientId}
                 style={{ padding: '9px 18px', borderRadius: 8, border: 'none', cursor: auditClientId ? 'pointer' : 'not-allowed',
