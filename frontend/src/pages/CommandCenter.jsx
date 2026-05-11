@@ -890,10 +890,10 @@ export default function CommandCenter({ onLogout }) {
                                     border: `1px solid ${T.border}`, background: T.surface,
                                     color: T.text, cursor: 'pointer', fontFamily: 'inherit' }}>
                                   <option value="free">Free</option>
-                                  <option value="solo">Solo (₱599)</option>
-                                  <option value="professional">Professional (₱1,499)</option>
-                                  <option value="firm">Firm (₱2,999)</option>
-                                  <option value="agency">Agency (₱4,999)</option>
+                                  <option value="solo">Solo (₱{(settings?.accountantPricing?.solo ?? 599).toLocaleString()})</option>
+                                  <option value="professional">Professional (₱{(settings?.accountantPricing?.professional ?? 1499).toLocaleString()})</option>
+                                  <option value="firm">Firm (₱{(settings?.accountantPricing?.firm ?? 2999).toLocaleString()})</option>
+                                  <option value="agency">Agency (₱{(settings?.accountantPricing?.agency ?? 4999).toLocaleString()})</option>
                                 </select>
                               ) : isClient && clientBiz.length > 0 ? (
                                 <div style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
@@ -909,9 +909,9 @@ export default function CommandCenter({ onLogout }) {
                                           border: `1px solid ${T.border}`, background: T.surface,
                                           color: T.text, cursor: 'pointer', fontFamily: 'inherit' }}>
                                         <option value="free">Free</option>
-                                        <option value="starter">Starter (₱399)</option>
-                                        <option value="professional">Professional (₱699)</option>
-                                        <option value="enterprise">Enterprise (₱999)</option>
+                                        <option value="starter">Starter (₱{(settings?.pricing?.starter ?? 399).toLocaleString()})</option>
+                                        <option value="professional">Professional (₱{(settings?.pricing?.professional ?? 699).toLocaleString()})</option>
+                                        <option value="enterprise">Enterprise (₱{(settings?.pricing?.enterprise ?? 999).toLocaleString()})</option>
                                       </select>
                                     </div>
                                   ))}
