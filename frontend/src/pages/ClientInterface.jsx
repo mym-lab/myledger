@@ -14,6 +14,7 @@ import {
   getSettings,
   createUpgradeRequest,
   scanReceipt,
+  getMyReferrals,
 } from '../api.js';
 
 // ─── Design tokens ───────────────────────────────────────────────────────────
@@ -1084,7 +1085,7 @@ function LapsingModal({ data, onClose }) {
   );
 }
 
-const TABS = ['Overview', 'Transactions', 'Income Statement', 'Balance Sheet', 'Cash Flow', 'Books', 'Assets', 'BIR Reminders', 'Business Setup'];
+const TABS = ['Overview', 'Transactions', 'Income Statement', 'Balance Sheet', 'Cash Flow', 'Books', 'Assets', 'BIR Reminders', 'Referral', 'Business Setup'];
 // Minimum tier required per tab (undefined = always accessible)
 const TAB_TIER = {
   'BIR Reminders':   'starter',
@@ -1146,6 +1147,11 @@ export default function ClientInterface({ onLogout }) {
   const [showLapsing,  setShowLapsing]  = useState(false);
   const [lapsingData,  setLapsingData]  = useState(null);
 
+  // Referral tab
+  const [refData,   setRefData]   = useState(null);
+  const [refLoad,   setRefLoad]   = useState(false);
+  const [refCopied, setRefCopied] = useState(false);
+
   // Site settings (pricing, payment accounts)
   const [siteSettings, setSiteSettings] = useState(DEFAULT_SETTINGS);
 
@@ -1168,6 +1174,7 @@ export default function ClientInterface({ onLogout }) {
     if (tab === 'Transactions')  loadTxns();
     if (tab === 'BIR Reminders') loadBIR();
     if (tab === 'Assets')        loadAssets();
+    if (tab === 'Referral')      loadReferrals();
   }, [active?.id, tab]);
 
   // Load pending accountant invite whenever active client changes
@@ -1229,6 +1236,12 @@ export default function ClientInterface({ onLogout }) {
     setAssetLoad(true);
     try { const r = await getAssets(active.id); setAssets(r.assets || []); }
     catch (e) { console.error(e); } finally { setAssetLoad(false); }
+  }
+
+  async function loadReferrals() {
+    setRefLoad(true);
+    try { const r = await getMyReferrals(); setRefData(r); }
+    catch (e) { console.error(e); } finally { setRefLoad(false); }
   }
 
   async function loadIncReport() {
@@ -1399,7 +1412,7 @@ export default function ClientInterface({ onLogout }) {
           })}
         </div>
 
-        {!active && <div style={{ color: T.muted, textAlign: 'center', padding: 60 }}>Add a business to get started.</div>}
+        {!active && tab !== 'Referral' && <div style={{ color: T.muted, textAlign: 'center', padding: 60 }}>Add a business to get started.</div>}
 
         {/* ══════════ OVERVIEW ══════════ */}
         {tab === 'Overview' && active && (
@@ -2007,6 +2020,127 @@ export default function ClientInterface({ onLogout }) {
                     <div style={{ fontSize: 20, fontWeight: 600, color: vatBal.netVATPayable >= 0 ? T.red : T.green }}>{vatBal.note}</div></div>
                 </div>
               </Card>
+            )}
+          </div>
+        )}
+
+        {/* ══════════ REFERRAL ══════════ */}
+        {tab === 'Referral' && (
+          <div>
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 24 }}>
+              <div>
+                <h2 style={{ margin: 0, fontSize: 22, fontWeight: 600 }}>Referral Program</h2>
+                <div style={{ fontSize: 13, color: T.muted, marginTop: 4 }}>
+                  Invite friends to MyLedger and earn <strong style={{ color: T.orange }}>₱200 cash</strong> for every signup you refer.
+                </div>
+              </div>
+              <Btn size="sm" variant="ghost" onClick={loadReferrals}>↻ Refresh</Btn>
+            </div>
+
+            {refLoad && <div style={{ color: T.muted, fontSize: 14 }}>Loading…</div>}
+
+            {refData && (
+              <>
+                {/* Referral link */}
+                <Card style={{ marginBottom: 20 }}>
+                  <SectionHead>Your Referral Link</SectionHead>
+                  <div style={{ display: 'flex', gap: 10, alignItems: 'center', flexWrap: 'wrap' }}>
+                    <div style={{ flex: 1, background: '#f5f5f7', borderRadius: 8, padding: '10px 14px',
+                      fontFamily: 'monospace', fontSize: 13, color: T.text, wordBreak: 'break-all',
+                      border: `1px solid ${T.border}` }}>
+                      {refData.referralLink}
+                    </div>
+                    <Btn size="sm" onClick={() => {
+                      navigator.clipboard.writeText(refData.referralLink);
+                      setRefCopied(true);
+                      setTimeout(() => setRefCopied(false), 2000);
+                    }}>
+                      {refCopied ? '✓ Copied!' : '📋 Copy Link'}
+                    </Btn>
+                  </div>
+                  <div style={{ marginTop: 12, fontSize: 12, color: T.muted }}>
+                    Share this link with friends. When they sign up, you earn ₱200 once their account is approved by our team.
+                  </div>
+                </Card>
+
+                {/* Stats row */}
+                <div style={{ display: 'grid', gridTemplateColumns: 'repeat(4, 1fr)', gap: 16, marginBottom: 20 }}>
+                  {[
+                    { label: 'Total Referrals', value: refData.stats.total, color: T.accent },
+                    { label: 'Pending',          value: refData.stats.pending,  color: T.orange },
+                    { label: 'Credited',         value: refData.stats.credited, color: T.green },
+                    { label: 'Cash Balance',     value: `₱${(refData.stats.balance||0).toLocaleString()}`, color: '#af52de' },
+                  ].map(s => (
+                    <Card key={s.label} style={{ textAlign: 'center' }}>
+                      <div style={{ fontSize: 28, fontWeight: 700, color: s.color }}>{s.value}</div>
+                      <div style={{ fontSize: 12, color: T.muted, marginTop: 4 }}>{s.label}</div>
+                    </Card>
+                  ))}
+                </div>
+
+                {/* Balance note */}
+                {refData.stats.balance > 0 && (
+                  <div style={{ background: '#e8f8ee', border: `1px solid ${T.green}40`,
+                    borderRadius: T.radius, padding: '14px 18px', marginBottom: 20,
+                    display: 'flex', gap: 12, alignItems: 'center' }}>
+                    <span style={{ fontSize: 22 }}>💰</span>
+                    <div>
+                      <div style={{ fontWeight: 600, color: '#1a7f44', fontSize: 14 }}>
+                        You have ₱{(refData.stats.balance).toLocaleString()} in referral credits!
+                      </div>
+                      <div style={{ fontSize: 12, color: T.muted, marginTop: 2 }}>
+                        Contact us at <strong>mym@kaimanco.com</strong> to redeem your balance as a subscription credit or cash payout.
+                      </div>
+                    </div>
+                  </div>
+                )}
+
+                {/* Referrals list */}
+                {refData.referrals.length === 0 ? (
+                  <Card>
+                    <div style={{ textAlign: 'center', padding: '32px 0', color: T.muted }}>
+                      <div style={{ fontSize: 32, marginBottom: 10 }}>🔗</div>
+                      <div style={{ fontSize: 15, fontWeight: 500, marginBottom: 6 }}>No referrals yet</div>
+                      <div style={{ fontSize: 13 }}>Share your link above to start earning!</div>
+                    </div>
+                  </Card>
+                ) : (
+                  <Card>
+                    <SectionHead>Referral History</SectionHead>
+                    <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 13 }}>
+                      <thead>
+                        <tr style={{ borderBottom: `2px solid ${T.border}` }}>
+                          {['Email', 'Status', 'Reward', 'Date'].map(h => (
+                            <th key={h} style={{ padding: '8px 10px', textAlign: 'left',
+                              fontSize: 11, fontWeight: 600, color: T.muted, textTransform: 'uppercase',
+                              letterSpacing: '0.5px' }}>{h}</th>
+                          ))}
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {refData.referrals.map(r => (
+                          <tr key={r.id} style={{ borderBottom: `1px solid ${T.border}` }}>
+                            <td style={{ padding: '10px 10px', color: T.text }}>{r.refereeEmail}</td>
+                            <td style={{ padding: '10px 10px' }}>
+                              <span style={{ padding: '3px 10px', borderRadius: 20, fontSize: 11, fontWeight: 600,
+                                background: r.status === 'credited' ? '#e8f8ee' : '#fff8ec',
+                                color: r.status === 'credited' ? T.green : T.orange }}>
+                                {r.status === 'credited' ? '✓ Credited' : '⏳ Pending'}
+                              </span>
+                            </td>
+                            <td style={{ padding: '10px 10px', fontWeight: 600, color: T.green }}>
+                              {r.status === 'credited' ? `₱${r.rewardAmount}` : '—'}
+                            </td>
+                            <td style={{ padding: '10px 10px', color: T.muted }}>
+                              {new Date(r.createdAt).toLocaleDateString('en-PH', { month: 'short', day: 'numeric', year: 'numeric' })}
+                            </td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  </Card>
+                )}
+              </>
             )}
           </div>
         )}

@@ -174,5 +174,10 @@ export const getInvite              = (token)    => get(`/invitations/${token}`)
 export const getPendingInvite       = (clientId) => get(`/invitations/client/${clientId}`, true);
 export const cancelPendingInvite    = (clientId) => del(`/invitations/client/${clientId}`, true);
 
+// ─── Referrals ────────────────────────────────────────────────
+export const getMyReferrals    = ()           => get('/referrals/me', true);
+export const getAllReferrals    = ()           => get('/referrals/list', true);
+export const creditReferral    = (id)         => post(`/referrals/credit/${id}`, {}, true);
+
 // ─── Health ───────────────────────────────────────────────────
 export const healthCheck       = ()           => get('/health');

@@ -21,6 +21,7 @@ import {
   getSLSP,
   backupClient,
   scanReceipt,
+  getMyReferrals,
 } from '../api.js';
 import {
   printReport,
@@ -926,7 +927,7 @@ function computeOPT(transactions, client, year, month, isQuarterly) {
   return { grossSales, optRate, percentageTax, txCount: filtered.length };
 }
 
-const TABS = ['Dashboard', 'Transactions', 'Journal Entries', 'Trial Balance', 'Books', 'General Journal', 'General Ledger', 'COA', 'Period Lock', 'Audit Log', 'BIR Returns', 'Alphalist', 'SLSP', 'Income Statement', 'Balance Sheet', 'Cash Flow', 'Assets', 'Contacts', 'BIR Reminders'];
+const TABS = ['Dashboard', 'Transactions', 'Journal Entries', 'Trial Balance', 'Books', 'General Journal', 'General Ledger', 'COA', 'Period Lock', 'Audit Log', 'BIR Returns', 'Alphalist', 'SLSP', 'Income Statement', 'Balance Sheet', 'Cash Flow', 'Assets', 'Contacts', 'BIR Reminders', 'Referral'];
 
 const BOOKS_COLUMNS = {
   sales: ['Date','Ref / OR No.','Customer','Description','Gross Sales','Output VAT','Net Sales'],
@@ -1029,8 +1030,17 @@ export default function AccountantPortal({ onLogout }) {
   const [glTo,        setGlTo]        = useState('');
   const [glAccount,   setGlAccount]   = useState('');
   const [glExpanded,  setGlExpanded]  = useState({});
+  // Referral
+  const [refData,    setRefData]    = useState(null);
+  const [refLoad,    setRefLoad]    = useState(false);
+  const [refCopied,  setRefCopied]  = useState(false);
 
   useEffect(() => { loadClients(); }, []);
+
+  // Referral tab is user-level (no active client needed)
+  useEffect(() => {
+    if (tab === 'Referral') loadReferrals();
+  }, [tab]);
 
   useEffect(() => {
     if (!active) return;
@@ -1272,6 +1282,12 @@ export default function AccountantPortal({ onLogout }) {
     try { const r = await getSLSP(active.id, y, q); setSlspData(r); }
     catch (e) { console.error(e); }
     finally { setSlspLoad(false); }
+  }
+
+  async function loadReferrals() {
+    setRefLoad(true);
+    try { const r = await getMyReferrals(); setRefData(r); }
+    catch (e) { console.error(e); } finally { setRefLoad(false); }
   }
 
   function exportSLSPcsv(rows, headers, filename) {
@@ -3389,6 +3405,123 @@ export default function AccountantPortal({ onLogout }) {
                   </div>
                 </div>
               </Card>
+            )}
+          </div>
+        )}
+
+        {/* ══════════ REFERRAL ══════════ */}
+        {tab === 'Referral' && (
+          <div>
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 24 }}>
+              <div>
+                <h2 style={{ margin: 0, fontSize: 22, fontWeight: 600 }}>Referral Program</h2>
+                <div style={{ fontSize: 13, color: T.muted, marginTop: 4 }}>
+                  Refer clients or fellow accountants and earn <strong style={{ color: '#ff9500' }}>₱200 cash</strong> per signup.
+                </div>
+              </div>
+              <Btn size="sm" variant="ghost" onClick={loadReferrals}>↻ Refresh</Btn>
+            </div>
+
+            {refLoad && <div style={{ color: T.muted, fontSize: 14 }}>Loading…</div>}
+
+            {refData && (
+              <>
+                <Card style={{ marginBottom: 20 }}>
+                  <SectionHead>Your Referral Link</SectionHead>
+                  <div style={{ display: 'flex', gap: 10, alignItems: 'center', flexWrap: 'wrap' }}>
+                    <div style={{ flex: 1, background: '#f5f5f7', borderRadius: 8, padding: '10px 14px',
+                      fontFamily: 'monospace', fontSize: 13, color: T.text, wordBreak: 'break-all',
+                      border: `1px solid ${T.border}` }}>
+                      {refData.referralLink}
+                    </div>
+                    <Btn size="sm" onClick={() => {
+                      navigator.clipboard.writeText(refData.referralLink);
+                      setRefCopied(true);
+                      setTimeout(() => setRefCopied(false), 2000);
+                    }}>
+                      {refCopied ? '✓ Copied!' : '📋 Copy Link'}
+                    </Btn>
+                  </div>
+                  <div style={{ marginTop: 12, fontSize: 12, color: T.muted }}>
+                    Share with business owners or colleagues. You earn ₱200 when each referred user's account is approved.
+                  </div>
+                </Card>
+
+                <div style={{ display: 'grid', gridTemplateColumns: 'repeat(4, 1fr)', gap: 16, marginBottom: 20 }}>
+                  {[
+                    { label: 'Total Referrals', value: refData.stats.total,    color: brandAccent },
+                    { label: 'Pending',          value: refData.stats.pending,  color: '#ff9500' },
+                    { label: 'Credited',         value: refData.stats.credited, color: T.green },
+                    { label: 'Cash Balance',     value: `₱${(refData.stats.balance||0).toLocaleString()}`, color: '#af52de' },
+                  ].map(s => (
+                    <Card key={s.label} style={{ textAlign: 'center' }}>
+                      <div style={{ fontSize: 28, fontWeight: 700, color: s.color }}>{s.value}</div>
+                      <div style={{ fontSize: 12, color: T.muted, marginTop: 4 }}>{s.label}</div>
+                    </Card>
+                  ))}
+                </div>
+
+                {refData.stats.balance > 0 && (
+                  <div style={{ background: '#e8f8ee', border: `1px solid ${T.green}40`,
+                    borderRadius: T.radius, padding: '14px 18px', marginBottom: 20,
+                    display: 'flex', gap: 12, alignItems: 'center' }}>
+                    <span style={{ fontSize: 22 }}>💰</span>
+                    <div>
+                      <div style={{ fontWeight: 600, color: '#1a7f44', fontSize: 14 }}>
+                        You have ₱{(refData.stats.balance).toLocaleString()} in referral credits!
+                      </div>
+                      <div style={{ fontSize: 12, color: T.muted, marginTop: 2 }}>
+                        Contact <strong>mym@kaimanco.com</strong> to redeem as a subscription credit or cash payout.
+                      </div>
+                    </div>
+                  </div>
+                )}
+
+                {refData.referrals.length === 0 ? (
+                  <Card>
+                    <div style={{ textAlign: 'center', padding: '32px 0', color: T.muted }}>
+                      <div style={{ fontSize: 32, marginBottom: 10 }}>🔗</div>
+                      <div style={{ fontSize: 15, fontWeight: 500, marginBottom: 6 }}>No referrals yet</div>
+                      <div style={{ fontSize: 13 }}>Share your link above to start earning!</div>
+                    </div>
+                  </Card>
+                ) : (
+                  <Card>
+                    <SectionHead>Referral History</SectionHead>
+                    <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 13 }}>
+                      <thead>
+                        <tr style={{ borderBottom: `2px solid ${T.border}` }}>
+                          {['Email', 'Status', 'Reward', 'Date'].map(h => (
+                            <th key={h} style={{ padding: '8px 10px', textAlign: 'left',
+                              fontSize: 11, fontWeight: 600, color: T.muted, textTransform: 'uppercase',
+                              letterSpacing: '0.5px' }}>{h}</th>
+                          ))}
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {refData.referrals.map(r => (
+                          <tr key={r.id} style={{ borderBottom: `1px solid ${T.border}` }}>
+                            <td style={{ padding: '10px 10px', color: T.text }}>{r.refereeEmail}</td>
+                            <td style={{ padding: '10px 10px' }}>
+                              <span style={{ padding: '3px 10px', borderRadius: 20, fontSize: 11, fontWeight: 600,
+                                background: r.status === 'credited' ? '#e8f8ee' : '#fff8ec',
+                                color: r.status === 'credited' ? T.green : '#ff9500' }}>
+                                {r.status === 'credited' ? '✓ Credited' : '⏳ Pending'}
+                              </span>
+                            </td>
+                            <td style={{ padding: '10px 10px', fontWeight: 600, color: T.green }}>
+                              {r.status === 'credited' ? `₱${r.rewardAmount}` : '—'}
+                            </td>
+                            <td style={{ padding: '10px 10px', color: T.muted }}>
+                              {new Date(r.createdAt).toLocaleDateString('en-PH', { month: 'short', day: 'numeric', year: 'numeric' })}
+                            </td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  </Card>
+                )}
+              </>
             )}
           </div>
         )}

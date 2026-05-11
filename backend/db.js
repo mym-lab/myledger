@@ -198,11 +198,27 @@ CREATE TABLE IF NOT EXISTS invitations (
 );
 CREATE INDEX IF NOT EXISTS idx_inv_token  ON invitations(token);
 CREATE INDEX IF NOT EXISTS idx_inv_client ON invitations(client_id);
+
+CREATE TABLE IF NOT EXISTS referrals (
+  id           TEXT PRIMARY KEY,
+  referrer_id  TEXT NOT NULL,
+  referee_id   TEXT,
+  referee_email TEXT,
+  status       TEXT NOT NULL DEFAULT 'pending',
+  reward_amount REAL NOT NULL DEFAULT 200,
+  credited_at  TEXT,
+  created_at   TEXT NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_ref_referrer ON referrals(referrer_id);
 `);
 
 // ── Column migrations — add columns that were missing in earlier versions ──────
 try { db.exec("ALTER TABLE clients ADD COLUMN tax_types TEXT NOT NULL DEFAULT '[]'"); }
 catch (_) { /* column already exists — safe to ignore */ }
+try { db.exec("ALTER TABLE users ADD COLUMN referral_code TEXT"); }
+catch (_) { /* column already exists */ }
+try { db.exec("ALTER TABLE users ADD COLUMN referral_balance REAL NOT NULL DEFAULT 0"); }
+catch (_) { /* column already exists */ }
 
 // ── Default settings bootstrap ────────────────────────────────────────────────
 const DEFAULT_SETTINGS = {
@@ -264,6 +280,8 @@ export function rowToUser(r) {
     role: r.role, passwordHash: r.password_hash,
     accountantTier: r.accountant_tier,
     firmName: r.firm_name, accentColor: r.accent_color,
+    referralCode:    r.referral_code    || null,
+    referralBalance: r.referral_balance || 0,
     createdAt: r.created_at,
   };
 }

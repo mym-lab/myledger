@@ -9,6 +9,7 @@ import {
   setAccountantTier, setAccountantBranding,
   saveSmtpSettings, sendTestEmail, sendBIRReminders,
   getClients, getAuditLog,
+  getAllReferrals, creditReferral,
 } from '../api.js';
 
 const T = {
@@ -62,7 +63,7 @@ function MetricCard({ label, value, sub, color }) {
   );
 }
 
-const TABS = ['Overview', 'Upgrade Requests', 'Clients', 'Users', 'Audit Log', 'Settings'];
+const TABS = ['Overview', 'Upgrade Requests', 'Referrals', 'Clients', 'Users', 'Audit Log', 'Settings'];
 
 export default function CommandCenter({ onLogout }) {
   const [tab,      setTab]     = useState('Overview');
@@ -103,11 +104,33 @@ export default function CommandCenter({ onLogout }) {
   const [auditClientId,  setAuditClientId]  = useState('');
   const [auditEntries,   setAuditEntries]   = useState([]);
   const [auditLoad,      setAuditLoad]      = useState(false);
+  // Referrals
+  const [allReferrals,   setAllReferrals]   = useState([]);
+  const [refLoading,     setRefLoading]     = useState(false);
+  const [refMsg,         setRefMsg]         = useState('');
+  const [refFilter,      setRefFilter]      = useState('all');
 
   useEffect(() => {
     loadUpgradeRequests();
     getClients().then(r => setAuditClients(r.clients || [])).catch(() => {});
   }, []);
+
+  async function loadAllReferrals() {
+    setRefLoading(true);
+    try { const r = await getAllReferrals(); setAllReferrals(r.referrals || []); }
+    catch (e) { console.error(e); }
+    finally { setRefLoading(false); }
+  }
+
+  async function handleCreditReferral(id) {
+    if (!confirm('Credit this referral and add ₱200 to the referrer\'s balance?')) return;
+    try {
+      await creditReferral(id);
+      setRefMsg('✓ Referral credited! ₱200 added to referrer balance.');
+      loadAllReferrals();
+      setTimeout(() => setRefMsg(''), 4000);
+    } catch (e) { alert(e.message); }
+  }
 
   async function loadAudit(clientId) {
     const id = clientId || auditClientId;
@@ -145,6 +168,11 @@ export default function CommandCenter({ onLogout }) {
       setTimeout(() => setActionMsg(''), 4000);
     } catch (e) { alert(e.message); }
   }
+
+  // Load referrals when Referrals tab is active
+  useEffect(() => {
+    if (tab === 'Referrals') loadAllReferrals();
+  }, [tab]);
 
   useEffect(() => {
     getAdminStats().then(setStats).catch(e => setError(e.message));
@@ -587,6 +615,108 @@ export default function CommandCenter({ onLogout }) {
                 </div>
               </div>
             )}
+          </div>
+        )}
+
+        {/* ════════════ REFERRALS ════════════ */}
+        {tab === 'Referrals' && (
+          <div>
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 24 }}>
+              <div>
+                <h2 style={{ margin: 0, fontSize: 22, fontWeight: 600 }}>Referral Management</h2>
+                <div style={{ fontSize: 13, color: T.muted, marginTop: 4 }}>
+                  Approve pending referrals to credit ₱200 to the referrer's balance.
+                </div>
+              </div>
+              <div style={{ display: 'flex', gap: 10, alignItems: 'center' }}>
+                {refMsg && <span style={{ fontSize: 13, color: T.green }}>{refMsg}</span>}
+                <button onClick={loadAllReferrals} style={{ padding: '7px 14px', borderRadius: 8, border: `1px solid ${T.border}`,
+                  background: T.surface, fontSize: 13, cursor: 'pointer', color: T.muted }}>↻ Refresh</button>
+              </div>
+            </div>
+
+            {/* Filter tabs */}
+            <div style={{ display: 'flex', gap: 6, marginBottom: 20 }}>
+              {['all', 'pending', 'credited'].map(f => (
+                <button key={f} onClick={() => setRefFilter(f)} style={{
+                  padding: '6px 16px', borderRadius: 20, border: 'none', cursor: 'pointer',
+                  fontSize: 13, fontWeight: 500, fontFamily: 'inherit',
+                  background: refFilter === f ? T.accent : T.bg,
+                  color: refFilter === f ? '#fff' : T.muted,
+                }}>
+                  {f.charAt(0).toUpperCase() + f.slice(1)}
+                </button>
+              ))}
+            </div>
+
+            {refLoading && <div style={{ color: T.muted, fontSize: 14 }}>Loading…</div>}
+
+            {!refLoading && (() => {
+              const filtered = allReferrals.filter(r => refFilter === 'all' || r.status === refFilter);
+              if (filtered.length === 0) return (
+                <div style={{ textAlign: 'center', padding: '48px 0', color: T.muted }}>
+                  <div style={{ fontSize: 32, marginBottom: 10 }}>🔗</div>
+                  <div style={{ fontSize: 15, fontWeight: 500 }}>No {refFilter !== 'all' ? refFilter : ''} referrals found</div>
+                </div>
+              );
+              return (
+                <div style={{ background: T.surface, borderRadius: T.radius, overflow: 'hidden',
+                  boxShadow: T.shadow, border: `1px solid ${T.border}` }}>
+                  <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 13 }}>
+                    <thead style={{ background: T.bg }}>
+                      <tr>
+                        {['Referrer', 'Referee Email', 'Status', 'Reward', 'Date', 'Action'].map(h => (
+                          <th key={h} style={{ padding: '10px 14px', textAlign: 'left',
+                            fontSize: 11, fontWeight: 600, color: T.muted,
+                            textTransform: 'uppercase', letterSpacing: '0.5px',
+                            borderBottom: `1px solid ${T.border}` }}>{h}</th>
+                        ))}
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {filtered.map(r => (
+                        <tr key={r.id} style={{ borderBottom: `1px solid ${T.border}` }}>
+                          <td style={{ padding: '12px 14px' }}>
+                            <div style={{ fontWeight: 500 }}>{r.referrerName || '—'}</div>
+                            <div style={{ fontSize: 11, color: T.muted }}>{r.referrerEmail}</div>
+                          </td>
+                          <td style={{ padding: '12px 14px', color: T.text }}>{r.refereeEmail}</td>
+                          <td style={{ padding: '12px 14px' }}>
+                            <span style={{ padding: '3px 10px', borderRadius: 20, fontSize: 11, fontWeight: 600,
+                              background: r.status === 'credited' ? '#e8f8ee' : '#fff8ec',
+                              color: r.status === 'credited' ? T.green : T.orange }}>
+                              {r.status === 'credited' ? '✓ Credited' : '⏳ Pending'}
+                            </span>
+                          </td>
+                          <td style={{ padding: '12px 14px', fontWeight: 600,
+                            color: r.status === 'credited' ? T.green : T.muted }}>
+                            {r.status === 'credited' ? `₱${r.rewardAmount}` : `₱${r.rewardAmount} (pending)`}
+                          </td>
+                          <td style={{ padding: '12px 14px', color: T.muted }}>
+                            {new Date(r.createdAt).toLocaleDateString('en-PH', { month: 'short', day: 'numeric', year: 'numeric' })}
+                          </td>
+                          <td style={{ padding: '12px 14px' }}>
+                            {r.status === 'pending' ? (
+                              <button onClick={() => handleCreditReferral(r.id)} style={{
+                                padding: '6px 14px', borderRadius: 7, border: 'none', cursor: 'pointer',
+                                background: T.green, color: '#fff', fontSize: 12, fontWeight: 600,
+                                fontFamily: 'inherit',
+                              }}>
+                                ✓ Credit ₱{r.rewardAmount}
+                              </button>
+                            ) : (
+                              <span style={{ fontSize: 12, color: T.muted }}>
+                                {r.creditedAt ? new Date(r.creditedAt).toLocaleDateString('en-PH', { month: 'short', day: 'numeric' }) : '—'}
+                              </span>
+                            )}
+                          </td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              );
+            })()}
           </div>
         )}
 

@@ -38,9 +38,17 @@ export default function AuthScreen({ onLogin }) {
   const [inviteClient, setInviteClient] = useState('');  // client trade name
   const [inviteLocked, setInviteLocked] = useState(false); // email + role locked
 
-  // On mount — check ?invite=TOKEN in URL
+  // Referral code from ?ref=CODE in URL
+  const [refCode, setRefCode] = useState('');
+
+  // On mount — check ?invite=TOKEN and ?ref=CODE in URL
   useEffect(() => {
     const params = new URLSearchParams(window.location.search);
+
+    // Capture referral code (persists even if invite also present)
+    const ref = params.get('ref');
+    if (ref) setRefCode(ref);
+
     const token  = params.get('invite');
     if (!token) return;
 
@@ -65,7 +73,8 @@ export default function AuthScreen({ onLogin }) {
       const res = mode === 'login'
         ? await login({ email, password: pass })
         : await signup({ email, password: pass, name, company, role,
-                         inviteToken: inviteToken || undefined });
+                         inviteToken: inviteToken || undefined,
+                         refCode: refCode || undefined });
       onLogin(res.token, res.user);
     } catch (e) { setErr(e.message); }
     finally { setLoad(false); }
@@ -90,6 +99,20 @@ export default function AuthScreen({ onLogin }) {
           <h1 style={{ margin: 0, fontSize: 26, fontWeight: 700, color: T.text, letterSpacing: '-0.5px' }}>MyLedger</h1>
           <div style={{ fontSize: 13, color: T.muted, marginTop: 4, letterSpacing: '0.2px' }}>by Kaiman & Co.</div>
         </div>
+
+        {/* Referral banner */}
+        {refCode && !inviteClient && (
+          <div style={{ background: '#fff8ec', border: '1px solid #ff9500', borderRadius: 12,
+            padding: '14px 18px', marginBottom: 20, display: 'flex', gap: 10, alignItems: 'flex-start' }}>
+            <div style={{ fontSize: 20 }}>🎁</div>
+            <div>
+              <div style={{ fontWeight: 600, color: '#cc7700', fontSize: 14 }}>You were referred!</div>
+              <div style={{ fontSize: 13, color: '#3d3d3f', marginTop: 2, lineHeight: 1.5 }}>
+                Sign up now and your referrer earns <strong>₱200</strong> when you join MyLedger.
+              </div>
+            </div>
+          </div>
+        )}
 
         {/* Invite banner */}
         {inviteClient && (

@@ -26,6 +26,7 @@ import periodsRoutes         from './routes/periods.js';
 import auditRoutes           from './routes/audit.js';
 import ocrRoutes             from './routes/ocr.js';
 import invitationRoutes      from './routes/invitations.js';
+import referralRoutes        from './routes/referrals.js';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname  = dirname(__filename);
@@ -60,6 +61,7 @@ app.use('/api/periods',          periodsRoutes);
 app.use('/api/audit',            auditRoutes);
 app.use('/api/ocr',              ocrRoutes);
 app.use('/api/invitations',      invitationRoutes);
+app.use('/api/referrals',        referralRoutes);
 
 // ─── Health Check ─────────────────────────────────────────────
 app.get('/api/health', (req, res) => {

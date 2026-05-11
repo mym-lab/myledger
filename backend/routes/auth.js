@@ -4,6 +4,7 @@ import bcrypt from 'bcryptjs';
 import jwt from 'jsonwebtoken';
 import { v4 as uuid } from 'uuid';
 import { db, rowToUser } from '../db.js';
+import { recordReferral } from './referrals.js';
 
 const router = Router();
 const JWT_SECRET = process.env.JWT_SECRET || 'myledger-dev-secret-change-in-prod';
@@ -17,7 +18,7 @@ const stmtInsertUser   = db.prepare(`
 // POST /api/auth/signup
 router.post('/signup', async (req, res, next) => {
   try {
-    const { email, password, name, company = '', role = 'client', inviteToken } = req.body;
+    const { email, password, name, company = '', role = 'client', inviteToken, refCode } = req.body;
     if (!email || !password || !name)
       return res.status(400).json({ error: 'email, password and name are required' });
     if (!['client', 'accountant', 'encoder'].includes(role))
@@ -47,6 +48,9 @@ router.post('/signup', async (req, res, next) => {
       firm_name: null, accent_color: null,
       created_at: new Date().toISOString(),
     });
+
+    // Record referral if signup came via a referral link
+    if (refCode) recordReferral(id, email, refCode);
 
     // Auto-assign to client if valid invite
     if (invite) {
