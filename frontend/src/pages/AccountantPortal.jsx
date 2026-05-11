@@ -1033,6 +1033,7 @@ export default function AccountantPortal({ onLogout }) {
   // Referral
   const [refData,    setRefData]    = useState(null);
   const [refLoad,    setRefLoad]    = useState(false);
+  const [refErr,     setRefErr]     = useState('');
   const [refCopied,  setRefCopied]  = useState(false);
 
   useEffect(() => { loadClients(); }, []);
@@ -1075,7 +1076,12 @@ export default function AccountantPortal({ onLogout }) {
       const all = r.clients || [];
       const visible = maxClients === null ? all : all.slice(0, maxClients);
       setClients(visible);
-      if (visible.length > 0) setActive(visible[0]);
+      if (visible.length > 0) {
+        setActive(visible[0]);
+      } else {
+        // No clients yet — go straight to Referral so they can share their link
+        setTab('Referral');
+      }
     } catch (e) { console.error(e); }
     finally { setCLL(false); }
   }
@@ -1285,9 +1291,10 @@ export default function AccountantPortal({ onLogout }) {
   }
 
   async function loadReferrals() {
-    setRefLoad(true);
+    setRefLoad(true); setRefErr('');
     try { const r = await getMyReferrals(); setRefData(r); }
-    catch (e) { console.error(e); } finally { setRefLoad(false); }
+    catch (e) { console.error('Referral load error:', e); setRefErr(e.message || 'Failed to load referral data'); }
+    finally { setRefLoad(false); }
   }
 
   function exportSLSPcsv(rows, headers, filename) {
@@ -1329,22 +1336,8 @@ export default function AccountantPortal({ onLogout }) {
 
   const upcomingTop3 = deadlines.slice(0, 3);
 
-  // ── No clients assigned ───────────────────────────────────────────────────
-  if (!clLoading && clients.length === 0) {
-    return (
-      <div style={{ minHeight: '100vh', background: T.bg, display: 'flex', alignItems: 'center',
-        justifyContent: 'center', fontFamily: '-apple-system, BlinkMacSystemFont, "SF Pro Display", sans-serif' }}>
-        <div style={{ textAlign: 'center', maxWidth: 400 }}>
-          <div style={{ fontSize: 56, marginBottom: 16 }}>📂</div>
-          <h2 style={{ fontSize: 24, fontWeight: 600, color: T.text, marginBottom: 10 }}>No clients yet</h2>
-          <p style={{ color: T.muted, lineHeight: 1.6, marginBottom: 24 }}>
-            Clients will appear here once they assign you as their accountant from their MyLedger portal.
-          </p>
-          <Btn variant="neutral" onClick={onLogout}>Sign out</Btn>
-        </div>
-      </div>
-    );
-  }
+  // ── When no clients, default to Referral tab so the accountant can share their link ──
+  const noClients = !clLoading && clients.length === 0;
 
   // ── Main portal ───────────────────────────────────────────────────────────
   return (
@@ -1443,7 +1436,22 @@ export default function AccountantPortal({ onLogout }) {
           })}
         </div>
 
-        {!active && <div style={{ color: T.muted, textAlign: 'center', padding: 60 }}>Select a client.</div>}
+        {/* No clients yet — show a helpful prompt on non-Referral tabs */}
+        {noClients && tab !== 'Referral' && (
+          <div style={{ textAlign: 'center', padding: '60px 20px' }}>
+            <div style={{ fontSize: 48, marginBottom: 16 }}>📂</div>
+            <h3 style={{ fontSize: 20, fontWeight: 600, color: T.text, marginBottom: 8 }}>No clients yet</h3>
+            <p style={{ color: T.muted, lineHeight: 1.6, maxWidth: 360, margin: '0 auto 20px' }}>
+              Clients will appear once they assign you as their accountant from their MyLedger portal.
+              Meanwhile, share your referral link to bring them in.
+            </p>
+            <button onClick={() => setTab('Referral')} style={{
+              padding: '10px 24px', background: T.accent, color: '#fff', border: 'none',
+              borderRadius: 10, fontSize: 14, fontWeight: 600, cursor: 'pointer', fontFamily: 'inherit',
+            }}>Go to Referral Program →</button>
+          </div>
+        )}
+        {!noClients && !active && <div style={{ color: T.muted, textAlign: 'center', padding: 60 }}>Select a client above.</div>}
 
         {/* ════════════ DASHBOARD ════════════ */}
         {tab === 'Dashboard' && active && (
@@ -3427,6 +3435,10 @@ export default function AccountantPortal({ onLogout }) {
             </div>
 
             {refLoad && <div style={{ color: T.muted, fontSize: 14 }}>Loading…</div>}
+            {refErr  && <div style={{ color: '#ff3b30', fontSize: 13, padding: '12px 16px',
+              background: '#fff2f2', borderRadius: 8, border: '1px solid #ffcdd2', marginBottom: 16 }}>
+              ⚠️ {refErr} — try refreshing or signing out and back in.
+            </div>}
 
             {refData && (
               <>
