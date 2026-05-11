@@ -1,8 +1,8 @@
 // ─── Client (Business) Routes ─────────────────────────────────────────────────
 import { Router } from 'express';
 import { v4 as uuid } from 'uuid';
-import nodemailer from 'nodemailer';
 import { db, rowToClient, rowToTx, withTransaction, getSetting } from '../db.js';
+import { sendEmail } from '../email.js';
 import { authenticate } from '../middleware/auth.js';
 
 const router = Router();
@@ -218,24 +218,17 @@ router.put('/:id/assign-accountant', async (req, res, next) => {
     const inviteUrl = `${appUrl}?invite=${token}`;
 
     let emailSent = false;
-    if (smtp.host && smtp.user && smtp.pass) {
-      try {
-        const transporter = nodemailer.createTransport({
-          host: smtp.host, port: Number(smtp.port) || 587,
-          secure: smtp.secure || false,
-          auth: { user: smtp.user, pass: smtp.pass },
-        });
-        const fromLabel = smtp.fromName || 'MyLedger';
-        await transporter.sendMail({
-          from:    `"${fromLabel}" <${smtp.fromEmail || smtp.user}>`,
-          to:      accountantEmail,
-          subject: `${client.tradeName} has invited you to manage their books on MyLedger`,
-          html: buildInviteEmail(client.tradeName, fromLabel, inviteUrl),
-        });
-        emailSent = true;
-      } catch (e) {
-        console.error('⚠️  Invite email failed (non-fatal):', e.message);
-      }
+    if (process.env.RESEND_API_KEY) {
+      const smtp = getSetting('smtp') || {};
+      const fromLabel = smtp.fromName || 'MyLedger';
+      const result = await sendEmail({
+        to:      accountantEmail,
+        subject: `${client.tradeName} has invited you to manage their books on MyLedger`,
+        html:    buildInviteEmail(client.tradeName, fromLabel, inviteUrl),
+        text:    `You've been invited to manage ${client.tradeName} on MyLedger. Accept here: ${inviteUrl}`,
+      });
+      emailSent = result.sent;
+      if (!result.sent) console.error('⚠️  Invite email failed (non-fatal):', result.reason);
     }
 
     return res.json({

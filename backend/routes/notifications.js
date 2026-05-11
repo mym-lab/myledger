@@ -1,27 +1,16 @@
 // ─── Notifications Routes (BIR Deadline Email Reminders) ─────────────────────
-// GET  /api/notifications/smtp-status   check SMTP config status
-// POST /api/notifications/test          send a test email
-// POST /api/notifications/send-reminders  scan upcoming BIR deadlines + email accountants
+// GET  /api/notifications/smtp-status      check email config status
+// POST /api/notifications/test             send a test email
+// POST /api/notifications/send-reminders   scan upcoming BIR deadlines + email accountants
 
 import { Router } from 'express';
-import nodemailer from 'nodemailer';
-import { db, rowToClient } from '../db.js';
-import { getSetting } from '../db.js';
+import { db, rowToClient, getSetting } from '../db.js';
+import { sendEmail, testEmail } from '../email.js';
 
 const router = Router();
 
-// ── Prepared statements ───────────────────────────────────────────────────────
 const stmtAccountants = db.prepare("SELECT * FROM users WHERE role='accountant' AND email IS NOT NULL");
 const stmtClientsByAccountant = db.prepare('SELECT * FROM clients WHERE accountant_id=?');
-
-function getTransporter(smtp) {
-  return nodemailer.createTransport({
-    host:   smtp.host,
-    port:   Number(smtp.port) || 587,
-    secure: smtp.secure || false,
-    auth: { user: smtp.user, pass: smtp.pass },
-  });
-}
 
 function getUpcomingDeadlines(daysAhead = 7) {
   const now    = new Date();
@@ -56,9 +45,9 @@ function getUpcomingDeadlines(daysAhead = 7) {
     const dueYear  = endMonth === 12 ? year + 1 : year;
     const d = new Date(dueYear, dueMonth - 1, dueDay);
     if (d >= now && d <= cutoff) {
-      deadlines.push({ form: '2550Q',  period: `Q${q} ${year}`, due: d.toISOString().substring(0, 10), type: 'VAT' });
-      deadlines.push({ form: '2551Q',  period: `Q${q} ${year}`, due: d.toISOString().substring(0, 10), type: 'OPT' });
-      deadlines.push({ form: '1601-EQ',period: `Q${q} ${year}`, due: d.toISOString().substring(0, 10), type: 'EWT' });
+      deadlines.push({ form: '2550Q',   period: `Q${q} ${year}`, due: d.toISOString().substring(0, 10), type: 'VAT' });
+      deadlines.push({ form: '2551Q',   period: `Q${q} ${year}`, due: d.toISOString().substring(0, 10), type: 'OPT' });
+      deadlines.push({ form: '1601-EQ', period: `Q${q} ${year}`, due: d.toISOString().substring(0, 10), type: 'EWT' });
     }
   }
 
@@ -89,16 +78,16 @@ function buildReminderEmail(accountantName, clients, deadlines, fromName) {
       <p style="margin:0 0 20px;color:#6e6e73">The following BIR deadlines are coming up in the next 7 days:</p>
       <table style="width:100%;border-collapse:collapse;font-size:13px;margin-bottom:24px">
         <thead><tr style="background:#f5f5f7">
-          <th style="padding:10px 12px;text-align:left;font-size:11px;text-transform:uppercase;color:#6e6e73;letter-spacing:0.5px">Form</th>
-          <th style="padding:10px 12px;text-align:left;font-size:11px;text-transform:uppercase;color:#6e6e73;letter-spacing:0.5px">Period</th>
-          <th style="padding:10px 12px;text-align:left;font-size:11px;text-transform:uppercase;color:#6e6e73;letter-spacing:0.5px">Due Date</th>
+          <th style="padding:10px 12px;text-align:left;font-size:11px;text-transform:uppercase;color:#6e6e73">Form</th>
+          <th style="padding:10px 12px;text-align:left;font-size:11px;text-transform:uppercase;color:#6e6e73">Period</th>
+          <th style="padding:10px 12px;text-align:left;font-size:11px;text-transform:uppercase;color:#6e6e73">Due Date</th>
         </tr></thead>
         <tbody>${dl}</tbody>
       </table>
       <p style="margin:0 0 10px;font-weight:600">Your clients:</p>
       <ul style="margin:0 0 24px;padding-left:20px;color:#6e6e73;font-size:13px;line-height:1.8">${cl}</ul>
       <p style="font-size:12px;color:#aeaeb2;border-top:1px solid #f0f0f5;padding-top:16px;margin:0">
-        This is an automated reminder from ${fromName}. Always verify with official BIR-prescribed forms before filing.
+        Automated reminder from ${fromName}. Verify with BIR-prescribed forms before filing.
       </p>
     </div>
   </div>
@@ -108,36 +97,23 @@ function buildReminderEmail(accountantName, clients, deadlines, fromName) {
 // GET /api/notifications/smtp-status
 router.get('/smtp-status', (req, res, next) => {
   try {
-    const smtp = getSetting('smtp') || {};
-    res.json({
-      enabled:    !!smtp.enabled,
-      configured: !!(smtp.host && smtp.user && smtp.pass && smtp.fromEmail),
-    });
+    const hasKey = !!process.env.RESEND_API_KEY;
+    const smtp   = getSetting('smtp') || {};
+    res.json({ enabled: !!smtp.enabled, configured: hasKey });
   } catch (err) { next(err); }
 });
 
 // POST /api/notifications/test
 router.post('/test', async (req, res, next) => {
   try {
-    const smtp = getSetting('smtp') || {};
-    if (!smtp.host || !smtp.user || !smtp.pass)
-      return res.status(400).json({ error: 'SMTP not configured. Set host, user, and password in Settings.' });
+    if (!process.env.RESEND_API_KEY)
+      return res.status(400).json({ error: 'RESEND_API_KEY not set in environment variables.' });
 
     const { to } = req.body;
     if (!to) return res.status(400).json({ error: 'to email required' });
 
-    const transporter = getTransporter(smtp);
-    await transporter.sendMail({
-      from: `"${smtp.fromName || 'MyLedger'}" <${smtp.fromEmail || smtp.user}>`,
-      to,
-      subject: 'MyLedger — SMTP Test Email',
-      text: 'SMTP is configured correctly. You will receive BIR deadline reminders at this address.',
-      html: `<div style="font-family:sans-serif;padding:20px">
-        <h2 style="color:#0071e3">✓ SMTP Working</h2>
-        <p>This confirms your MyLedger email notifications are configured correctly.</p>
-        <p style="color:#6e6e73;font-size:13px">Sent from: ${smtp.host}:${smtp.port}</p>
-      </div>`,
-    });
+    const result = await testEmail(to);
+    if (!result.sent) return res.status(500).json({ error: result.reason || 'Failed to send' });
     res.json({ message: `Test email sent to ${to}` });
   } catch (err) { next(err); }
 });
@@ -145,21 +121,19 @@ router.post('/test', async (req, res, next) => {
 // POST /api/notifications/send-reminders
 router.post('/send-reminders', async (req, res, next) => {
   try {
+    if (!process.env.RESEND_API_KEY)
+      return res.status(400).json({ error: 'RESEND_API_KEY not set. Add it to Railway environment variables.' });
+
     const smtp = getSetting('smtp') || {};
     if (!smtp.enabled)
-      return res.status(400).json({ error: 'Email reminders are disabled. Enable SMTP in Settings.' });
-    if (!smtp.host || !smtp.user || !smtp.pass)
-      return res.status(400).json({ error: 'SMTP not fully configured.' });
+      return res.status(400).json({ error: 'Email reminders are disabled. Enable them in Settings.' });
 
     const daysAhead = Number(req.body.daysAhead) || 7;
     const deadlines = getUpcomingDeadlines(daysAhead);
     if (deadlines.length === 0)
       return res.json({ message: 'No deadlines within the window — no emails sent.', sent: 0 });
 
-    const transporter = getTransporter(smtp);
-    const fromLabel   = smtp.fromName || 'MyLedger';
-    const fromAddr    = `"${fromLabel}" <${smtp.fromEmail || smtp.user}>`;
-
+    const fromName   = smtp.fromName || 'MyLedger';
     const accountants = stmtAccountants.all();
     let sent = 0;
     const errors = [];
@@ -171,23 +145,19 @@ router.post('/send-reminders', async (req, res, next) => {
       const hasVAT = clients.some(c => c.taxRegime !== 'opt');
       const hasOPT = clients.some(c => c.taxRegime === 'opt');
       const relevant = deadlines.filter(d =>
-        d.type === 'EWT' ||
-        (d.type === 'VAT' && hasVAT) ||
-        (d.type === 'OPT' && hasOPT)
+        d.type === 'EWT' || (d.type === 'VAT' && hasVAT) || (d.type === 'OPT' && hasOPT)
       );
       if (relevant.length === 0) continue;
 
-      try {
-        await transporter.sendMail({
-          from: fromAddr,
-          to: acct.email,
-          subject: `📅 BIR Filing Reminder — ${relevant.length} deadline${relevant.length !== 1 ? 's' : ''} coming up`,
-          html: buildReminderEmail(acct.name || acct.email, clients, relevant, fromLabel),
-        });
-        sent++;
-      } catch (e) {
-        errors.push({ accountant: acct.email, error: e.message });
-      }
+      const result = await sendEmail({
+        to: acct.email,
+        subject: `BIR Filing Reminder — ${relevant.length} deadline${relevant.length !== 1 ? 's' : ''} coming up`,
+        html: buildReminderEmail(acct.name || acct.email, clients, relevant, fromName),
+        text: `Hi ${acct.name || acct.email}, you have ${relevant.length} BIR deadline(s) coming up.`,
+      });
+
+      if (result.sent) sent++;
+      else errors.push({ accountant: acct.email, error: result.reason });
     }
 
     res.json({
