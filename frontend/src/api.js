@@ -8,6 +8,13 @@ async function request(method, path, body = null, auth = false) {
   if (auth) headers['Authorization'] = `Bearer ${getToken()}`;
   const res  = await fetch(BASE + path, { method, headers, body: body ? JSON.stringify(body) : null });
   const data = await res.json();
+  // Token expired or invalidated server-side → force logout
+  if (res.status === 401 || res.status === 403) {
+    localStorage.removeItem('ml_token');
+    localStorage.removeItem('ml_user');
+    window.location.href = '/';
+    return;
+  }
   if (!res.ok) throw new Error(data.error || `Request failed (${res.status})`);
   return data;
 }

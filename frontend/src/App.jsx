@@ -17,8 +17,29 @@ import AuthScreen        from './pages/AuthScreen.jsx';
 
 const PATH = window.location.pathname;
 
+// Decode JWT payload and check expiry without a library
+function isTokenValid(tok) {
+  if (!tok) return false;
+  try {
+    const payload = JSON.parse(atob(tok.split('.')[1]));
+    // exp is in seconds; give 60s leeway
+    return payload.exp * 1000 > Date.now() + 60_000;
+  } catch {
+    return false;
+  }
+}
+
+function clearAuth() {
+  localStorage.removeItem('ml_token');
+  localStorage.removeItem('ml_user');
+}
+
 export default function App() {
-  const [token, setToken] = useState(() => localStorage.getItem('ml_token') || '');
+  const [token, setToken] = useState(() => {
+    const tok = localStorage.getItem('ml_token') || '';
+    if (!isTokenValid(tok)) { clearAuth(); return ''; }
+    return tok;
+  });
   const [user,  setUser]  = useState(() => {
     try { return JSON.parse(localStorage.getItem('ml_user') || 'null'); } catch { return null; }
   });
