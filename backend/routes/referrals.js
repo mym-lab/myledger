@@ -5,7 +5,7 @@
 
 import { Router } from 'express';
 import { v4 as uuidv4 } from 'uuid';
-import { db, rowToUser } from '../db.js';
+import { db, rowToUser, getSetting } from '../db.js';
 import { authenticate } from '../middleware/auth.js';
 
 const router = Router();
@@ -52,9 +52,12 @@ router.get('/me', (req, res, next) => {
       balance:  user.referralBalance || 0,
     };
 
+    const rates = getSetting('referral') || { signupBonus: 100, subscriptionPercent: 10 };
+
     res.json({
       referralCode: user.referralCode,
       referralLink,
+      rates,
       stats,
       referrals: referrals.map(r => ({
         id: r.id, refereeEmail: r.referee_email,
@@ -118,10 +121,16 @@ export function recordReferral(refereeId, refereeEmail, refCode) {
     .get(referrer.id, refereeEmail);
   if (existing) return;
 
+  // Get signup bonus from settings (default ₱100)
+  const signupBonus = getSetting('referral')?.signupBonus ?? 100;
+
   db.prepare(`
     INSERT INTO referrals (id, referrer_id, referee_id, referee_email, status, reward_amount, created_at)
-    VALUES (?, ?, ?, ?, 'pending', 200, ?)
-  `).run(uuidv4(), referrer.id, refereeId, refereeEmail, new Date().toISOString());
+    VALUES (?, ?, ?, ?, 'pending', ?, ?)
+  `).run(uuidv4(), referrer.id, refereeId, refereeEmail, signupBonus, new Date().toISOString());
+
+  // Store who referred this user so recurring commissions work later
+  db.prepare('UPDATE users SET referred_by = ? WHERE id = ?').run(referrer.id, refereeId);
 }
 
 export default router;

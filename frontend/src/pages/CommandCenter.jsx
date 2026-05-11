@@ -90,6 +90,8 @@ export default function CommandCenter({ onLogout }) {
   // Accountant tier management
   const [tierMsg,      setTierMsg]      = useState('');
   const [acctPricingForm, setAcctPricingForm] = useState({ solo: '', professional: '', firm: '', agency: '' });
+  // Referral rate settings
+  const [referralForm,  setReferralForm]  = useState({ signupBonus: '100', subscriptionPercent: '10' });
   // White-label branding forms: keyed by userId
   const [brandingForms, setBrandingForms] = useState({});  // { [userId]: { firmName, accentColor } }
   const [brandingMsg,   setBrandingMsg]   = useState('');
@@ -198,6 +200,10 @@ export default function CommandCenter({ onLogout }) {
         firm:         String(s.accountantPricing?.firm         ?? 2999),
         agency:       String(s.accountantPricing?.agency       ?? 4999),
       });
+      if (s.referral) setReferralForm({
+        signupBonus:         String(s.referral.signupBonus         ?? 100),
+        subscriptionPercent: String(s.referral.subscriptionPercent ?? 10),
+      });
       if (s.smtp) setSmtpForm(f => ({ ...f, passSet: !!s.smtp.passSet,
         ...f,
         host:      s.smtp.host      ?? '',
@@ -297,6 +303,10 @@ export default function CommandCenter({ onLogout }) {
           professional: Number(acctPricingForm.professional),
           firm:         Number(acctPricingForm.firm),
           agency:       Number(acctPricingForm.agency),
+        },
+        referral: {
+          signupBonus:         Number(referralForm.signupBonus),
+          subscriptionPercent: Number(referralForm.subscriptionPercent),
         },
       });
       setSettings(r.settings);
@@ -1090,6 +1100,50 @@ export default function CommandCenter({ onLogout }) {
                       <div style={{ fontSize: 11, color: T.muted, marginTop: 3 }}>/month</div>
                     </div>
                   ))}
+                </div>
+              </Card>
+
+              {/* Referral Program Rates */}
+              <Card style={{ gridColumn: '1 / -1' }}>
+                <SectionHead>Referral Program Rates</SectionHead>
+                <div style={{ fontSize: 13, color: T.muted, marginBottom: 16 }}>
+                  Adjust these as you scale. Reduce once you hit 100 clients or want to protect margins.
+                </div>
+                <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 20 }}>
+                  <div>
+                    <label style={{ fontSize: 13, color: T.muted, display: 'block', marginBottom: 5 }}>
+                      Signup bonus — credited when a referred user creates their account
+                    </label>
+                    <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+                      <span style={{ fontSize: 15, color: T.muted }}>₱</span>
+                      <input style={{ ...inp, fontWeight: 600, fontSize: 16, marginBottom: 0 }}
+                        type="number" min="0" value={referralForm.signupBonus}
+                        onChange={e => setReferralForm(f => ({ ...f, signupBonus: e.target.value }))} />
+                    </div>
+                    <div style={{ fontSize: 11, color: T.muted, marginTop: 4 }}>
+                      Currently: <strong style={{ color: T.accent }}>₱{Number(referralForm.signupBonus).toLocaleString() || 0}</strong> per signup
+                    </div>
+                  </div>
+                  <div>
+                    <label style={{ fontSize: 13, color: T.muted, display: 'block', marginBottom: 5 }}>
+                      Subscription commission — credited to referrer on each approved payment
+                    </label>
+                    <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+                      <input style={{ ...inp, fontWeight: 600, fontSize: 16, marginBottom: 0 }}
+                        type="number" min="0" max="100" value={referralForm.subscriptionPercent}
+                        onChange={e => setReferralForm(f => ({ ...f, subscriptionPercent: e.target.value }))} />
+                      <span style={{ fontSize: 15, color: T.muted }}>%</span>
+                    </div>
+                    <div style={{ fontSize: 11, color: T.muted, marginTop: 4 }}>
+                      E.g. Starter (₱{Number(referralForm.subscriptionPercent || 0) > 0
+                        ? Math.round(399 * Number(referralForm.subscriptionPercent) / 100)
+                        : 0}) · Professional (₱{Number(referralForm.subscriptionPercent || 0) > 0
+                        ? Math.round(699 * Number(referralForm.subscriptionPercent) / 100)
+                        : 0}) · Enterprise (₱{Number(referralForm.subscriptionPercent || 0) > 0
+                        ? Math.round(999 * Number(referralForm.subscriptionPercent) / 100)
+                        : 0})
+                    </div>
+                  </div>
                 </div>
               </Card>
 

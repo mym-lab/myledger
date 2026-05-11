@@ -219,6 +219,10 @@ try { db.exec("ALTER TABLE users ADD COLUMN referral_code TEXT"); }
 catch (_) { /* column already exists */ }
 try { db.exec("ALTER TABLE users ADD COLUMN referral_balance REAL NOT NULL DEFAULT 0"); }
 catch (_) { /* column already exists */ }
+try { db.exec("ALTER TABLE users ADD COLUMN referred_by TEXT"); }
+catch (_) { /* column already exists */ }
+try { db.exec("ALTER TABLE clients ADD COLUMN subscription_expires_at TEXT"); }
+catch (_) { /* column already exists */ }
 
 // ── Default settings bootstrap ────────────────────────────────────────────────
 const DEFAULT_SETTINGS = {
@@ -229,6 +233,10 @@ const DEFAULT_SETTINGS = {
     gcash: { name: 'Kaiman & Co.', number: '09989919660' },
   },
   contactEmail: 'mym@kaimanco.com',
+  referral: {
+    signupBonus:          100,   // ₱ credited on referee signup
+    subscriptionPercent:  10,    // % of subscription payment credited on each approval
+  },
   smtp: {
     host: '', port: 587, secure: false,
     user: '', pass: '',
@@ -296,6 +304,7 @@ export function rowToClient(r) {
     businessType: r.business_type, type: r.type,
     taxRegime: r.tax_regime, optRate: r.opt_rate,
     birthday: r.birthday, ownerBirthdate: r.birthday, subscriptionTier: r.subscription_tier,
+    subscriptionExpiresAt: r.subscription_expires_at || null,
     createdAt: r.created_at,
   };
 }

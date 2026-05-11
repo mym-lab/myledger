@@ -1414,6 +1414,35 @@ export default function ClientInterface({ onLogout }) {
 
         {!active && tab !== 'Referral' && <div style={{ color: T.muted, textAlign: 'center', padding: 60 }}>Add a business to get started.</div>}
 
+        {/* ── Subscription expired banner ── */}
+        {active && active.subscriptionTier === 'free' && active.subscriptionExpiresAt &&
+          new Date(active.subscriptionExpiresAt) < new Date() && (
+          <div style={{ background: '#fff5f5', border: '1px solid #ff3b3040', borderRadius: T.radius,
+            padding: '16px 20px', marginBottom: 20,
+            display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 16 }}>
+            <div style={{ display: 'flex', gap: 14, alignItems: 'flex-start' }}>
+              <span style={{ fontSize: 24 }}>⚠️</span>
+              <div>
+                <div style={{ fontWeight: 700, fontSize: 15, color: T.red }}>
+                  Your subscription has expired
+                </div>
+                <div style={{ fontSize: 13, color: '#3d3d3f', marginTop: 3, lineHeight: 1.5 }}>
+                  <strong>{active.tradeName}</strong> has been downgraded to the Free plan.
+                  Reports, BIR reminders, and other premium features are now locked.
+                  Renew your plan to restore full access.
+                </div>
+              </div>
+            </div>
+            <button onClick={() => setShowPayment(true)} style={{
+              padding: '10px 22px', borderRadius: 10, border: 'none',
+              background: T.red, color: '#fff', fontWeight: 600, fontSize: 14,
+              cursor: 'pointer', fontFamily: 'inherit', whiteSpace: 'nowrap',
+            }}>
+              Renew Plan →
+            </button>
+          </div>
+        )}
+
         {/* ══════════ OVERVIEW ══════════ */}
         {tab === 'Overview' && active && (
           <div>
@@ -2031,7 +2060,11 @@ export default function ClientInterface({ onLogout }) {
               <div>
                 <h2 style={{ margin: 0, fontSize: 22, fontWeight: 600 }}>Referral Program</h2>
                 <div style={{ fontSize: 13, color: T.muted, marginTop: 4 }}>
-                  Invite friends to MyLedger and earn <strong style={{ color: T.orange }}>₱200 cash</strong> for every signup you refer.
+                  Earn <strong style={{ color: T.orange }}>
+                    ₱{refData?.rates?.signupBonus ?? 100} per signup
+                  </strong> + <strong style={{ color: T.orange }}>
+                    {refData?.rates?.subscriptionPercent ?? 10}% of every subscription payment
+                  </strong> they make.
                 </div>
               </div>
               <Btn size="sm" variant="ghost" onClick={loadReferrals}>↻ Refresh</Btn>
@@ -2059,7 +2092,8 @@ export default function ClientInterface({ onLogout }) {
                     </Btn>
                   </div>
                   <div style={{ marginTop: 12, fontSize: 12, color: T.muted }}>
-                    Share this link with friends. When they sign up, you earn ₱200 once their account is approved by our team.
+                    You earn <strong>₱{refData?.rates?.signupBonus ?? 100}</strong> when they sign up,
+                    plus <strong>{refData?.rates?.subscriptionPercent ?? 10}%</strong> of every subscription payment they make.
                   </div>
                 </Card>
 

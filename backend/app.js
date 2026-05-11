@@ -10,6 +10,7 @@ import { existsSync } from 'fs';
 import { join, dirname } from 'path';
 import { fileURLToPath } from 'url';
 
+import { db } from './db.js';
 import authRoutes            from './routes/auth.js';
 import clientRoutes          from './routes/clients.js';
 import transactionRoutes     from './routes/transactions.js';
@@ -94,6 +95,25 @@ app.use((err, req, res, next) => {
   console.error(err.stack);
   res.status(500).json({ error: err.message || 'Internal server error' });
 });
+
+// ─── Subscription Expiry Check ────────────────────────────────
+// Runs on startup and every 24 h. Downgrades clients whose subscription
+// has expired to free tier. subscription_expires_at is kept (not nulled)
+// so the frontend can show the "subscription expired" banner.
+function checkExpiredSubscriptions() {
+  try {
+    const now = new Date().toISOString();
+    const result = db.prepare(
+      "UPDATE clients SET subscription_tier='free' WHERE subscription_expires_at < ? AND subscription_tier != 'free'"
+    ).run(now);
+    if (result.changes > 0)
+      console.log(`⏰  Subscription expiry: ${result.changes} client(s) downgraded to free.`);
+  } catch (e) {
+    console.error('⚠️  Expiry check failed:', e.message);
+  }
+}
+checkExpiredSubscriptions();
+setInterval(checkExpiredSubscriptions, 24 * 60 * 60 * 1000);
 
 app.listen(PORT, () => {
   console.log(`\n✅  MyLedger ${isProd ? 'PRODUCTION' : 'dev'} server → http://localhost:${PORT}`);
