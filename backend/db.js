@@ -349,15 +349,26 @@ export function rowToAudit(r) {
   };
 }
 
-// ── Admin seed — runs once on startup if env vars are set ─────────────────────
+// ── Admin seed — runs on startup if ADMIN_EMAIL + ADMIN_PASSWORD are set ──────
+// Set ADMIN_RESET=true to force-update password on an existing admin account.
 (function seedAdmin() {
   const email    = process.env.ADMIN_EMAIL;
   const password = process.env.ADMIN_PASSWORD;
+  const reset    = process.env.ADMIN_RESET === 'true';
   if (!email || !password) return;
 
   const existing = db.prepare("SELECT id FROM users WHERE role = 'admin' LIMIT 1").get();
+
+  if (existing && reset) {
+    const hash = bcrypt.hashSync(password, 10);
+    db.prepare("UPDATE users SET password_hash = ?, email = ? WHERE id = ?")
+      .run(hash, email, existing.id);
+    console.log(`✅  Admin password reset for: ${email}`);
+    return;
+  }
+
   if (existing) {
-    console.log('ℹ️  Admin account already exists — seed skipped.');
+    console.log('ℹ️  Admin account already exists — seed skipped. Set ADMIN_RESET=true to reset password.');
     return;
   }
 
