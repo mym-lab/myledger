@@ -3,7 +3,7 @@
 // Handles ?invite=TOKEN URL param: pre-fills email, locks role to accountant
 
 import { useState, useEffect } from 'react';
-import { login, signup, getInvite } from '../api.js';
+import { login, signup, getInvite, getSettings } from '../api.js';
 
 const T = {
   bg:      '#f5f5f7',
@@ -39,15 +39,23 @@ export default function AuthScreen({ onLogin }) {
   const [inviteLocked, setInviteLocked] = useState(false); // email + role locked
 
   // Referral code from ?ref=CODE in URL
-  const [refCode, setRefCode] = useState('');
+  const [refCode,      setRefCode]      = useState('');
+  const [signupBonus,  setSignupBonus]  = useState(100);  // loaded from settings
 
-  // On mount — check ?invite=TOKEN and ?ref=CODE in URL
+  // On mount — check ?invite=TOKEN and ?ref=CODE in URL, load live signup bonus
   useEffect(() => {
     const params = new URLSearchParams(window.location.search);
 
     // Capture referral code (persists even if invite also present)
     const ref = params.get('ref');
-    if (ref) setRefCode(ref);
+    if (ref) {
+      setRefCode(ref);
+      // Load live signup bonus so banner shows the correct amount
+      getSettings().then(r => {
+        const bonus = r?.settings?.referral?.signupBonus;
+        if (bonus != null) setSignupBonus(bonus);
+      }).catch(() => {});
+    }
 
     const token  = params.get('invite');
     if (!token) return;
@@ -108,7 +116,8 @@ export default function AuthScreen({ onLogin }) {
             <div>
               <div style={{ fontWeight: 600, color: '#cc7700', fontSize: 14 }}>You were referred!</div>
               <div style={{ fontSize: 13, color: '#3d3d3f', marginTop: 2, lineHeight: 1.5 }}>
-                Sign up now and your referrer earns <strong>₱200</strong> when you join MyLedger.
+                Sign up now — your referrer earns <strong>₱{signupBonus.toLocaleString('en-PH')}</strong> when you join.
+                No business registration needed to get started.
               </div>
             </div>
           </div>
@@ -186,10 +195,14 @@ export default function AuthScreen({ onLogin }) {
           <form onSubmit={handleSubmit}>
             {mode === 'signup' && (
               <>
-                <input style={inp} type="text" placeholder="Full name" required
+                <input style={inp} type="text" placeholder="Your full name" required
                   value={name} onChange={e => setName(e.target.value)} />
                 <input style={inp} type="text"
-                  placeholder={role === 'accountant' ? 'Accounting firm name (optional)' : 'Business name (optional)'}
+                  placeholder={
+                    role === 'accountant' ? 'Accounting firm name (optional)'
+                    : role === 'encoder'  ? 'Company name (optional)'
+                    : 'Business name (optional — you can add this later)'
+                  }
                   value={company} onChange={e => setComp(e.target.value)} />
               </>
             )}

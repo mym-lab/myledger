@@ -1150,6 +1150,7 @@ export default function ClientInterface({ onLogout }) {
   // Referral tab
   const [refData,   setRefData]   = useState(null);
   const [refLoad,   setRefLoad]   = useState(false);
+  const [refErr,    setRefErr]    = useState('');
   const [refCopied, setRefCopied] = useState(false);
 
   // Site settings (pricing, payment accounts)
@@ -1239,9 +1240,10 @@ export default function ClientInterface({ onLogout }) {
   }
 
   async function loadReferrals() {
-    setRefLoad(true);
+    setRefLoad(true); setRefErr('');
     try { const r = await getMyReferrals(); setRefData(r); }
-    catch (e) { console.error(e); } finally { setRefLoad(false); }
+    catch (e) { console.error('Referral load error:', e); setRefErr(e.message || 'Failed to load referral data'); }
+    finally { setRefLoad(false); }
   }
 
   async function loadIncReport() {
@@ -2071,6 +2073,10 @@ export default function ClientInterface({ onLogout }) {
             </div>
 
             {refLoad && <div style={{ color: T.muted, fontSize: 14 }}>Loading…</div>}
+            {refErr  && <div style={{ color: '#ff3b30', fontSize: 13, padding: '12px 16px',
+              background: '#fff2f2', borderRadius: 8, border: '1px solid #ffcdd2', marginBottom: 16 }}>
+              ⚠️ {refErr} — try refreshing or signing out and back in.
+            </div>}
 
             {refData && (
               <>
