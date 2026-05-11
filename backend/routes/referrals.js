@@ -6,10 +6,17 @@
 import { Router } from 'express';
 import { v4 as uuidv4 } from 'uuid';
 import { db, rowToUser } from '../db.js';
-import { authenticate, requireRole } from '../middleware/auth.js';
+import { authenticate } from '../middleware/auth.js';
 
 const router = Router();
 router.use(authenticate);
+
+// Inline admin guard (this codebase has no requireRole helper)
+function requireAdmin(req, res, next) {
+  if (req.userRole !== 'admin')
+    return res.status(403).json({ error: 'Admin access required' });
+  next();
+}
 
 // Generate a short unique referral code from user id + name
 function makeCode(user) {
@@ -21,7 +28,7 @@ function makeCode(user) {
 // GET /api/referrals/me
 router.get('/me', (req, res, next) => {
   try {
-    const user = rowToUser(db.prepare('SELECT * FROM users WHERE id = ?').get(req.user.id));
+    const user = rowToUser(db.prepare('SELECT * FROM users WHERE id = ?').get(req.userId));
     if (!user) return res.status(404).json({ error: 'User not found' });
 
     // Auto-generate referral code if not set
@@ -36,7 +43,7 @@ router.get('/me', (req, res, next) => {
 
     const referrals = db.prepare(
       'SELECT * FROM referrals WHERE referrer_id = ? ORDER BY created_at DESC'
-    ).all(req.user.id);
+    ).all(req.userId);
 
     const stats = {
       total:    referrals.length,
@@ -59,7 +66,7 @@ router.get('/me', (req, res, next) => {
 });
 
 // GET /api/referrals/list  (admin only)
-router.get('/list', requireRole('admin'), (req, res, next) => {
+router.get('/list', requireAdmin, (req, res, next) => {
   try {
     const rows = db.prepare(`
       SELECT r.*, u.email as referrer_email, u.name as referrer_name
@@ -83,7 +90,7 @@ router.get('/list', requireRole('admin'), (req, res, next) => {
 });
 
 // POST /api/referrals/credit/:id  (admin only)
-router.post('/credit/:id', requireRole('admin'), (req, res, next) => {
+router.post('/credit/:id', requireAdmin, (req, res, next) => {
   try {
     const referral = db.prepare('SELECT * FROM referrals WHERE id = ?').get(req.params.id);
     if (!referral) return res.status(404).json({ error: 'Referral not found' });
