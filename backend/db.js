@@ -223,6 +223,8 @@ try { db.exec("ALTER TABLE users ADD COLUMN referred_by TEXT"); }
 catch (_) { /* column already exists */ }
 try { db.exec("ALTER TABLE clients ADD COLUMN subscription_expires_at TEXT"); }
 catch (_) { /* column already exists */ }
+try { db.exec("ALTER TABLE upgrade_requests ADD COLUMN request_type TEXT NOT NULL DEFAULT 'client'"); }
+catch (_) { /* column already exists */ }
 
 // ── Default settings bootstrap ────────────────────────────────────────────────
 const DEFAULT_SETTINGS = {

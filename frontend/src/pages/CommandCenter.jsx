@@ -152,7 +152,7 @@ export default function CommandCenter({ onLogout }) {
   }
 
   async function handleApprove(id) {
-    if (!confirm('Approve this upgrade? The client\'s plan will be activated immediately.')) return;
+    if (!confirm('Approve this upgrade? The plan will be activated immediately.')) return;
     try {
       await approveUpgradeRequest(id);
       setActionMsg('✓ Approved — plan activated.');
@@ -474,7 +474,7 @@ export default function CommandCenter({ onLogout }) {
               <div>
                 <h2 style={{ margin: '0 0 4px', fontSize: 22, fontWeight: 600 }}>Upgrade Requests</h2>
                 <div style={{ fontSize: 13, color: T.muted }}>
-                  Clients who have submitted e-wallet payment notifications for plan upgrades.
+                  Client and accountant plan upgrade notifications pending payment verification.
                 </div>
               </div>
               <button onClick={loadUpgradeRequests}
@@ -541,8 +541,15 @@ export default function CommandCenter({ onLogout }) {
                         <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', flexWrap: 'wrap', gap: 12 }}>
                           {/* Left side */}
                           <div style={{ flex: 1, minWidth: 220 }}>
-                            <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: 6 }}>
-                              <span style={{ fontWeight: 700, fontSize: 16 }}>{req.tradeName}</span>
+                            <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: 6, flexWrap: 'wrap' }}>
+                              <span style={{ fontWeight: 700, fontSize: 16 }}>{req.displayName || req.tradeName || req.displayEmail}</span>
+                              <span style={{
+                                background: req.requestType === 'accountant' ? '#af52de15' : '#0071e315',
+                                color:      req.requestType === 'accountant' ? '#af52de'   : '#0071e3',
+                                fontSize: 10, fontWeight: 700, padding: '2px 7px', borderRadius: 5,
+                                textTransform: 'uppercase', letterSpacing: '0.4px' }}>
+                                {req.requestType === 'accountant' ? '🧾 Accountant' : '🏢 Client'}
+                              </span>
                               <span style={{ background: `${tc}15`, color: tc, fontSize: 11, fontWeight: 700,
                                 padding: '2px 9px', borderRadius: 5, textTransform: 'uppercase' }}>
                                 → {req.targetTier}

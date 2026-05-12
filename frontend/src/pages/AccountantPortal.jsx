@@ -23,6 +23,8 @@ import {
   scanReceipt,
   getMyReferrals,
   downloadCSV,
+  createAccountantUpgradeRequest,
+  getMyUpgradeRequests,
 } from '../api.js';
 import {
   printReport,
@@ -158,7 +160,7 @@ const ACCT_TIERS = {
   agency:       { label: 'Agency',       color: '#af52de', maxClients: null, price: 4999 },
 };
 
-function ProLock() {
+function ProLock({ onUpgrade }) {
   return (
     <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center',
       minHeight: 360, padding: 40 }}>
@@ -186,14 +188,21 @@ function ProLock() {
             </div>
           ))}
         </div>
-        <a href="mailto:mym@kaimanco.com?subject=MyLedger%20Accountant%20Plan%20Upgrade"
-          style={{ display: 'block', background: T.accentL, borderRadius: 10, padding: '12px 16px',
-            fontSize: 13, color: T.accent, textDecoration: 'none', cursor: 'pointer',
-            border: `1px solid ${T.accent}30`, transition: 'background .15s' }}
-          onMouseOver={e => e.currentTarget.style.background = '#d6eaff'}
-          onMouseOut={e => e.currentTarget.style.background = T.accentL}>
-          📧 Email <strong>mym@kaimanco.com</strong> to upgrade your plan →
-        </a>
+        {onUpgrade ? (
+          <button onClick={onUpgrade}
+            style={{ width: '100%', padding: '12px 16px', borderRadius: 10, border: 'none',
+              background: T.accent, color: '#fff', fontSize: 14, fontWeight: 700,
+              cursor: 'pointer', fontFamily: 'inherit' }}>
+            Upgrade Plan →
+          </button>
+        ) : (
+          <a href="mailto:mym@kaimanco.com?subject=MyLedger%20Accountant%20Plan%20Upgrade"
+            style={{ display: 'block', background: T.accentL, borderRadius: 10, padding: '12px 16px',
+              fontSize: 13, color: T.accent, textDecoration: 'none', cursor: 'pointer',
+              border: `1px solid ${T.accent}30` }}>
+            📧 Email <strong>mym@kaimanco.com</strong> to upgrade →
+          </a>
+        )}
       </div>
     </div>
   );
@@ -1036,8 +1045,41 @@ export default function AccountantPortal({ onLogout }) {
   const [refLoad,    setRefLoad]    = useState(false);
   const [refErr,     setRefErr]     = useState('');
   const [refCopied,  setRefCopied]  = useState(false);
+  // Accountant self-serve upgrade
+  const [showUpgrade,    setShowUpgrade]    = useState(false);
+  const [upgradeTarget,  setUpgradeTarget]  = useState('pro');
+  const [upgradeMethod,  setUpgradeMethod]  = useState('gcash');
+  const [upgradeRef,     setUpgradeRef]     = useState('');
+  const [upgradeAmount,  setUpgradeAmount]  = useState('');
+  const [upgradeSubmitting, setUpgradeSubmitting] = useState(false);
+  const [upgradeMsg,     setUpgradeMsg]     = useState('');
+  const [myUpgradeReqs,  setMyUpgradeReqs]  = useState([]);
 
-  useEffect(() => { loadClients(); }, []);
+  useEffect(() => { loadClients(); loadMyUpgradeReqs(); }, []);
+
+  async function loadMyUpgradeReqs() {
+    try { const r = await getMyUpgradeRequests(); setMyUpgradeReqs(r.upgradeRequests || []); }
+    catch (e) { console.error(e); }
+  }
+
+  async function submitUpgrade() {
+    if (!upgradeRef.trim()) { setUpgradeMsg('Please enter your payment reference number.'); return; }
+    setUpgradeSubmitting(true); setUpgradeMsg('');
+    try {
+      await createAccountantUpgradeRequest({
+        targetTier: upgradeTarget,
+        method:     upgradeMethod,
+        refNo:      upgradeRef.trim(),
+        amount:     Number(upgradeAmount) || 0,
+      });
+      setUpgradeMsg('✓ Request submitted! We\'ll activate your plan within 24 hours.');
+      setUpgradeRef(''); setUpgradeAmount('');
+      loadMyUpgradeReqs();
+      setTimeout(() => { setShowUpgrade(false); setUpgradeMsg(''); }, 3000);
+    } catch (e) {
+      setUpgradeMsg(e.message || 'Submission failed. Please try again.');
+    } finally { setUpgradeSubmitting(false); }
+  }
 
   // Referral tab is user-level (no active client needed)
   useEffect(() => {
@@ -1437,6 +1479,39 @@ export default function AccountantPortal({ onLogout }) {
           })}
         </div>
 
+        {/* ── Upgrade banner (free tier only) ── */}
+        {!isPro && (() => {
+          const pendingReq = myUpgradeReqs.find(r => r.status === 'pending');
+          return (
+            <div style={{ marginBottom: 20, borderRadius: 12, overflow: 'hidden',
+              border: `1px solid ${T.accent}40`, background: `${T.accent}08` }}>
+              <div style={{ padding: '14px 20px', display: 'flex', alignItems: 'center',
+                gap: 14, flexWrap: 'wrap' }}>
+                <div style={{ flex: 1, minWidth: 220 }}>
+                  <div style={{ fontWeight: 700, fontSize: 14, color: T.text, marginBottom: 2 }}>
+                    🔒 You're on the <strong>Free</strong> plan — unlock all features
+                  </div>
+                  <div style={{ fontSize: 12, color: T.muted }}>
+                    Upgrade to access Journal Entries, Books, BIR Returns, Financial Statements, and more.
+                  </div>
+                </div>
+                {pendingReq ? (
+                  <div style={{ background: '#fff8ec', border: `1px solid ${T.orange}40`,
+                    borderRadius: 8, padding: '8px 14px', fontSize: 13, color: T.orange, fontWeight: 600 }}>
+                    ⏳ Upgrade pending review — we'll activate within 24 hrs
+                  </div>
+                ) : (
+                  <button onClick={() => setShowUpgrade(true)} style={{
+                    padding: '9px 22px', background: T.accent, color: '#fff', border: 'none',
+                    borderRadius: 9, fontSize: 13, fontWeight: 700, cursor: 'pointer', fontFamily: 'inherit',
+                    whiteSpace: 'nowrap',
+                  }}>Upgrade Plan →</button>
+                )}
+              </div>
+            </div>
+          );
+        })()}
+
         {/* No clients yet — show a helpful prompt on non-Referral tabs */}
         {noClients && tab !== 'Referral' && (
           <div style={{ textAlign: 'center', padding: '60px 20px' }}>
@@ -1713,7 +1788,7 @@ export default function AccountantPortal({ onLogout }) {
 
         {/* ════════════ JOURNAL ENTRIES ════════════ */}
         {tab === 'Journal Entries' && active && (
-          !isPro ? <ProLock /> : <div>
+          !isPro ? <ProLock onUpgrade={() => setShowUpgrade(true)} /> : <div>
             <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 20 }}>
               <h2 style={{ margin: 0, fontSize: 22, fontWeight: 600 }}>Journal Entries — {active.tradeName}</h2>
               <Btn onClick={() => setShowJE(true)}>+ New Journal Entry</Btn>
@@ -1805,7 +1880,7 @@ export default function AccountantPortal({ onLogout }) {
 
         {/* ════════════ TRIAL BALANCE ════════════ */}
         {tab === 'Trial Balance' && active && (
-          !isPro ? <ProLock /> : <div>
+          !isPro ? <ProLock onUpgrade={() => setShowUpgrade(true)} /> : <div>
             <h2 style={{ margin: '0 0 8px', fontSize: 22, fontWeight: 600 }}>Trial Balance — {active.tradeName}</h2>
             <div style={{ fontSize: 13, color: T.muted, marginBottom: 20 }}>
               Synthetic trial balance derived from all transactions and manual journal entries.
@@ -1878,7 +1953,7 @@ export default function AccountantPortal({ onLogout }) {
 
         {/* ════════════ BIR RETURNS ════════════ */}
         {tab === 'BIR Returns' && active && (
-          !isPro ? <ProLock /> : (() => {
+          !isPro ? <ProLock onUpgrade={() => setShowUpgrade(true)} /> : (() => {
             const isOPT = active.taxRegime === 'opt';
             // Form options depend on tax regime — 1601-EQ is always available
             const formOptions = isOPT
@@ -2205,7 +2280,7 @@ export default function AccountantPortal({ onLogout }) {
 
         {/* ════════════ ALPHALIST ════════════ */}
         {tab === 'Alphalist' && active && (
-          !isPro ? <ProLock /> : <div>
+          !isPro ? <ProLock onUpgrade={() => setShowUpgrade(true)} /> : <div>
             <h2 style={{ margin: '0 0 8px', fontSize: 22, fontWeight: 600 }}>Alphalist / SLSP — {active.tradeName}</h2>
             <div style={{ fontSize: 13, color: T.muted, marginBottom: 20 }}>
               Expense transactions grouped by vendor/counterparty for BIR Alphalist reporting.
@@ -2278,7 +2353,7 @@ export default function AccountantPortal({ onLogout }) {
 
         {/* ════════════ AUDIT LOG ════════════ */}
         {tab === 'Audit Log' && active && (
-          !isPro ? <ProLock /> : <div>
+          !isPro ? <ProLock onUpgrade={() => setShowUpgrade(true)} /> : <div>
             <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 20 }}>
               <h2 style={{ margin: 0, fontSize: 22, fontWeight: 600 }}>Audit Log — {active.tradeName}</h2>
               <Btn size="sm" variant="ghost" onClick={loadAudit}>↻ Refresh</Btn>
@@ -2326,7 +2401,7 @@ export default function AccountantPortal({ onLogout }) {
 
         {/* ════════════ PERIOD LOCK ════════════ */}
         {tab === 'Period Lock' && active && (
-          !isPro ? <ProLock /> : <div style={{ maxWidth: 640 }}>
+          !isPro ? <ProLock onUpgrade={() => setShowUpgrade(true)} /> : <div style={{ maxWidth: 640 }}>
             <h2 style={{ margin: '0 0 6px', fontSize: 22, fontWeight: 600 }}>Period Locking — {active.tradeName}</h2>
             <p style={{ color: T.muted, fontSize: 13, marginBottom: 24 }}>
               Locked periods block new transactions and voids. Required for CAS compliance.
@@ -2378,7 +2453,7 @@ export default function AccountantPortal({ onLogout }) {
 
         {/* ════════════ COA ════════════ */}
         {tab === 'COA' && active && (
-          !isPro ? <ProLock /> : <div>
+          !isPro ? <ProLock onUpgrade={() => setShowUpgrade(true)} /> : <div>
             <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 20, flexWrap: 'wrap', gap: 12 }}>
               <h2 style={{ margin: 0, fontSize: 22, fontWeight: 600 }}>Chart of Accounts — {active.tradeName}</h2>
               <div style={{ display: 'flex', gap: 10 }}>
@@ -2485,7 +2560,7 @@ export default function AccountantPortal({ onLogout }) {
 
         {/* ════════════ GENERAL JOURNAL ════════════ */}
         {tab === 'General Journal' && active && (
-          !isPro ? <ProLock /> : <div>
+          !isPro ? <ProLock onUpgrade={() => setShowUpgrade(true)} /> : <div>
             <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 20, flexWrap: 'wrap', gap: 12 }}>
               <h2 style={{ margin: 0, fontSize: 22, fontWeight: 600 }}>General Journal — {active.tradeName}</h2>
               <div style={{ display: 'flex', gap: 10, alignItems: 'center', flexWrap: 'wrap' }}>
@@ -2555,7 +2630,7 @@ export default function AccountantPortal({ onLogout }) {
 
         {/* ════════════ GENERAL LEDGER ════════════ */}
         {tab === 'General Ledger' && active && (
-          !isPro ? <ProLock /> : <div>
+          !isPro ? <ProLock onUpgrade={() => setShowUpgrade(true)} /> : <div>
             <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 20, flexWrap: 'wrap', gap: 12 }}>
               <h2 style={{ margin: 0, fontSize: 22, fontWeight: 600 }}>General Ledger — {active.tradeName}</h2>
               <div style={{ display: 'flex', gap: 10, alignItems: 'center', flexWrap: 'wrap' }}>
@@ -2636,7 +2711,7 @@ export default function AccountantPortal({ onLogout }) {
 
         {/* ════════════ INCOME STATEMENT ════════════ */}
         {tab === 'Income Statement' && active && (
-          !isPro ? <ProLock /> : <div>
+          !isPro ? <ProLock onUpgrade={() => setShowUpgrade(true)} /> : <div>
             <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 22 }}>
               <h2 style={{ margin: 0, fontSize: 22, fontWeight: 600 }}>Income Statement — {active.tradeName}</h2>
               {income && (
@@ -2684,7 +2759,7 @@ export default function AccountantPortal({ onLogout }) {
 
         {/* ════════════ BALANCE SHEET ════════════ */}
         {tab === 'Balance Sheet' && active && (
-          !isPro ? <ProLock /> : <div>
+          !isPro ? <ProLock onUpgrade={() => setShowUpgrade(true)} /> : <div>
             <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 22 }}>
               <h2 style={{ margin: 0, fontSize: 22, fontWeight: 600 }}>Statement of Financial Position — {active.tradeName}</h2>
               {balance && (
@@ -2792,7 +2867,7 @@ export default function AccountantPortal({ onLogout }) {
 
         {/* ════════════ BOOKS ════════════ */}
         {tab === 'Books' && active && (
-          !isPro ? <ProLock /> : <div>
+          !isPro ? <ProLock onUpgrade={() => setShowUpgrade(true)} /> : <div>
             <h2 style={{ margin: '0 0 8px', fontSize: 22, fontWeight: 600 }}>Accounting Books — {active.tradeName}</h2>
             <div style={{ fontSize: 13, color: T.muted, marginBottom: 20 }}>
               Philippine SLSP-format subsidiary books derived from transactions. Use these to verify entries and check for adjustments needed.
@@ -2953,7 +3028,7 @@ export default function AccountantPortal({ onLogout }) {
 
         {/* ════════════ CASH FLOW ════════════ */}
         {tab === 'Cash Flow' && active && (
-          !isPro ? <ProLock /> : <div>
+          !isPro ? <ProLock onUpgrade={() => setShowUpgrade(true)} /> : <div>
             <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 8 }}>
               <h2 style={{ margin: 0, fontSize: 22, fontWeight: 600 }}>Cash Flow Statement — {active.tradeName}</h2>
               {cfReport && (
@@ -3073,7 +3148,7 @@ export default function AccountantPortal({ onLogout }) {
 
         {/* ════════════ ASSETS ════════════ */}
         {tab === 'Assets' && active && (
-          !isPro ? <ProLock /> : <div>
+          !isPro ? <ProLock onUpgrade={() => setShowUpgrade(true)} /> : <div>
             <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 20 }}>
               <div>
                 <h2 style={{ margin: '0 0 4px', fontSize: 22, fontWeight: 600 }}>Fixed Assets — {active.tradeName}</h2>
@@ -3162,7 +3237,7 @@ export default function AccountantPortal({ onLogout }) {
 
         {/* ════════════ SLSP ════════════ */}
         {tab === 'SLSP' && active && (
-          !isPro ? <ProLock /> : <div>
+          !isPro ? <ProLock onUpgrade={() => setShowUpgrade(true)} /> : <div>
             <h2 style={{ margin: '0 0 4px', fontSize: 22, fontWeight: 600 }}>SLSP — {active.tradeName}</h2>
             <div style={{ fontSize: 13, color: T.muted, marginBottom: 24 }}>
               Summary List of Sales &amp; Purchases — BIR VAT Relief format. Export CSV for eBIRForms submission.
@@ -3306,7 +3381,7 @@ export default function AccountantPortal({ onLogout }) {
 
         {/* ════════════ CONTACTS ════════════ */}
         {tab === 'Contacts' && active && (
-          !isPro ? <ProLock /> : <div>
+          !isPro ? <ProLock onUpgrade={() => setShowUpgrade(true)} /> : <div>
             <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 22 }}>
               <div>
                 <h2 style={{ margin: '0 0 4px', fontSize: 22, fontWeight: 600 }}>Contacts — {active.tradeName}</h2>
@@ -3666,6 +3741,122 @@ export default function AccountantPortal({ onLogout }) {
             </table>
           </div>
         </ModalShell>
+      )}
+
+      {/* ── Accountant Upgrade Modal ── */}
+      {showUpgrade && (
+        <div style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.45)', zIndex: 1000,
+          display: 'flex', alignItems: 'center', justifyContent: 'center', padding: 20 }}
+          onClick={e => { if (e.target === e.currentTarget) setShowUpgrade(false); }}>
+          <div style={{ background: T.surface, borderRadius: 20, padding: '32px 36px', width: '100%',
+            maxWidth: 520, boxShadow: '0 8px 40px rgba(0,0,0,0.2)', maxHeight: '90vh', overflowY: 'auto' }}>
+
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 24 }}>
+              <h2 style={{ margin: 0, fontSize: 22, fontWeight: 700 }}>Upgrade Your Plan</h2>
+              <button onClick={() => setShowUpgrade(false)} style={{ background: 'none', border: 'none',
+                fontSize: 22, cursor: 'pointer', color: T.muted, lineHeight: 1 }}>×</button>
+            </div>
+
+            {/* Plan picker */}
+            <div style={{ marginBottom: 20 }}>
+              <label style={{ fontSize: 12, fontWeight: 600, color: T.muted, display: 'block',
+                marginBottom: 8, textTransform: 'uppercase', letterSpacing: '0.5px' }}>Select Plan</label>
+              <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 8 }}>
+                {[
+                  { tier: 'pro',    label: 'Solo Pro',  price: '₱2,499', clients: '15 clients',          color: '#0071e3' },
+                  { tier: 'agency', label: 'Agency',    price: '₱5,999', clients: 'Unlimited + white-label', color: '#af52de' },
+                ].map(p => (
+                  <div key={p.tier} onClick={() => setUpgradeTarget(p.tier)}
+                    style={{ border: `2px solid ${upgradeTarget === p.tier ? p.color : T.border}`,
+                      borderRadius: 10, padding: '12px 14px', cursor: 'pointer',
+                      background: upgradeTarget === p.tier ? `${p.color}08` : T.bg,
+                      transition: 'all .15s' }}>
+                    <div style={{ fontWeight: 700, color: p.color, fontSize: 14 }}>{p.label}</div>
+                    <div style={{ fontSize: 20, fontWeight: 700, color: T.text, margin: '4px 0 2px' }}>{p.price}<span style={{ fontSize: 11, fontWeight: 400, color: T.muted }}>/mo</span></div>
+                    <div style={{ fontSize: 11, color: T.muted }}>{p.clients}</div>
+                  </div>
+                ))}
+              </div>
+            </div>
+
+            {/* Payment instructions */}
+            <div style={{ background: '#f0f8ff', border: `1px solid #0071e330`, borderRadius: 10,
+              padding: '14px 16px', marginBottom: 20, fontSize: 13 }}>
+              <div style={{ fontWeight: 700, marginBottom: 8, color: T.text }}>💳 How to Pay</div>
+              <div style={{ color: T.muted, lineHeight: 1.7 }}>
+                Send your payment to any of the following:<br />
+                <strong style={{ color: T.text }}>GCash / Maya:</strong> 0998-991-9660 (Kaiman & Co.)<br />
+                <strong style={{ color: T.text }}>Bank transfer:</strong> BDO — Kaiman & Co. (ask via email for account details)<br />
+                Then enter your reference number below.
+              </div>
+            </div>
+
+            {/* Payment method */}
+            <div style={{ marginBottom: 14 }}>
+              <label style={{ fontSize: 12, fontWeight: 600, color: T.muted, display: 'block',
+                marginBottom: 6, textTransform: 'uppercase', letterSpacing: '0.5px' }}>Payment Method</label>
+              <div style={{ display: 'flex', gap: 8 }}>
+                {['gcash', 'maya', 'bank'].map(m => (
+                  <button key={m} onClick={() => setUpgradeMethod(m)}
+                    style={{ padding: '7px 16px', borderRadius: 8, border: `1.5px solid ${upgradeMethod === m ? T.accent : T.border}`,
+                      background: upgradeMethod === m ? `${T.accent}10` : T.surface, color: upgradeMethod === m ? T.accent : T.muted,
+                      fontWeight: 600, fontSize: 13, cursor: 'pointer', fontFamily: 'inherit', textTransform: 'uppercase' }}>
+                    {m}
+                  </button>
+                ))}
+              </div>
+            </div>
+
+            {/* Reference number */}
+            <div style={{ marginBottom: 14 }}>
+              <label style={{ fontSize: 12, fontWeight: 600, color: T.muted, display: 'block',
+                marginBottom: 6, textTransform: 'uppercase', letterSpacing: '0.5px' }}>Reference / Confirmation No. *</label>
+              <input value={upgradeRef} onChange={e => setUpgradeRef(e.target.value)}
+                placeholder="e.g. GC2025001234 or transaction ID"
+                style={{ width: '100%', padding: '10px 12px', borderRadius: 9, border: `1px solid ${T.border}`,
+                  fontSize: 14, fontFamily: 'inherit', outline: 'none', boxSizing: 'border-box' }} />
+            </div>
+
+            {/* Amount */}
+            <div style={{ marginBottom: 22 }}>
+              <label style={{ fontSize: 12, fontWeight: 600, color: T.muted, display: 'block',
+                marginBottom: 6, textTransform: 'uppercase', letterSpacing: '0.5px' }}>Amount Paid (₱)</label>
+              <input type="number" value={upgradeAmount} onChange={e => setUpgradeAmount(e.target.value)}
+                placeholder="e.g. 2499"
+                style={{ width: '100%', padding: '10px 12px', borderRadius: 9, border: `1px solid ${T.border}`,
+                  fontSize: 14, fontFamily: 'inherit', outline: 'none', boxSizing: 'border-box' }} />
+            </div>
+
+            {upgradeMsg && (
+              <div style={{ marginBottom: 16, padding: '10px 14px', borderRadius: 9, fontSize: 13,
+                background: upgradeMsg.startsWith('✓') ? '#f0fff4' : '#fff5f5',
+                color: upgradeMsg.startsWith('✓') ? T.green : T.red,
+                border: `1px solid ${upgradeMsg.startsWith('✓') ? T.green : T.red}30` }}>
+                {upgradeMsg}
+              </div>
+            )}
+
+            <div style={{ display: 'flex', gap: 10 }}>
+              <button onClick={() => setShowUpgrade(false)}
+                style={{ flex: 1, padding: '11px', borderRadius: 10, border: `1px solid ${T.border}`,
+                  background: T.surface, color: T.muted, fontSize: 14, fontWeight: 600,
+                  cursor: 'pointer', fontFamily: 'inherit' }}>
+                Cancel
+              </button>
+              <button onClick={submitUpgrade} disabled={upgradeSubmitting}
+                style={{ flex: 2, padding: '11px', borderRadius: 10, border: 'none',
+                  background: upgradeSubmitting ? T.border : T.accent, color: '#fff',
+                  fontSize: 14, fontWeight: 700, cursor: upgradeSubmitting ? 'not-allowed' : 'pointer',
+                  fontFamily: 'inherit' }}>
+                {upgradeSubmitting ? 'Submitting…' : 'Submit Payment Notification'}
+              </button>
+            </div>
+
+            <div style={{ marginTop: 14, fontSize: 12, color: T.muted, textAlign: 'center' }}>
+              Questions? Email <a href="mailto:mym@kaimanco.com" style={{ color: T.accent }}>mym@kaimanco.com</a>
+            </div>
+          </div>
+        </div>
       )}
     </div>
   );

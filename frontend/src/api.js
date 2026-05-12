@@ -114,10 +114,12 @@ export const createJournalEntry = (data)      => post('/journal-entries', data, 
 export const deleteJournalEntry = (id)        => del(`/journal-entries/${id}`, true);
 
 // ─── Upgrade Requests ─────────────────────────────────────────
-export const createUpgradeRequest  = (data)   => post('/upgrade-requests', data, true);
-export const getUpgradeRequests    = ()        => get('/upgrade-requests');
-export const approveUpgradeRequest = (id)      => put(`/upgrade-requests/${id}/approve`, {});
-export const rejectUpgradeRequest  = (id, reason) => put(`/upgrade-requests/${id}/reject`, { reason });
+export const createUpgradeRequest           = (data)         => post('/upgrade-requests', data, true);
+export const createAccountantUpgradeRequest = (data)         => post('/upgrade-requests', { ...data, requestType: 'accountant' }, true);
+export const getUpgradeRequests             = ()             => get('/upgrade-requests', true);
+export const getMyUpgradeRequests           = ()             => get('/upgrade-requests', true);
+export const approveUpgradeRequest          = (id)           => put(`/upgrade-requests/${id}/approve`, {}, true);
+export const rejectUpgradeRequest           = (id, reason)   => put(`/upgrade-requests/${id}/reject`, { reason }, true);
 
 // ─── Admin ────────────────────────────────────────────────────
 export const getAdminStats     = ()           => get('/admin/stats');
