@@ -15,6 +15,7 @@ import {
   createUpgradeRequest,
   scanReceipt,
   getMyReferrals,
+  downloadCSV,
 } from '../api.js';
 
 // ─── Design tokens ───────────────────────────────────────────────────────────
@@ -1546,10 +1547,18 @@ export default function ClientInterface({ onLogout }) {
           <div>
             <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: txLimit ? 14 : 20 }}>
               <h2 style={{ margin: 0, fontSize: 22, fontWeight: 600 }}>Transactions</h2>
-              {txAtLimit
-                ? <Btn variant="danger" onClick={() => setShowPayment(true)}>Limit reached — Upgrade ↑</Btn>
-                : <Btn onClick={() => setShowTx(true)}>+ Add Transaction</Btn>
-              }
+              <div style={{ display: 'flex', gap: 10, alignItems: 'center' }}>
+                {txns.length > 0 && (
+                  <Btn size="sm" variant="neutral" onClick={() => {
+                    const date = new Date().toISOString().substring(0, 10);
+                    downloadCSV(`/transactions?clientId=${active.id}`, `transactions_${date}.csv`);
+                  }}>⬇ CSV</Btn>
+                )}
+                {txAtLimit
+                  ? <Btn variant="danger" onClick={() => setShowPayment(true)}>Limit reached — Upgrade ↑</Btn>
+                  : <Btn onClick={() => setShowTx(true)}>+ Add Transaction</Btn>
+                }
+              </div>
             </div>
 
             {/* Transaction usage bar */}

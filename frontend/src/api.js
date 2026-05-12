@@ -189,3 +189,28 @@ export const creditReferral    = (id)         => post(`/referrals/credit/${id}`,
 
 // ─── Health ───────────────────────────────────────────────────
 export const healthCheck       = ()           => get('/health');
+
+// ─── CSV Downloads ────────────────────────────────────────────
+export async function downloadCSV(path, filename) {
+  const sep = path.includes('?') ? '&' : '?';
+  const res = await fetch(BASE + path + sep + 'format=csv', {
+    headers: { 'Authorization': `Bearer ${getToken()}` },
+  });
+  if (res.status === 401 || res.status === 403) {
+    localStorage.removeItem('ml_token');
+    localStorage.removeItem('ml_user');
+    window.location.href = '/';
+    return;
+  }
+  if (!res.ok) {
+    const d = await res.json().catch(() => ({}));
+    throw new Error(d.error || 'Download failed');
+  }
+  const blob = await res.blob();
+  const url  = URL.createObjectURL(blob);
+  const a    = document.createElement('a');
+  a.href = url; a.download = filename;
+  document.body.appendChild(a); a.click();
+  document.body.removeChild(a);
+  URL.revokeObjectURL(url);
+}

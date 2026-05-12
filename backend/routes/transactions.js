@@ -14,6 +14,17 @@ import { logAudit } from './audit.js';
 const router = Router();
 router.use(authenticate);
 
+// ── CSV helpers ───────────────────────────────────────────────────────────────
+function toCSV(headers, rows) {
+  const esc = v => { const s = v == null ? '' : String(v); return (s.includes(',') || s.includes('"') || s.includes('\n')) ? `"${s.replace(/"/g, '""')}"` : s; };
+  return [headers, ...rows].map(r => r.map(esc).join(',')).join('\r\n');
+}
+function sendCSV(res, filename, headers, rows) {
+  res.setHeader('Content-Type', 'text/csv; charset=utf-8');
+  res.setHeader('Content-Disposition', `attachment; filename="${filename}"`);
+  res.send('﻿' + toCSV(headers, rows)); // BOM prefix for Excel compatibility
+}
+
 // ── Prepared statements ───────────────────────────────────────────────────────
 const stmtClientById = db.prepare('SELECT * FROM clients WHERE id = ?');
 const stmtInsertTx   = db.prepare(`
@@ -214,6 +225,20 @@ router.get('/', (req, res, next) => {
         createdAt: t.createdAt,
       };
     });
+
+    if (req.query.format === 'csv') {
+      const date = new Date().toISOString().substring(0, 10);
+      const headers = ['Date','Type','Description','Category','Reference No.','Counterparty Name','TIN','Settlement','NET (PHP)','VAT (PHP)','GROSS (PHP)','VAT Type','EWT Rate','EWT Amount','Voided','Void Reason'];
+      const csvRows = transactions.map(t => [
+        t.createdAt.substring(0, 10), t.type, t.description, t.category,
+        t.referenceNo, t.counterpartyName, t.counterpartyTin, t.settlement,
+        t.net, t.vat, t.gross,
+        t.vatType || t.supplierVatType || '',
+        t.ewtRate || 0, t.ewtAmount || 0,
+        t.voided ? 'Yes' : 'No', t.voidReason || '',
+      ]);
+      return sendCSV(res, `transactions_${date}.csv`, headers, csvRows);
+    }
 
     res.json({ transactions, count: transactions.length });
   } catch (err) { next(err); }

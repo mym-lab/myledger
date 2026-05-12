@@ -18,6 +18,17 @@ router.use(noEncoder);
 const round = (n) => Math.round(n * 100) / 100;
 const sum   = (arr, key) => arr.reduce((s, t) => s + (t[key] || 0), 0);
 
+// ── CSV helpers ───────────────────────────────────────────────────────────────
+function toCSV(headers, rows) {
+  const esc = v => { const s = v == null ? '' : String(v); return (s.includes(',') || s.includes('"') || s.includes('\n')) ? `"${s.replace(/"/g, '""')}"` : s; };
+  return [headers, ...rows].map(r => r.map(esc).join(',')).join('\r\n');
+}
+function sendCSV(res, filename, headers, rows) {
+  res.setHeader('Content-Type', 'text/csv; charset=utf-8');
+  res.setHeader('Content-Disposition', `attachment; filename="${filename}"`);
+  res.send('﻿' + toCSV(headers, rows));
+}
+
 // ── Prepared statements ───────────────────────────────────────────────────────
 const stmtClientById    = db.prepare('SELECT * FROM clients WHERE id = ?');
 const stmtTxByClient    = db.prepare(`SELECT * FROM transactions WHERE client_id=? AND voided_at IS NULL`);
@@ -252,6 +263,26 @@ router.get('/books', (req, res, next) => {
       return acc;
     }, {});
 
+    if (req.query.format === 'csv') {
+      const date   = new Date().toISOString().substring(0, 10);
+      const fname  = `${client.tradeName.replace(/\s+/g,'_')}_${type}_book_${date}.csv`;
+      let headers, csvRows;
+      if (type === 'sales') {
+        headers  = ['Date','Ref No.','Customer','TIN','Description','Account','Vatable','Zero-Rated','Exempt','OPT Sales','Output VAT','% Tax','Gross'];
+        csvRows  = rows.map(r => [r.date, r.referenceNo, r.customer, r.tin, r.description, r.account, r.vatable, r.zeroRated, r.exempt, r.optSales, r.outputVAT, r.percentageTax, r.gross]);
+      } else if (type === 'purchases') {
+        headers  = ['Date','Ref No.','Supplier','TIN','Description','Account','VAT Purchases','Non-VAT Purchases','Input VAT','Gross'];
+        csvRows  = rows.map(r => [r.date, r.referenceNo, r.supplier, r.tin, r.description, r.account, r.vatPurchases, r.nonVatPurchases, r.inputVAT, r.gross]);
+      } else if (type === 'receipts') {
+        headers  = ['Date','Ref No.','Payer','Description','Settlement','Vatable','Zero-Rated','Output VAT','Total'];
+        csvRows  = rows.map(r => [r.date, r.referenceNo, r.payer, r.description, r.settlement, r.vatable, r.zeroRated, r.outputVAT, r.total]);
+      } else {
+        headers  = ['Date','Ref No.','Payee','Description','Settlement','Account','VAT Purchases','Non-VAT Purchases','Input VAT','Total'];
+        csvRows  = rows.map(r => [r.date, r.referenceNo, r.payee, r.description, r.settlement, r.account, r.vatPurchases, r.nonVatPurchases, r.inputVAT, r.total]);
+      }
+      return sendCSV(res, fname, headers, csvRows);
+    }
+
     res.json({ type, period: from && to ? `${from} to ${to}` : 'All periods', rows, totals, count: rows.length });
   } catch (err) { next(err); }
 });
@@ -310,6 +341,20 @@ router.get('/slsp', (req, res, next) => {
           supplierVatType: t.supplierVatType || 'vat',
         };
       });
+
+    if (req.query.format === 'csv') {
+      const list = req.query.list || 'sales';
+      const fname = `${client.tradeName.replace(/\s+/g,'_')}_SLSP_${list}_Q${q}_${y}.csv`;
+      if (list === 'purchases') {
+        const headers = ['Date','Invoice/OR No.','Supplier Name','Supplier TIN','Supplier Address','Net Purchases (PHP)','Input VAT (PHP)','Gross Purchases (PHP)','VAT Type'];
+        const csvRows = purchases.map(r => [r.date, r.referenceNo, r.supplierName, r.supplierTin, r.supplierAddr, r.netPurchases, r.inputVAT, r.grossPurchases, r.supplierVatType]);
+        return sendCSV(res, fname, headers, csvRows);
+      } else {
+        const headers = ['Date','Invoice/OR No.','Buyer Name','Buyer TIN','Buyer Address','Net Sales (PHP)','Output VAT (PHP)','Gross Sales (PHP)','VAT Type'];
+        const csvRows = sales.map(r => [r.date, r.referenceNo, r.buyerName, r.buyerTin, r.buyerAddr, r.netSales, r.outputVAT, r.grossSales, r.vatType]);
+        return sendCSV(res, fname, headers, csvRows);
+      }
+    }
 
     res.json({
       client: { id: client.id, tradeName: client.tradeName, tin: client.tin },
@@ -373,6 +418,19 @@ router.get('/general-journal', (req, res, next) => {
       }));
 
     const allEntries = [...txLines, ...manualJEs].sort((a, b) => new Date(a.date) - new Date(b.date));
+
+    if (req.query.format === 'csv') {
+      const date = new Date().toISOString().substring(0, 10);
+      const headers = ['Date','Reference No.','Description','Account','Debit (PHP)','Credit (PHP)'];
+      const csvRows = [];
+      allEntries.forEach(e => {
+        e.entries.forEach(line => {
+          csvRows.push([e.date, e.referenceNo, e.description, line.account, line.debit || 0, line.credit || 0]);
+        });
+      });
+      return sendCSV(res, `${client.tradeName.replace(/\s+/g,'_')}_general_journal_${date}.csv`, headers, csvRows);
+    }
+
     res.json({ period: from && to ? `${from} to ${to}` : 'All periods', entries: allEntries, count: allEntries.length });
   } catch (err) { next(err); }
 });
@@ -442,6 +500,20 @@ router.get('/general-ledger', (req, res, next) => {
         const totalCredit = round(rows.reduce((s, r) => s + r.credit, 0));
         return { account: accountName, rows, totalDebit, totalCredit, closingBalance: runningBalance };
       });
+
+    if (req.query.format === 'csv') {
+      const date = new Date().toISOString().substring(0, 10);
+      const headers = ['Account','Date','Description','Reference No.','Debit (PHP)','Credit (PHP)','Running Balance (PHP)'];
+      const csvRows = [];
+      accounts.forEach(acct => {
+        acct.rows.forEach(r => {
+          csvRows.push([acct.account, r.date, r.description, r.ref, r.debit, r.credit, r.balance]);
+        });
+        csvRows.push(['', '', `— ${acct.account} Totals —`, '', acct.totalDebit, acct.totalCredit, acct.closingBalance]);
+        csvRows.push([]); // blank separator between accounts
+      });
+      return sendCSV(res, `${client.tradeName.replace(/\s+/g,'_')}_general_ledger_${date}.csv`, headers, csvRows);
+    }
 
     res.json({ period: from && to ? `${from} to ${to}` : 'All periods', accounts, accountCount: accounts.length });
   } catch (err) { next(err); }

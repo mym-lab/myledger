@@ -22,6 +22,7 @@ import {
   backupClient,
   scanReceipt,
   getMyReferrals,
+  downloadCSV,
 } from '../api.js';
 import {
   printReport,
@@ -1624,7 +1625,15 @@ export default function AccountantPortal({ onLogout }) {
           <div>
             <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 20 }}>
               <h2 style={{ margin: 0, fontSize: 22, fontWeight: 600 }}>Transactions — {active.tradeName}</h2>
-              <Btn onClick={() => setShowTx(true)}>+ Add Transaction</Btn>
+              <div style={{ display: 'flex', gap: 10, alignItems: 'center' }}>
+                {txns.length > 0 && (
+                  <Btn size="sm" variant="neutral" onClick={() => {
+                    const date = new Date().toISOString().substring(0, 10);
+                    downloadCSV(`/transactions?clientId=${active.id}`, `transactions_${active.tradeName}_${date}.csv`);
+                  }}>⬇ CSV</Btn>
+                )}
+                <Btn onClick={() => setShowTx(true)}>+ Add Transaction</Btn>
+              </div>
             </div>
             {txLoad ? <div style={{ color: T.muted, padding: 20 }}>Loading…</div>
             : txns.length === 0 ? (
@@ -2484,6 +2493,15 @@ export default function AccountantPortal({ onLogout }) {
                 <span style={{ color: T.muted, fontSize: 13 }}>to</span>
                 <input type="date" value={gjTo} onChange={e => setGjTo(e.target.value)} style={{ ...inp, width: 150 }} />
                 <Btn size="sm" onClick={() => loadGJ(gjFrom, gjTo)}>Refresh</Btn>
+                {gjData && gjData.entries.length > 0 && (
+                  <Btn size="sm" variant="neutral" onClick={() => {
+                    const date = new Date().toISOString().substring(0, 10);
+                    let path = `/reports/general-journal?clientId=${active.id}`;
+                    if (gjFrom) path += `&from=${gjFrom}`;
+                    if (gjTo)   path += `&to=${gjTo}`;
+                    downloadCSV(path, `general_journal_${active.tradeName}_${date}.csv`);
+                  }}>⬇ CSV</Btn>
+                )}
               </div>
             </div>
             {gjLoad ? <div style={{ color: T.muted, padding: 20 }}>Loading…</div>
@@ -2547,6 +2565,16 @@ export default function AccountantPortal({ onLogout }) {
                 <span style={{ color: T.muted, fontSize: 13 }}>to</span>
                 <input type="date" value={glTo} onChange={e => setGlTo(e.target.value)} style={{ ...inp, width: 150 }} />
                 <Btn size="sm" onClick={() => loadGL(glFrom, glTo, glAccount)}>Refresh</Btn>
+                {glData && glData.accounts.length > 0 && (
+                  <Btn size="sm" variant="neutral" onClick={() => {
+                    const date = new Date().toISOString().substring(0, 10);
+                    let path = `/reports/general-ledger?clientId=${active.id}`;
+                    if (glFrom)    path += `&from=${glFrom}`;
+                    if (glTo)      path += `&to=${glTo}`;
+                    if (glAccount) path += `&account=${encodeURIComponent(glAccount)}`;
+                    downloadCSV(path, `general_ledger_${active.tradeName}_${date}.csv`);
+                  }}>⬇ CSV</Btn>
+                )}
               </div>
             </div>
             {glLoad ? <div style={{ color: T.muted, padding: 20 }}>Loading…</div>
@@ -2811,6 +2839,16 @@ export default function AccountantPortal({ onLogout }) {
                       accentColor: brandAccent,
                     });
                   }}>⬇ Export PDF</Btn>
+                )}
+                {booksData && (
+                  <Btn size="sm" variant="neutral" onClick={() => {
+                    const date = new Date().toISOString().substring(0, 10);
+                    let path = `/reports/books?clientId=${active.id}&type=${booksType}`;
+                    if (booksFrom) path += `&from=${booksFrom}`;
+                    if (booksTo)   path += `&to=${booksTo}`;
+                    const nameMap = { sales: 'sales_book', purchases: 'purchases_book', receipts: 'cash_receipts', disbursements: 'cash_disbursements' };
+                    downloadCSV(path, `${active.tradeName}_${nameMap[booksType]}_${date}.csv`);
+                  }}>⬇ CSV</Btn>
                 )}
               </div>
             </Card>
