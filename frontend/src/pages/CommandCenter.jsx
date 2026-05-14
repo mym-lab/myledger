@@ -146,7 +146,7 @@ export default function CommandCenter({ onLogout }) {
 
   async function loadUpgradeRequests() {
     setReqLoading(true);
-    try { const r = await getUpgradeRequests(); setUpgradeReqs(r.upgradeRequests || []); }
+    try { const r = await getUpgradeRequests(); setUpgradeReqs(r?.upgradeRequests || []); }
     catch (e) { console.error(e); }
     finally { setReqLoading(false); }
   }

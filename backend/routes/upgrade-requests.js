@@ -6,8 +6,11 @@
 
 import { Router } from 'express';
 import { v4 as uuid } from 'uuid';
+import jwt from 'jsonwebtoken';
 import { db, rowToClient, getSetting } from '../db.js';
 import { authenticate } from '../middleware/auth.js';
+
+const JWT_SECRET = process.env.JWT_SECRET || 'myledger-dev-secret-change-in-prod';
 
 const router = Router();
 
@@ -41,6 +44,7 @@ function rowToUpgrade(r) {
 
 // ── Enrich upgrade requests with display name ──────────────────────────────
 function enrichUpgrade(req) {
+  if (!req) return null;
   const u = stmtUserById.get(req.userId);
   if (req.requestType === 'accountant') {
     return {
@@ -95,14 +99,24 @@ router.post('/', authenticate, (req, res, next) => {
   } catch (err) { next(err); }
 });
 
-// GET /api/upgrade-requests — admin: all | authenticated user: own requests
-router.get('/', authenticate, (req, res, next) => {
+// GET /api/upgrade-requests — optional auth: admin gets all, authed user gets own, no token gets []
+router.get('/', (req, res, next) => {
   try {
-    const user = stmtUserById.get(req.userId);
-    const rows = user?.role === 'admin'
-      ? stmtAllUpgrades.all()
-      : stmtMyUpgrades.all(req.userId);
-    const requests = rows.map(r => enrichUpgrade(rowToUpgrade(r)));
+    let userId = null;
+    let isAdmin = false;
+    const auth  = req.headers['authorization'];
+    const token = auth && auth.split(' ')[1];
+    if (token) {
+      try {
+        const decoded = jwt.verify(token, JWT_SECRET);
+        userId  = decoded.userId;
+        const userRow = stmtUserById.get(userId);
+        isAdmin = userRow?.role === 'admin';
+      } catch { /* expired / invalid — treat as unauthenticated, return [] */ }
+    }
+
+    const rows     = isAdmin ? stmtAllUpgrades.all() : (userId ? stmtMyUpgrades.all(userId) : []);
+    const requests = rows.map(r => enrichUpgrade(rowToUpgrade(r))).filter(Boolean);
     res.json({ upgradeRequests: requests, count: requests.length });
   } catch (err) { next(err); }
 });
