@@ -9,6 +9,7 @@ import {
   getClients,
   getTransactions, createTransaction, voidTransaction,
 } from '../api.js';
+import { useMobile } from '../hooks/useMobile.js';
 
 // ─── Design tokens ────────────────────────────────────────────────────────────
 const T = {
@@ -67,12 +68,21 @@ function Btn({ children, onClick, variant = 'primary', size = 'md', disabled, ty
 }
 
 function ModalShell({ title, onClose, children }) {
+  const isMobile = useMobile();
   return (
     <div style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.35)',
-      display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 1000, padding: 20 }}
+      display: 'flex', alignItems: isMobile ? 'flex-end' : 'center',
+      justifyContent: 'center', zIndex: 1000, padding: isMobile ? 0 : 20 }}
       onClick={onClose}>
-      <div style={{ background: T.surface, borderRadius: 16, padding: 28, width: '100%',
-        maxWidth: 560, boxShadow: T.shadowMd, maxHeight: '90vh', overflowY: 'auto' }}
+      <div style={{ background: T.surface,
+        borderRadius: isMobile ? '20px 20px 0 0' : 16,
+        padding: 28, width: '100%',
+        maxWidth: isMobile ? '100vw' : 560,
+        margin: isMobile ? 0 : 'auto',
+        position: isMobile ? 'fixed' : 'relative',
+        bottom: isMobile ? 0 : 'auto',
+        left: isMobile ? 0 : 'auto',
+        boxShadow: T.shadowMd, maxHeight: '90vh', overflowY: 'auto' }}
         onClick={e => e.stopPropagation()}>
         <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 20 }}>
           <h3 style={{ margin: 0, fontSize: 17, fontWeight: 600, color: T.text }}>{title}</h3>
@@ -131,6 +141,7 @@ function VatCalc({ type, amount, vatType = 'vatable', supplierVatType = 'vat' })
 
 // ─── TxModal (module-level) ───────────────────────────────────────────────────
 function TxModal({ clientId, onSaved, onClose }) {
+  const isMobile = useMobile();
   const blank = {
     type: 'income', amount: '', description: '', category: '', customCat: '',
     vatType: 'vatable', supplierVatType: 'vat', settlement: 'cash',
@@ -164,7 +175,7 @@ function TxModal({ clientId, onSaved, onClose }) {
   return (
     <ModalShell title="Add Transaction" onClose={onClose}>
       <form onSubmit={handleSubmit}>
-        <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '0 16px' }}>
+        <div style={{ display: 'grid', gridTemplateColumns: isMobile ? '1fr' : '1fr 1fr', gap: '0 16px' }}>
           <Fld label="Type">
             <select style={inp} value={form.type}
               onChange={e => setForm(f => ({ ...f, type: e.target.value, category: '', customCat: '',
@@ -200,7 +211,7 @@ function TxModal({ clientId, onSaved, onClose }) {
         <VatCalc type={form.type} amount={form.amount}
           vatType={form.vatType} supplierVatType={form.supplierVatType} />
 
-        <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '0 16px' }}>
+        <div style={{ display: 'grid', gridTemplateColumns: isMobile ? '1fr' : '1fr 1fr', gap: '0 16px' }}>
           <Fld label="Description *">
             <input style={inp} required value={form.description} onChange={set('description')} placeholder="Brief description" />
           </Fld>
@@ -209,7 +220,7 @@ function TxModal({ clientId, onSaved, onClose }) {
           </Fld>
         </div>
 
-        <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '0 16px' }}>
+        <div style={{ display: 'grid', gridTemplateColumns: isMobile ? '1fr' : '1fr 1fr', gap: '0 16px' }}>
           <Fld label="Settlement">
             <select style={inp} value={form.settlement} onChange={set('settlement')}>
               {settlements.map(s => <option key={s} value={s}>{SETTLEMENT_LABELS[s]}</option>)}
@@ -233,7 +244,7 @@ function TxModal({ clientId, onSaved, onClose }) {
           <div style={{ fontSize: 11, fontWeight: 700, color: T.muted, marginBottom: 8, textTransform: 'uppercase', letterSpacing: '0.5px' }}>
             {form.type === 'income' ? 'Customer Details' : 'Vendor Details'}
           </div>
-          <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr', gap: '0 12px' }}>
+          <div style={{ display: 'grid', gridTemplateColumns: isMobile ? '1fr' : '1fr 1fr 1fr', gap: '0 12px' }}>
             <Fld label={form.type === 'income' ? 'Customer Name' : 'Vendor Name'}>
               <input style={inp} value={form.counterpartyName} onChange={set('counterpartyName')} placeholder="Optional" />
             </Fld>
@@ -262,6 +273,8 @@ function TxModal({ clientId, onSaved, onClose }) {
 
 // ─── Main component ───────────────────────────────────────────────────────────
 export default function EncoderPortal({ onLogout }) {
+  const isMobile = useMobile();
+  const [sidebarOpen, setSidebarOpen] = useState(false);
   const [clients,   setClients] = useState([]);
   const [active,    setActive]  = useState(null);
   const [clLoading, setCLL]     = useState(true);
@@ -326,39 +339,65 @@ export default function EncoderPortal({ onLogout }) {
       {/* Header */}
       <div style={{ background: 'rgba(255,255,255,0.88)', backdropFilter: 'blur(20px)',
         borderBottom: `1px solid ${T.border}`, position: 'sticky', top: 0, zIndex: 100 }}>
-        <div style={{ maxWidth: 1100, margin: '0 auto', padding: '0 24px',
-          display: 'flex', alignItems: 'center', justifyContent: 'space-between', height: 56 }}>
-          <div style={{ display: 'flex', alignItems: 'center', gap: 14 }}>
-            <div>
+        {isMobile ? (
+          /* ── Mobile top bar ── */
+          <div style={{ padding: '0 16px', display: 'flex', alignItems: 'center',
+            justifyContent: 'space-between', height: 52 }}>
+            <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
               <span style={{ fontWeight: 700, fontSize: 16 }}>MyLedger</span>
-              <span style={{ color: T.muted, fontSize: 14 }}> by Kaiman &amp; Co. </span>
-              <span style={{ background: T.accent, color: '#fff', fontSize: 11, fontWeight: 600,
-                padding: '2px 8px', borderRadius: 6 }}>ENCODER</span>
+              <span style={{ background: T.accent, color: '#fff', fontSize: 10, fontWeight: 600,
+                padding: '2px 7px', borderRadius: 5 }}>ENCODER</span>
             </div>
-            {clients.length > 0 && (
-              <>
-                <span style={{ color: T.border, fontSize: 18 }}>|</span>
-                <select value={active?.id || ''} onChange={e => {
-                  const c = clients.find(x => x.id === e.target.value);
-                  setActive(c); setTxns([]);
-                }} style={{ border: 'none', background: 'transparent', fontSize: 14, fontWeight: 600,
-                  color: T.text, cursor: 'pointer', outline: 'none', fontFamily: 'inherit' }}>
-                  {clients.map(c => <option key={c.id} value={c.id}>{c.tradeName}</option>)}
-                </select>
-                {active && (
-                  <span style={{ fontSize: 12, color: T.muted }}>TIN {active.tin}</span>
-                )}
-              </>
-            )}
-          </div>
-          <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
-            <span style={{ fontSize: 13, color: T.muted }}>Signed in as {user?.name || user?.email}</span>
             <Btn variant="neutral" size="sm" onClick={onLogout}>Sign out</Btn>
           </div>
-        </div>
+        ) : (
+          /* ── Desktop header ── */
+          <div style={{ maxWidth: 1100, margin: '0 auto', padding: '0 24px',
+            display: 'flex', alignItems: 'center', justifyContent: 'space-between', height: 56 }}>
+            <div style={{ display: 'flex', alignItems: 'center', gap: 14 }}>
+              <div>
+                <span style={{ fontWeight: 700, fontSize: 16 }}>MyLedger</span>
+                <span style={{ color: T.muted, fontSize: 14 }}> by Kaiman &amp; Co. </span>
+                <span style={{ background: T.accent, color: '#fff', fontSize: 11, fontWeight: 600,
+                  padding: '2px 8px', borderRadius: 6 }}>ENCODER</span>
+              </div>
+              {clients.length > 0 && (
+                <>
+                  <span style={{ color: T.border, fontSize: 18 }}>|</span>
+                  <select value={active?.id || ''} onChange={e => {
+                    const c = clients.find(x => x.id === e.target.value);
+                    setActive(c); setTxns([]);
+                  }} style={{ border: 'none', background: 'transparent', fontSize: 14, fontWeight: 600,
+                    color: T.text, cursor: 'pointer', outline: 'none', fontFamily: 'inherit' }}>
+                    {clients.map(c => <option key={c.id} value={c.id}>{c.tradeName}</option>)}
+                  </select>
+                  {active && (
+                    <span style={{ fontSize: 12, color: T.muted }}>TIN {active.tin}</span>
+                  )}
+                </>
+              )}
+            </div>
+            <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
+              <span style={{ fontSize: 13, color: T.muted }}>Signed in as {user?.name || user?.email}</span>
+              <Btn variant="neutral" size="sm" onClick={onLogout}>Sign out</Btn>
+            </div>
+          </div>
+        )}
       </div>
 
-      <div style={{ maxWidth: 1100, margin: '0 auto', padding: '32px 24px 56px' }}>
+      <div style={{ maxWidth: 1100, margin: '0 auto', padding: isMobile ? '20px 16px 48px' : '32px 24px 56px' }}>
+
+        {/* Mobile: client selector */}
+        {isMobile && clients.length > 0 && (
+          <div style={{ marginBottom: 16, display: 'flex', alignItems: 'center', gap: 10 }}>
+            <select value={active?.id || ''} onChange={e => {
+              const c = clients.find(x => x.id === e.target.value);
+              setActive(c); setTxns([]);
+            }} style={{ ...inp, fontWeight: 600, flex: 1 }}>
+              {clients.map(c => <option key={c.id} value={c.id}>{c.tradeName}</option>)}
+            </select>
+          </div>
+        )}
 
         {/* Notice banner */}
         <div style={{ background: T.accentL, border: `1px solid ${T.accent}30`, borderRadius: 10,
@@ -375,12 +414,17 @@ export default function EncoderPortal({ onLogout }) {
         {/* Transactions */}
         {active && (
           <div>
-            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 20 }}>
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: isMobile ? 'flex-start' : 'center',
+              flexDirection: isMobile ? 'column' : 'row', gap: isMobile ? 12 : 0, marginBottom: 20 }}>
               <div>
-                <h2 style={{ margin: '0 0 4px', fontSize: 22, fontWeight: 600 }}>Transactions — {active.tradeName}</h2>
+                <h2 style={{ margin: '0 0 4px', fontSize: isMobile ? 18 : 22, fontWeight: 600 }}>
+                  {isMobile ? 'Transactions' : `Transactions — ${active.tradeName}`}
+                </h2>
                 <div style={{ fontSize: 13, color: T.muted }}>{txns.length} records</div>
               </div>
-              <Btn onClick={() => setShowTx(true)}>+ Add Transaction</Btn>
+              <Btn onClick={() => setShowTx(true)} style={isMobile ? { width: '100%', justifyContent: 'center' } : {}}>
+                + Add Transaction
+              </Btn>
             </div>
 
             {txLoad ? (

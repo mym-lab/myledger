@@ -3,6 +3,7 @@
 // Business owner logs in to capture their own income, expenses, and VAT.
 
 import { useState, useEffect, useRef } from 'react';
+import { useMobile } from '../hooks/useMobile.js';
 import {
   getClients, createClient, updateClient, deleteClient, backupClient,
   getTransactions, createTransaction, voidTransaction,
@@ -103,12 +104,21 @@ function Btn({ children, onClick, variant = 'primary', size = 'md', disabled, ty
 }
 
 function ModalShell({ title, onClose, children, wide }) {
+  const isMobile = useMobile();
   return (
     <div style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.35)',
-      display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 1000, padding: 20 }}
+      display: 'flex', alignItems: isMobile ? 'flex-end' : 'center',
+      justifyContent: 'center', zIndex: 1000, padding: isMobile ? 0 : 20 }}
       onClick={onClose}>
-      <div style={{ background: T.surface, borderRadius: 16, padding: 28, width: '100%',
-        maxWidth: wide ? 720 : 480, boxShadow: T.shadowMd, maxHeight: '90vh', overflowY: 'auto' }}
+      <div style={{ background: T.surface,
+        borderRadius: isMobile ? '20px 20px 0 0' : 16,
+        padding: 28, width: '100%',
+        maxWidth: isMobile ? '100vw' : (wide ? 720 : 480),
+        margin: isMobile ? 0 : 'auto',
+        position: isMobile ? 'fixed' : 'relative',
+        bottom: isMobile ? 0 : 'auto',
+        left: isMobile ? 0 : 'auto',
+        boxShadow: T.shadowMd, maxHeight: '90vh', overflowY: 'auto' }}
         onClick={e => e.stopPropagation()}>
         <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 20 }}>
           <h3 style={{ margin: 0, fontSize: 17, fontWeight: 600 }}>{title}</h3>
@@ -178,6 +188,7 @@ function UpgradeGate({ tier, required, onUpgrade, children }) {
 // ─── PaymentModal (module-level) ──────────────────────────────────────────────
 // Maya / GCash manual-transfer upgrade flow.
 function PaymentModal({ clientId, currentTier, settings, onClose, onUpgradeSuccess }) {
+  const isMobile = useMobile();
   const pricing    = settings?.pricing      || DEFAULT_SETTINGS.pricing;
   const payAccts   = settings?.payment      || DEFAULT_SETTINGS.payment;
   const contactEmail = settings?.contactEmail || DEFAULT_SETTINGS.contactEmail;
@@ -276,7 +287,7 @@ function PaymentModal({ clientId, currentTier, settings, onClose, onUpgradeSucce
             Upgrading to <strong style={{ color: tierObj?.color }}>{tierObj?.label}</strong> — ₱{tierObj?.price}/month.
             Choose your payment method:
           </p>
-          <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 16, marginBottom: 24 }}>
+          <div style={{ display: 'grid', gridTemplateColumns: isMobile ? '1fr' : '1fr 1fr', gap: 16, marginBottom: 24 }}>
             {/* Maya */}
             <div onClick={() => goToPay('maya')}
               style={{ borderRadius: 14, padding: '24px 20px', cursor: 'pointer',
@@ -497,6 +508,7 @@ function VatCalc({ type, amount, vatType = 'vatable', supplierVatType = 'vat', i
 
 // ─── TxModal (module-level — own state, no parent remount) ───────────────────
 function TxModal({ clientId, client, onSaved, onClose }) {
+  const isMobile = useMobile();
   const isOPT   = client?.taxRegime === 'opt';
   const optRate = Number(client?.optRate) || 0.03;
 
@@ -614,7 +626,7 @@ function TxModal({ clientId, client, onSaved, onClose }) {
         </div>
 
         {/* ── Type + Amount ── */}
-        <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '0 16px' }}>
+        <div style={{ display: 'grid', gridTemplateColumns: isMobile ? '1fr' : '1fr 1fr', gap: '0 16px' }}>
           <Fld label="Type">
             <select style={inp} value={form.type} onChange={e => setForm(f => ({
               ...f, type: e.target.value, category: '', customCat: '', settlement: 'cash',
@@ -664,7 +676,7 @@ function TxModal({ clientId, client, onSaved, onClose }) {
         />
 
         {/* ── Description + Reference ── */}
-        <div style={{ marginTop: 10, display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '0 16px' }}>
+        <div style={{ marginTop: 10, display: 'grid', gridTemplateColumns: isMobile ? '1fr' : '1fr 1fr', gap: '0 16px' }}>
           <Fld label="Description *">
             <input style={inp} required value={form.description} onChange={set('description')}
               placeholder="Brief description" />
@@ -676,7 +688,7 @@ function TxModal({ clientId, client, onSaved, onClose }) {
         </div>
 
         {/* ── Settlement + Account ── */}
-        <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '0 16px' }}>
+        <div style={{ display: 'grid', gridTemplateColumns: isMobile ? '1fr' : '1fr 1fr', gap: '0 16px' }}>
           <Fld label="Settlement / Payment Method">
             <select style={inp} value={form.settlement} onChange={set('settlement')}>
               {settlements.map(s => <option key={s.value} value={s.value}>{s.label}</option>)}
@@ -689,7 +701,7 @@ function TxModal({ clientId, client, onSaved, onClose }) {
         </div>
 
         {/* ── Category ── */}
-        <div style={{ display: 'grid', gridTemplateColumns: isCustom ? '1fr 1fr' : '1fr', gap: '0 16px' }}>
+        <div style={{ display: 'grid', gridTemplateColumns: isCustom && !isMobile ? '1fr 1fr' : '1fr', gap: '0 16px' }}>
           <Fld label="Category">
             <select style={inp} value={form.category} onChange={set('category')}>
               <option value="">— Select category —</option>
@@ -708,7 +720,7 @@ function TxModal({ clientId, client, onSaved, onClose }) {
         {/* ── Counterparty ── */}
         <div style={{ marginTop: 4, paddingTop: 14, borderTop: `1px solid ${T.border}` }}>
           <SectionHead>{form.type === 'income' ? 'Customer Details — SLSP' : 'Vendor Details — SLSP / Alphalist'}</SectionHead>
-          <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr', gap: '0 16px' }}>
+          <div style={{ display: 'grid', gridTemplateColumns: isMobile ? '1fr' : '1fr 1fr 1fr', gap: '0 16px' }}>
             <Fld label={form.type === 'income' ? 'Customer Name' : 'Vendor Name'}>
               <input style={inp} value={form.counterpartyName} onChange={set('counterpartyName')} placeholder="Optional" />
             </Fld>
@@ -737,6 +749,7 @@ function TxModal({ clientId, client, onSaved, onClose }) {
 
 // ─── BusinessModal (module-level — own state) ─────────────────────────────────
 function BusinessModal({ initialValues, isEdit, onSave, onClose }) {
+  const isMobile = useMobile();
   const blank = { tradeName: '', tin: '', type: 'Corporation', address: '',
                   taxTypes: [], ownerBirthdate: '', subscriptionTier: 'free',
                   taxRegime: 'vat', optRate: '0.03' };
@@ -788,7 +801,7 @@ function BusinessModal({ initialValues, isEdit, onSave, onClose }) {
 
         {/* ── Basic info ── */}
         <SectionHead>Business Information</SectionHead>
-        <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '0 16px' }}>
+        <div style={{ display: 'grid', gridTemplateColumns: isMobile ? '1fr' : '1fr 1fr', gap: '0 16px' }}>
           <Fld label="Trade Name *">
             <input style={inp} required value={form.tradeName} onChange={set('tradeName')} placeholder="ABC Corporation" />
           </Fld>
@@ -796,7 +809,7 @@ function BusinessModal({ initialValues, isEdit, onSave, onClose }) {
             <input style={inp} required value={form.tin} onChange={set('tin')} placeholder="000-000-000-000" />
           </Fld>
         </div>
-        <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '0 16px' }}>
+        <div style={{ display: 'grid', gridTemplateColumns: isMobile ? '1fr' : '1fr 1fr', gap: '0 16px' }}>
           <Fld label="Business Type">
             <select style={inp} value={form.type} onChange={set('type')}>
               {['Corporation','Sole Proprietor','One Person Corporation (OPC)','Partnership'].map(t => (
@@ -824,7 +837,7 @@ function BusinessModal({ initialValues, isEdit, onSave, onClose }) {
 
         {/* ── Tax types ── */}
         <Fld label="Tax Obligations (check all that apply)">
-          <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '6px 12px',
+          <div style={{ display: 'grid', gridTemplateColumns: isMobile ? '1fr' : '1fr 1fr', gap: '6px 12px',
             padding: '12px', background: T.bg, borderRadius: 8 }}>
             {TAX_TYPES.map(o => (
               <label key={o.code} style={{ display: 'flex', alignItems: 'center', gap: 8, fontSize: 13, cursor: 'pointer' }}>
@@ -972,6 +985,7 @@ const ASSET_CATS = ['Machinery & Equipment','Furniture & Fixtures','Computer & I
   'Office Equipment','Transportation Equipment','Leasehold Improvements','Buildings','Other'];
 
 function AssetModal({ clientId, onSaved, onClose }) {
+  const isMobile = useMobile();
   const blank = { name: '', category: 'Machinery & Equipment', cost: '', salvageValue: '0',
                   usefulLifeMonths: '60', startDate: '', notes: '' };
   const [form, setForm] = useState(blank);
@@ -999,7 +1013,7 @@ function AssetModal({ clientId, onSaved, onClose }) {
           <input style={inp} required value={form.name} onChange={set('name')}
             placeholder="Office printer, Delivery van, etc." />
         </Fld>
-        <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '0 16px' }}>
+        <div style={{ display: 'grid', gridTemplateColumns: isMobile ? '1fr' : '1fr 1fr', gap: '0 16px' }}>
           <Fld label="Category">
             <select style={inp} value={form.category} onChange={set('category')}>
               {ASSET_CATS.map(c => <option key={c}>{c}</option>)}
@@ -1009,7 +1023,7 @@ function AssetModal({ clientId, onSaved, onClose }) {
             <input style={inp} type="date" required value={form.startDate} onChange={set('startDate')} />
           </Fld>
         </div>
-        <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr', gap: '0 16px' }}>
+        <div style={{ display: 'grid', gridTemplateColumns: isMobile ? '1fr' : '1fr 1fr 1fr', gap: '0 16px' }}>
           <Fld label="Cost (₱) *">
             <input style={inp} type="number" required step="0.01" min="0.01"
               value={form.cost} onChange={set('cost')} placeholder="0.00" />
@@ -1060,7 +1074,7 @@ function LapsingModal({ data, onClose }) {
           </div>
         ))}
       </div>
-      <div style={{ overflowY: 'auto', maxHeight: 400, border: `1px solid ${T.border}`, borderRadius: 10 }}>
+      <div style={{ overflowY: 'auto', overflowX: 'auto', maxHeight: 400, border: `1px solid ${T.border}`, borderRadius: 10 }}>
         <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 13 }}>
           <thead>
             <tr style={{ background: T.bg, position: 'sticky', top: 0 }}>
@@ -1099,6 +1113,8 @@ const TAB_TIER = {
 
 // ─── Main Component ───────────────────────────────────────────────────────────
 export default function ClientInterface({ onLogout }) {
+  const isMobile = useMobile();
+  const [sidebarOpen, setSidebarOpen] = useState(false);
   const [tab,       setTab]      = useState('Overview');
   const [clients,   setClients]  = useState([]);
   const [active,    setActive]   = useState(null);
@@ -1360,46 +1376,72 @@ export default function ClientInterface({ onLogout }) {
       {/* ── Header ── */}
       <div style={{ background: 'rgba(255,255,255,0.88)', backdropFilter: 'blur(20px)',
         borderBottom: `1px solid ${T.border}`, position: 'sticky', top: 0, zIndex: 100 }}>
-        <div style={{ maxWidth: 1140, margin: '0 auto', padding: '0 24px',
-          display: 'flex', alignItems: 'center', justifyContent: 'space-between', height: 56 }}>
-          <div style={{ display: 'flex', alignItems: 'center', gap: 14 }}>
-            <div>
-              <span style={{ fontWeight: 700, fontSize: 16 }}>MyLedger</span>
-              <span style={{ color: T.muted, fontSize: 14 }}> by Kaiman & Co.</span>
+        {isMobile ? (
+          /* ── Mobile top bar ── */
+          <div style={{ padding: '0 16px', display: 'flex', alignItems: 'center',
+            justifyContent: 'space-between', height: 52 }}>
+            <span style={{ fontWeight: 700, fontSize: 16 }}>MyLedger</span>
+            <div style={{ display: 'flex', gap: 8 }}>
+              <Btn variant="ghost" size="sm" onClick={() => { setBizIsEdit(false); setShowBiz(true); }}>+ Biz</Btn>
+              <Btn variant="neutral" size="sm" onClick={onLogout}>Sign out</Btn>
             </div>
-            {clients.length > 0 && (
-              <>
-                <span style={{ color: T.border, fontSize: 18 }}>|</span>
-                <select value={active?.id || ''} onChange={e => {
-                  const c = clients.find(x => x.id === e.target.value);
-                  setActive(c); setTxns([]); setIncome(null); setVatBal(null); setDL([]); setOverTxns([]);
-                }} style={{ border: 'none', background: 'transparent', fontSize: 14, fontWeight: 600,
-                  color: T.text, cursor: 'pointer', outline: 'none', fontFamily: 'inherit' }}>
-                  {clients.map(c => <option key={c.id} value={c.id}>{c.tradeName}</option>)}
-                </select>
-                {/* Subscription badge */}
-                {active && (
-                  <span style={{ background: `${tierInfo.color}18`, color: tierInfo.color,
-                    fontSize: 11, fontWeight: 700, padding: '2px 8px', borderRadius: 6,
-                    textTransform: 'uppercase', letterSpacing: '0.4px' }}>
-                    {tierInfo.label}
-                  </span>
-                )}
-              </>
-            )}
           </div>
-          <div style={{ display: 'flex', gap: 10 }}>
-            <Btn variant="ghost" size="sm" onClick={() => { setBizIsEdit(false); setShowBiz(true); }}>+ Business</Btn>
-            <Btn variant="neutral" size="sm" onClick={onLogout}>Sign out</Btn>
+        ) : (
+          /* ── Desktop header ── */
+          <div style={{ maxWidth: 1140, margin: '0 auto', padding: '0 24px',
+            display: 'flex', alignItems: 'center', justifyContent: 'space-between', height: 56 }}>
+            <div style={{ display: 'flex', alignItems: 'center', gap: 14 }}>
+              <div>
+                <span style={{ fontWeight: 700, fontSize: 16 }}>MyLedger</span>
+                <span style={{ color: T.muted, fontSize: 14 }}> by Kaiman & Co.</span>
+              </div>
+              {clients.length > 0 && (
+                <>
+                  <span style={{ color: T.border, fontSize: 18 }}>|</span>
+                  <select value={active?.id || ''} onChange={e => {
+                    const c = clients.find(x => x.id === e.target.value);
+                    setActive(c); setTxns([]); setIncome(null); setVatBal(null); setDL([]); setOverTxns([]);
+                  }} style={{ border: 'none', background: 'transparent', fontSize: 14, fontWeight: 600,
+                    color: T.text, cursor: 'pointer', outline: 'none', fontFamily: 'inherit' }}>
+                    {clients.map(c => <option key={c.id} value={c.id}>{c.tradeName}</option>)}
+                  </select>
+                  {active && (
+                    <span style={{ background: `${tierInfo.color}18`, color: tierInfo.color,
+                      fontSize: 11, fontWeight: 700, padding: '2px 8px', borderRadius: 6,
+                      textTransform: 'uppercase', letterSpacing: '0.4px' }}>
+                      {tierInfo.label}
+                    </span>
+                  )}
+                </>
+              )}
+            </div>
+            <div style={{ display: 'flex', gap: 10 }}>
+              <Btn variant="ghost" size="sm" onClick={() => { setBizIsEdit(false); setShowBiz(true); }}>+ Business</Btn>
+              <Btn variant="neutral" size="sm" onClick={onLogout}>Sign out</Btn>
+            </div>
           </div>
-        </div>
+        )}
       </div>
 
-      <div style={{ maxWidth: 1140, margin: '0 auto', padding: '28px 24px 56px' }}>
+      <div style={{ maxWidth: 1140, margin: '0 auto', padding: isMobile ? '20px 16px 48px' : '28px 24px 56px',
+        minWidth: 0, overflowX: 'hidden' }}>
+
+        {/* Mobile: client selector */}
+        {isMobile && clients.length > 0 && (
+          <div style={{ marginBottom: 16 }}>
+            <select value={active?.id || ''} onChange={e => {
+              const c = clients.find(x => x.id === e.target.value);
+              setActive(c); setTxns([]); setIncome(null); setVatBal(null); setDL([]); setOverTxns([]);
+            }} style={{ ...inp, fontWeight: 600 }}>
+              {clients.map(c => <option key={c.id} value={c.id}>{c.tradeName}</option>)}
+            </select>
+          </div>
+        )}
 
         {/* ── Tab bar ── */}
         <div style={{ display: 'flex', gap: 4, marginBottom: 28, background: T.surface, padding: 4,
-          borderRadius: 10, boxShadow: T.shadow, flexWrap: 'wrap' }}>
+          borderRadius: 10, boxShadow: T.shadow, flexWrap: 'wrap',
+          overflowX: isMobile ? 'auto' : 'visible' }}>
           {TABS.map(t => {
             const locked = TAB_TIER[t] && !tierMeets(tier, TAB_TIER[t]);
             return (
@@ -1466,7 +1508,7 @@ export default function ClientInterface({ onLogout }) {
 
             {/* Chart + Upcoming filings — Starter+ */}
             <UpgradeGate tier={tier} required="starter" onUpgrade={openUpgrade}>
-            <div style={{ display: 'grid', gridTemplateColumns: '3fr 2fr', gap: 20, marginBottom: 20 }}>
+            <div style={{ display: 'grid', gridTemplateColumns: isMobile ? '1fr' : '3fr 2fr', gap: 20, marginBottom: 20 }}>
               {/* Monthly chart */}
               <Card>
                 <SectionHead>Monthly Revenue vs. Expenses (last 6 months)</SectionHead>
@@ -1742,7 +1784,7 @@ export default function ClientInterface({ onLogout }) {
               {balRep ? (
                 <div>
                   <div style={{ fontSize: 12, color: T.muted, marginBottom: 16 }}>As of: {balRep.asOf}</div>
-                  <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 20, marginBottom: 20 }}>
+                  <div style={{ display: 'grid', gridTemplateColumns: isMobile ? '1fr' : '1fr 1fr', gap: 20, marginBottom: 20 }}>
                     <Card>
                       <SectionHead>Assets</SectionHead>
                       {Object.entries(balRep.assets).filter(([k]) => k !== 'note').map(([k, v]) =>
@@ -2156,6 +2198,7 @@ export default function ClientInterface({ onLogout }) {
                 ) : (
                   <Card>
                     <SectionHead>Referral History</SectionHead>
+                    <div style={{ overflowX: 'auto' }}>
                     <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 13 }}>
                       <thead>
                         <tr style={{ borderBottom: `2px solid ${T.border}` }}>
@@ -2187,6 +2230,7 @@ export default function ClientInterface({ onLogout }) {
                         ))}
                       </tbody>
                     </table>
+                    </div>
                   </Card>
                 )}
               </>
@@ -2227,7 +2271,7 @@ export default function ClientInterface({ onLogout }) {
               )}
             </div>
 
-            <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 20, marginBottom: 20 }}>
+            <div style={{ display: 'grid', gridTemplateColumns: isMobile ? '1fr' : '1fr 1fr', gap: 20, marginBottom: 20 }}>
               {/* Business info */}
               <Card>
                 <SectionHead>Business Information</SectionHead>

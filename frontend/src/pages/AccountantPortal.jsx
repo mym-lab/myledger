@@ -5,6 +5,7 @@
 // Apple light theme with teal accountant accent.
 
 import { useState, useEffect, useRef } from 'react';
+import { useMobile } from '../hooks/useMobile.js';
 import {
   getClients,
   getTransactions, createTransaction, voidTransaction,
@@ -103,12 +104,21 @@ function Btn({ children, onClick, variant = 'primary', size = 'md', disabled, ty
 }
 
 function ModalShell({ title, onClose, children, wide }) {
+  const isMobile = useMobile();
   return (
     <div style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.35)',
-      display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 1000, padding: 20 }}
+      display: 'flex', alignItems: isMobile ? 'flex-end' : 'center',
+      justifyContent: 'center', zIndex: 1000, padding: isMobile ? 0 : 20 }}
       onClick={onClose}>
-      <div style={{ background: T.surface, borderRadius: 16, padding: 28, width: '100%',
-        maxWidth: wide ? 720 : 480, boxShadow: T.shadowMd, maxHeight: '90vh', overflowY: 'auto' }}
+      <div style={{ background: T.surface,
+        borderRadius: isMobile ? '20px 20px 0 0' : 16,
+        padding: 28, width: '100%',
+        maxWidth: isMobile ? '100vw' : (wide ? 720 : 480),
+        margin: isMobile ? 0 : 'auto',
+        position: isMobile ? 'fixed' : 'relative',
+        bottom: isMobile ? 0 : 'auto',
+        left: isMobile ? 0 : 'auto',
+        boxShadow: T.shadowMd, maxHeight: '90vh', overflowY: 'auto' }}
         onClick={e => e.stopPropagation()}>
         <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 20 }}>
           <h3 style={{ margin: 0, fontSize: 17, fontWeight: 600, color: T.text }}>{title}</h3>
@@ -161,6 +171,7 @@ const ACCT_TIERS = {
 };
 
 function ProLock({ onUpgrade }) {
+  const isMobile = useMobile();
   return (
     <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center',
       minHeight: 360, padding: 40 }}>
@@ -173,7 +184,7 @@ function ProLock({ onUpgrade }) {
           Trial Balance, Accounting Books, BIR Returns, Alphalist,
           Financial Statements, and Cash Flow.
         </p>
-        <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 8, marginBottom: 16, textAlign: 'left' }}>
+        <div style={{ display: 'grid', gridTemplateColumns: isMobile ? '1fr' : '1fr 1fr', gap: 8, marginBottom: 16, textAlign: 'left' }}>
           {[
             { label: 'Solo',         price: '₱599',   clients: '5 clients',         color: '#0071e3' },
             { label: 'Professional', price: '₱1,499', clients: '15 clients',        color: '#ff9500' },
@@ -327,6 +338,7 @@ const SETTLEMENT_LABELS   = {
 
 // ─── TxModal (module-level — own state, no parent remount) ───────────────────
 function TxModal({ clientId, client, onSaved, onClose }) {
+  const isMobile = useMobile();
   const isOPT   = client?.taxRegime === 'opt';
   const optRate = client?.optRate ?? 0.03;
 
@@ -430,7 +442,7 @@ function TxModal({ clientId, client, onSaved, onClose }) {
           )}
         </div>
 
-        <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '0 16px' }}>
+        <div style={{ display: 'grid', gridTemplateColumns: isMobile ? '1fr' : '1fr 1fr', gap: '0 16px' }}>
           <Fld label="Type">
             <select style={inp} value={form.type}
               onChange={e => setForm(f => ({ ...f, type: e.target.value, category: '', customCat: '',
@@ -475,7 +487,7 @@ function TxModal({ clientId, client, onSaved, onClose }) {
           vatType={form.vatType} supplierVatType={form.supplierVatType}
           isOPT={isOPT} optRate={optRate} />
 
-        <div style={{ marginTop: 14, display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '0 16px' }}>
+        <div style={{ marginTop: 14, display: 'grid', gridTemplateColumns: isMobile ? '1fr' : '1fr 1fr', gap: '0 16px' }}>
           <Fld label="Description *">
             <input style={inp} required value={form.description} onChange={set('description')}
               placeholder="Brief description" />
@@ -486,7 +498,7 @@ function TxModal({ clientId, client, onSaved, onClose }) {
           </Fld>
         </div>
 
-        <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '0 16px' }}>
+        <div style={{ display: 'grid', gridTemplateColumns: isMobile ? '1fr' : '1fr 1fr', gap: '0 16px' }}>
           <Fld label="Settlement Method">
             <select style={inp} value={form.settlement} onChange={set('settlement')}>
               {settlements.map(s => <option key={s} value={s}>{SETTLEMENT_LABELS[s]}</option>)}
@@ -498,7 +510,7 @@ function TxModal({ clientId, client, onSaved, onClose }) {
           </Fld>
         </div>
 
-        <div style={{ display: 'grid', gridTemplateColumns: isCustom ? '1fr 1fr' : '1fr', gap: '0 16px' }}>
+        <div style={{ display: 'grid', gridTemplateColumns: isCustom && !isMobile ? '1fr 1fr' : '1fr', gap: '0 16px' }}>
           <Fld label="Category">
             <select style={inp} value={form.category} onChange={set('category')}>
               <option value="">— Select category —</option>
@@ -520,7 +532,7 @@ function TxModal({ clientId, client, onSaved, onClose }) {
             textTransform: 'uppercase', letterSpacing: '0.6px' }}>
             {form.type === 'income' ? 'Customer Details (SLSP / BIR)' : 'Vendor Details (SLSP / Alphalist)'}
           </div>
-          <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr', gap: '0 16px' }}>
+          <div style={{ display: 'grid', gridTemplateColumns: isMobile ? '1fr' : '1fr 1fr 1fr', gap: '0 16px' }}>
             <Fld label={form.type === 'income' ? 'Customer Name' : 'Vendor Name'}>
               <input style={inp} value={form.counterpartyName} onChange={set('counterpartyName')} placeholder="Optional" />
             </Fld>
@@ -585,6 +597,7 @@ function TxModal({ clientId, client, onSaved, onClose }) {
 
 // ─── JournalEntryModal (module-level) ────────────────────────────────────────
 function JournalEntryModal({ clientId, onSaved, onClose }) {
+  const isMobile = useMobile();
   const blank = () => ({ account: '', debit: '', credit: '' });
   const [form,  setForm]  = useState({
     date: new Date().toISOString().substring(0, 10),
@@ -619,7 +632,7 @@ function JournalEntryModal({ clientId, onSaved, onClose }) {
   return (
     <ModalShell title="New Journal Entry" onClose={onClose} wide>
       <form onSubmit={handleSubmit}>
-        <div style={{ display: 'grid', gridTemplateColumns: '160px 1fr 1fr', gap: '0 16px' }}>
+        <div style={{ display: 'grid', gridTemplateColumns: isMobile ? '1fr' : '160px 1fr 1fr', gap: '0 16px' }}>
           <Fld label="Date">
             <input style={inp} type="date" required value={form.date} onChange={setF('date')} />
           </Fld>
@@ -697,6 +710,7 @@ const CON_TYPES = [
 ];
 
 function ContactModal({ clientId, existing, onSaved, onClose }) {
+  const isMobile = useMobile();
   const blank = { name: '', type: 'supplier', tin: '', address: '', phone: '', email: '', notes: '' };
   const [form, setForm] = useState(existing ? { ...blank, ...existing } : blank);
   const [saving, setSaving] = useState(false);
@@ -746,7 +760,7 @@ function ContactModal({ clientId, existing, onSaved, onClose }) {
         </div>
         {fld('TIN', 'tin', 'text', '000-000-000-000')}
         {fld('Address', 'address', 'text', 'Business address')}
-        <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12 }}>
+        <div style={{ display: 'grid', gridTemplateColumns: isMobile ? '1fr' : '1fr 1fr', gap: 12 }}>
           {fld('Phone', 'phone', 'tel', '+63 9XX XXX XXXX')}
           {fld('Email', 'email', 'email', 'contact@example.com')}
         </div>
@@ -769,6 +783,7 @@ function ContactModal({ clientId, existing, onSaved, onClose }) {
 const ASSET_CATS = ['Land','Building','Machinery & Equipment','Furniture & Fixtures','Transportation Equipment','Office Equipment','Computer Equipment','Leasehold Improvements','Other Fixed Assets'];
 
 function AssetModal({ clientId, onSaved, onClose }) {
+  const isMobile = useMobile();
   const blank = {
     name: '', category: 'Machinery & Equipment',
     cost: '', salvageValue: '0', usefulLifeMonths: '60',
@@ -808,7 +823,7 @@ function AssetModal({ clientId, onSaved, onClose }) {
             {ASSET_CATS.map(c => <option key={c}>{c}</option>)}
           </select>
         </Fld>
-        <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '0 16px' }}>
+        <div style={{ display: 'grid', gridTemplateColumns: isMobile ? '1fr' : '1fr 1fr', gap: '0 16px' }}>
           <Fld label="Cost (₱) *">
             <input style={inp} type="number" min="0.01" step="0.01" required
               value={form.cost} onChange={set('cost')} placeholder="0.00" />
@@ -818,7 +833,7 @@ function AssetModal({ clientId, onSaved, onClose }) {
               value={form.salvageValue} onChange={set('salvageValue')} placeholder="0.00" />
           </Fld>
         </div>
-        <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '0 16px' }}>
+        <div style={{ display: 'grid', gridTemplateColumns: isMobile ? '1fr' : '1fr 1fr', gap: '0 16px' }}>
           <Fld label="Useful Life (months) *">
             <input style={inp} type="number" min="1" required
               value={form.usefulLifeMonths} onChange={set('usefulLifeMonths')} placeholder="60" />
@@ -948,6 +963,8 @@ const BOOKS_COLUMNS = {
 
 // ─── Main component ───────────────────────────────────────────────────────────
 export default function AccountantPortal({ onLogout }) {
+  const isMobile = useMobile();
+  const [sidebarOpen, setSidebarOpen] = useState(false);
   // Read stored user to determine tier
   const storedUser    = (() => { try { return JSON.parse(localStorage.getItem('ml_user') || 'null'); } catch { return null; } })();
   const accountantTier = storedUser?.accountantTier || 'free';
@@ -1390,76 +1407,106 @@ export default function AccountantPortal({ onLogout }) {
       {/* Header */}
       <div style={{ background: 'rgba(255,255,255,0.88)', backdropFilter: 'blur(20px)',
         borderBottom: `1px solid ${T.border}`, position: 'sticky', top: 0, zIndex: 100 }}>
-        <div style={{ maxWidth: 1200, margin: '0 auto', padding: '0 24px',
-          display: 'flex', alignItems: 'center', justifyContent: 'space-between', height: 56 }}>
-          <div style={{ display: 'flex', alignItems: 'center', gap: 14 }}>
+        {isMobile ? (
+          /* ── Mobile top bar ── */
+          <div style={{ padding: '0 16px', display: 'flex', alignItems: 'center',
+            justifyContent: 'space-between', height: 52 }}>
             <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
-              {firmName ? (
-                /* White-label: show firm name instead of MyLedger branding */
-                <>
-                  <span style={{ fontWeight: 700, fontSize: 16, color: brandAccent }}>{firmName}</span>
-                  <span style={{ background: brandAccent, color: '#fff', fontSize: 11, fontWeight: 600,
-                    padding: '2px 8px', borderRadius: 6 }}>ACCOUNTANT</span>
-                </>
-              ) : (
-                <>
-                  <span style={{ fontWeight: 700, fontSize: 16 }}>MyLedger</span>
-                  <span style={{ color: T.muted, fontSize: 14 }}> by Kaiman &amp; Co. </span>
-                  <span style={{ background: brandAccent, color: '#fff', fontSize: 11, fontWeight: 600,
-                    padding: '2px 8px', borderRadius: 6 }}>ACCOUNTANT</span>
-                </>
-              )}
-              <span style={{
-                background: tierInfo.color + (accountantTier === 'free' ? '00' : ''),
-                color: accountantTier === 'free' ? T.muted : '#fff',
-                fontSize: 10, fontWeight: 700, padding: '2px 8px', borderRadius: 6,
-                textTransform: 'uppercase', letterSpacing: '0.4px',
-                border: accountantTier === 'free' ? `1px solid ${T.border}` : 'none',
-                background: accountantTier === 'free' ? T.bg : (accentOverride && isAgency ? accentOverride : tierInfo.color),
-              }}>{tierInfo.label}</span>
+              <span style={{ fontWeight: 700, fontSize: 16, color: firmName ? brandAccent : T.text }}>
+                {firmName || 'MyLedger'}
+              </span>
+              <span style={{ background: brandAccent, color: '#fff', fontSize: 10, fontWeight: 600,
+                padding: '2px 7px', borderRadius: 5 }}>ACCT</span>
             </div>
-            {clients.length > 0 && (
-              <>
-                <span style={{ color: T.border, fontSize: 18 }}>|</span>
-                <select value={active?.id || ''} onChange={e => {
-                  const c = clients.find(x => x.id === e.target.value);
-                  setActive(c); setTxns([]); setIncome(null); setBalance(null); setVatBal(null); setDL([]);
-                  setBooksData(null); setCfReport(null);
-                }} style={{ border: 'none', background: 'transparent', fontSize: 14, fontWeight: 600,
-                  color: T.text, cursor: 'pointer', outline: 'none', fontFamily: 'inherit' }}>
-                  {clients.map(c => <option key={c.id} value={c.id}>{c.tradeName}</option>)}
-                </select>
-                {active && (
-                  <span style={{ fontSize: 12, color: T.muted }}>
-                    TIN {active.tin} · {active.type}
-                    {active.subscriptionTier && active.subscriptionTier !== 'free' && (
-                      <span style={{ marginLeft: 8, background: T.accentL, color: T.accent,
-                        fontSize: 10, fontWeight: 700, padding: '1px 6px', borderRadius: 4,
-                        textTransform: 'uppercase', letterSpacing: '0.4px' }}>
-                        {active.subscriptionTier}
-                      </span>
-                    )}
-                  </span>
-                )}
-              </>
-            )}
-          </div>
-          <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
-            {active && (
-              <Btn variant="ghost" size="sm" onClick={handleBackup} title={`Download JSON backup of ${active.tradeName}`}>
-                ⬇ Backup
-              </Btn>
-            )}
             <Btn variant="neutral" size="sm" onClick={onLogout}>Sign out</Btn>
           </div>
-        </div>
+        ) : (
+          /* ── Desktop header ── */
+          <div style={{ maxWidth: 1200, margin: '0 auto', padding: '0 24px',
+            display: 'flex', alignItems: 'center', justifyContent: 'space-between', height: 56 }}>
+            <div style={{ display: 'flex', alignItems: 'center', gap: 14 }}>
+              <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                {firmName ? (
+                  <>
+                    <span style={{ fontWeight: 700, fontSize: 16, color: brandAccent }}>{firmName}</span>
+                    <span style={{ background: brandAccent, color: '#fff', fontSize: 11, fontWeight: 600,
+                      padding: '2px 8px', borderRadius: 6 }}>ACCOUNTANT</span>
+                  </>
+                ) : (
+                  <>
+                    <span style={{ fontWeight: 700, fontSize: 16 }}>MyLedger</span>
+                    <span style={{ color: T.muted, fontSize: 14 }}> by Kaiman &amp; Co. </span>
+                    <span style={{ background: brandAccent, color: '#fff', fontSize: 11, fontWeight: 600,
+                      padding: '2px 8px', borderRadius: 6 }}>ACCOUNTANT</span>
+                  </>
+                )}
+                <span style={{
+                  background: tierInfo.color + (accountantTier === 'free' ? '00' : ''),
+                  color: accountantTier === 'free' ? T.muted : '#fff',
+                  fontSize: 10, fontWeight: 700, padding: '2px 8px', borderRadius: 6,
+                  textTransform: 'uppercase', letterSpacing: '0.4px',
+                  border: accountantTier === 'free' ? `1px solid ${T.border}` : 'none',
+                  background: accountantTier === 'free' ? T.bg : (accentOverride && isAgency ? accentOverride : tierInfo.color),
+                }}>{tierInfo.label}</span>
+              </div>
+              {clients.length > 0 && (
+                <>
+                  <span style={{ color: T.border, fontSize: 18 }}>|</span>
+                  <select value={active?.id || ''} onChange={e => {
+                    const c = clients.find(x => x.id === e.target.value);
+                    setActive(c); setTxns([]); setIncome(null); setBalance(null); setVatBal(null); setDL([]);
+                    setBooksData(null); setCfReport(null);
+                  }} style={{ border: 'none', background: 'transparent', fontSize: 14, fontWeight: 600,
+                    color: T.text, cursor: 'pointer', outline: 'none', fontFamily: 'inherit' }}>
+                    {clients.map(c => <option key={c.id} value={c.id}>{c.tradeName}</option>)}
+                  </select>
+                  {active && (
+                    <span style={{ fontSize: 12, color: T.muted }}>
+                      TIN {active.tin} · {active.type}
+                      {active.subscriptionTier && active.subscriptionTier !== 'free' && (
+                        <span style={{ marginLeft: 8, background: T.accentL, color: T.accent,
+                          fontSize: 10, fontWeight: 700, padding: '1px 6px', borderRadius: 4,
+                          textTransform: 'uppercase', letterSpacing: '0.4px' }}>
+                          {active.subscriptionTier}
+                        </span>
+                      )}
+                    </span>
+                  )}
+                </>
+              )}
+            </div>
+            <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
+              {active && (
+                <Btn variant="ghost" size="sm" onClick={handleBackup} title={`Download JSON backup of ${active.tradeName}`}>
+                  ⬇ Backup
+                </Btn>
+              )}
+              <Btn variant="neutral" size="sm" onClick={onLogout}>Sign out</Btn>
+            </div>
+          </div>
+        )}
       </div>
 
-      <div style={{ maxWidth: 1200, margin: '0 auto', padding: '28px 24px 56px' }}>
+      <div style={{ maxWidth: 1200, margin: '0 auto', padding: isMobile ? '20px 16px 48px' : '28px 24px 56px',
+        minWidth: 0, overflowX: 'hidden' }}>
+
+        {/* Mobile: client selector */}
+        {isMobile && clients.length > 0 && (
+          <div style={{ marginBottom: 16 }}>
+            <select value={active?.id || ''} onChange={e => {
+              const c = clients.find(x => x.id === e.target.value);
+              setActive(c); setTxns([]); setIncome(null); setBalance(null); setVatBal(null); setDL([]);
+              setBooksData(null); setCfReport(null);
+            }} style={{ ...inp, fontWeight: 600 }}>
+              {clients.map(c => <option key={c.id} value={c.id}>{c.tradeName}</option>)}
+            </select>
+          </div>
+        )}
 
         {/* Tab bar */}
         <div style={{ display: 'flex', gap: 4, marginBottom: 28, background: T.surface, padding: 4,
-          borderRadius: 10, boxShadow: T.shadow, flexWrap: 'wrap' }}>
+          borderRadius: 10, boxShadow: T.shadow, flexWrap: 'wrap',
+          overflowX: isMobile ? 'auto' : 'visible' }}>
           {TABS.map(t => {
             const locked = !isPro && PRO_TABS.has(t);
             const isActive = tab === t;
@@ -1553,7 +1600,7 @@ export default function AccountantPortal({ onLogout }) {
             </div>
 
             {/* Chart + Upcoming filings */}
-            <div style={{ display: 'grid', gridTemplateColumns: '3fr 2fr', gap: 20, marginBottom: 20 }}>
+            <div style={{ display: 'grid', gridTemplateColumns: isMobile ? '1fr' : '3fr 2fr', gap: 20, marginBottom: 20 }}>
               {/* Monthly chart */}
               <Card>
                 <SectionHead>Monthly Revenue vs. Expenses (last 6 months)</SectionHead>
@@ -2786,7 +2833,7 @@ export default function AccountantPortal({ onLogout }) {
               const totalAssets        = totalCurrentAssets + (a.fixed_assets_net || 0);
               const netEquity          = totalAssets - totalCurrentLiab;
               return (
-                <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 16 }}>
+                <div style={{ display: 'grid', gridTemplateColumns: isMobile ? '1fr' : '1fr 1fr', gap: 16 }}>
                   {/* ASSETS */}
                   <Card>
                     <SectionHead>Assets</SectionHead>
@@ -3761,7 +3808,7 @@ export default function AccountantPortal({ onLogout }) {
             <div style={{ marginBottom: 20 }}>
               <label style={{ fontSize: 12, fontWeight: 600, color: T.muted, display: 'block',
                 marginBottom: 8, textTransform: 'uppercase', letterSpacing: '0.5px' }}>Select Plan</label>
-              <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 8 }}>
+              <div style={{ display: 'grid', gridTemplateColumns: isMobile ? '1fr' : '1fr 1fr', gap: 8 }}>
                 {[
                   { tier: 'pro',    label: 'Solo Pro',  price: '₱2,499', clients: '15 clients',          color: '#0071e3' },
                   { tier: 'agency', label: 'Agency',    price: '₱5,999', clients: 'Unlimited + white-label', color: '#af52de' },
