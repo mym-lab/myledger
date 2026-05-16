@@ -14,6 +14,15 @@ import AccountantPortal  from './pages/AccountantPortal.jsx';
 import EncoderPortal     from './pages/EncoderPortal.jsx';
 import CommandCenter     from './pages/CommandCenter.jsx';
 import AuthScreen        from './pages/AuthScreen.jsx';
+import OnboardingWizard  from './pages/OnboardingWizard.jsx';
+
+// Returns true if this user has already completed onboarding
+function hasOnboarded(userId) {
+  return !!localStorage.getItem(`ml_onboarded_${userId}`);
+}
+function markOnboarded(userId) {
+  localStorage.setItem(`ml_onboarded_${userId}`, '1');
+}
 
 const PATH = window.location.pathname;
 
@@ -40,15 +49,20 @@ export default function App() {
     if (!isTokenValid(tok)) { clearAuth(); return ''; }
     return tok;
   });
-  const [user,  setUser]  = useState(() => {
+  const [user, setUser] = useState(() => {
     try { return JSON.parse(localStorage.getItem('ml_user') || 'null'); } catch { return null; }
   });
+  const [showOnboarding, setShowOnboarding] = useState(false);
 
   function handleLogin(tok, usr) {
     localStorage.setItem('ml_token', tok);
     localStorage.setItem('ml_user',  JSON.stringify(usr));
     setToken(tok);
     setUser(usr);
+    // Show onboarding wizard on first login (skip for admin)
+    if (usr?.role !== 'admin' && !hasOnboarded(usr?.id)) {
+      setShowOnboarding(true);
+    }
     // Auto-redirect based on role after login
     if (usr?.role === 'admin' && !PATH.startsWith('/admin')) {
       window.location.href = '/admin';
@@ -57,6 +71,11 @@ export default function App() {
     } else if (usr?.role === 'encoder' && !PATH.startsWith('/encoder')) {
       window.location.href = '/encoder';
     }
+  }
+
+  function handleOnboardingComplete() {
+    if (user?.id) markOnboarded(user.id);
+    setShowOnboarding(false);
   }
 
   function handleLogout() {
@@ -76,16 +95,21 @@ export default function App() {
     return <AuthScreen onLogin={handleLogin} />;
   }
 
+  // ── Onboarding wizard overlay (shown once on first login, all roles) ──
+  const wizard = showOnboarding
+    ? <OnboardingWizard user={user} onComplete={handleOnboardingComplete} />
+    : null;
+
   // ── Accountant path ──
   if (PATH.startsWith('/accountant') || user?.role === 'accountant') {
-    return <AccountantPortal onLogout={handleLogout} />;
+    return <>{wizard}<AccountantPortal onLogout={handleLogout} /></>;
   }
 
   // ── Encoder path ──
   if (PATH.startsWith('/encoder') || user?.role === 'encoder') {
-    return <EncoderPortal onLogout={handleLogout} />;
+    return <>{wizard}<EncoderPortal onLogout={handleLogout} /></>;
   }
 
   // ── Default: client self-service ──
-  return <ClientInterface onLogout={handleLogout} />;
+  return <>{wizard}<ClientInterface onLogout={handleLogout} /></>;
 }
