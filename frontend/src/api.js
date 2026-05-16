@@ -7,13 +7,13 @@ async function request(method, path, body = null, auth = false) {
   if (body) headers['Content-Type'] = 'application/json';
   if (auth) headers['Authorization'] = `Bearer ${getToken()}`;
   const res  = await fetch(BASE + path, { method, headers, body: body ? JSON.stringify(body) : null });
-  const data = await res.json();
-  // Token expired or invalidated server-side → force logout
+  const data = await res.json().catch(() => ({}));
+  // Token expired or invalidated server-side → clear local session and throw
+  // (No forced redirect here — App.jsx handles routing based on token validity)
   if (res.status === 401 || res.status === 403) {
     localStorage.removeItem('ml_token');
     localStorage.removeItem('ml_user');
-    window.location.href = '/';
-    return;
+    throw new Error(data?.error || 'Authentication required. Please log in again.');
   }
   if (!res.ok) throw new Error(data.error || `Request failed (${res.status})`);
   return data;
@@ -25,8 +25,10 @@ const put  = (path, body, auth = false)  => request('PUT',    path, body, auth);
 const del  = (path, auth = false)        => request('DELETE', path, null, auth);
 
 // ─── Auth ─────────────────────────────────────────────────────
-export const signup = (data) => post('/auth/signup', data);
-export const login  = (data) => post('/auth/login',  data);
+export const signup         = (data)            => post('/auth/signup',          data);
+export const login          = (data)            => post('/auth/login',           data);
+export const forgotPassword = (email)           => post('/auth/forgot-password', { email });
+export const resetPassword  = (token, password) => post('/auth/reset-password',  { token, password });
 
 // ─── Clients (businesses) ─────────────────────────────────────
 export const getClients        = ()           => get('/clients', true);
@@ -201,8 +203,7 @@ export async function downloadCSV(path, filename) {
   if (res.status === 401 || res.status === 403) {
     localStorage.removeItem('ml_token');
     localStorage.removeItem('ml_user');
-    window.location.href = '/';
-    return;
+    throw new Error('Session expired. Please log in again.');
   }
   if (!res.ok) {
     const d = await res.json().catch(() => ({}));

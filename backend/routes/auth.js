@@ -3,8 +3,10 @@ import { Router } from 'express';
 import bcrypt from 'bcryptjs';
 import jwt from 'jsonwebtoken';
 import { v4 as uuid } from 'uuid';
+import { randomBytes } from 'crypto';
 import { db, rowToUser } from '../db.js';
 import { recordReferral } from './referrals.js';
+import { sendEmail } from '../email.js';
 
 const router = Router();
 const JWT_SECRET = process.env.JWT_SECRET || 'myledger-dev-secret-change-in-prod';
@@ -89,6 +91,80 @@ router.post('/login', async (req, res, next) => {
         accentColor: user.accentColor || null,
       },
     });
+  } catch (err) { next(err); }
+});
+
+// POST /api/auth/forgot-password
+router.post('/forgot-password', async (req, res, next) => {
+  try {
+    const { email } = req.body;
+    if (!email) return res.status(400).json({ error: 'email is required' });
+
+    const user = stmtFindByEmail.get(email);
+    // Always return success — never reveal whether an email exists
+    if (!user) return res.json({ message: 'If this email is registered, a reset link has been sent.' });
+
+    const token   = randomBytes(32).toString('hex');
+    const expires = new Date(Date.now() + 3600_000).toISOString(); // 1 hour
+
+    db.prepare('UPDATE users SET reset_token=?, reset_token_expires=? WHERE id=?')
+      .run(token, expires, user.id);
+
+    const baseUrl  = process.env.APP_URL || 'http://localhost:5173';
+    const resetUrl = `${baseUrl}?reset=${token}`;
+
+    // Always log so it works even without email configured
+    console.log(`🔑 Password reset for ${email}: ${resetUrl}`);
+
+    await sendEmail({
+      to: email,
+      subject: 'MyLedger — Reset Your Password',
+      html: `
+        <div style="font-family:-apple-system,Arial,sans-serif;max-width:480px;margin:0 auto;padding:32px">
+          <div style="background:#0071e3;padding:20px 24px;border-radius:12px 12px 0 0">
+            <span style="color:#fff;font-size:20px;font-weight:700">MyLedger</span>
+          </div>
+          <div style="background:#fff;padding:24px;border:1px solid #e5e5e7;border-radius:0 0 12px 12px">
+            <h2 style="color:#1d1d1f;margin:0 0 12px">Reset your password</h2>
+            <p style="color:#6e6e73;font-size:14px;margin:0 0 20px">
+              Click the button below to reset your password. This link expires in 1 hour.
+            </p>
+            <a href="${resetUrl}" style="display:inline-block;background:#0071e3;color:#fff;
+              padding:12px 24px;border-radius:8px;text-decoration:none;font-weight:600;font-size:14px">
+              Reset Password
+            </a>
+            <p style="color:#aeaeb2;font-size:12px;margin:20px 0 0;border-top:1px solid #f0f0f5;padding-top:16px">
+              If you didn't request this, you can safely ignore it.
+            </p>
+          </div>
+        </div>`,
+      text: `Reset your MyLedger password: ${resetUrl}\n\nThis link expires in 1 hour.`,
+    });
+
+    res.json({ message: 'If this email is registered, a reset link has been sent.' });
+  } catch (err) { next(err); }
+});
+
+// POST /api/auth/reset-password
+router.post('/reset-password', async (req, res, next) => {
+  try {
+    const { token, password } = req.body;
+    if (!token || !password)
+      return res.status(400).json({ error: 'token and password are required' });
+    if (password.length < 6)
+      return res.status(400).json({ error: 'Password must be at least 6 characters' });
+
+    const user = db.prepare('SELECT * FROM users WHERE reset_token = ?').get(token);
+    if (!user)
+      return res.status(400).json({ error: 'Invalid or expired reset link. Please request a new one.' });
+    if (new Date(user.reset_token_expires) < new Date())
+      return res.status(400).json({ error: 'Reset link has expired. Please request a new one.' });
+
+    const password_hash = await bcrypt.hash(password, 10);
+    db.prepare('UPDATE users SET password_hash=?, reset_token=NULL, reset_token_expires=NULL WHERE id=?')
+      .run(password_hash, user.id);
+
+    res.json({ message: 'Password reset successfully. You can now log in.' });
   } catch (err) { next(err); }
 });
 
