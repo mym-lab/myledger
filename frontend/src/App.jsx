@@ -104,21 +104,22 @@ export default function App() {
     return <AuthScreen onLogin={handleLogin} />;
   }
 
-  // ── Onboarding wizard overlay (shown once on first login, all roles) ──
-  const wizard = showOnboarding
-    ? <OnboardingWizard user={user} onComplete={handleOnboardingComplete} />
-    : null;
+  // ── Onboarding wizard — shown alone (no portal underneath) to avoid
+  //    background API calls failing and triggering a redirect loop ──
+  if (showOnboarding) {
+    return <OnboardingWizard user={user} onComplete={handleOnboardingComplete} />;
+  }
 
   // ── Accountant path ──
   if (PATH.startsWith('/accountant') || user?.role === 'accountant') {
-    return <>{wizard}<AccountantPortal onLogout={handleLogout} /></>;
+    return <AccountantPortal onLogout={handleLogout} />;
   }
 
   // ── Encoder path ──
   if (PATH.startsWith('/encoder') || user?.role === 'encoder') {
-    return <>{wizard}<EncoderPortal onLogout={handleLogout} /></>;
+    return <EncoderPortal onLogout={handleLogout} />;
   }
 
   // ── Default: client self-service ──
-  return <>{wizard}<ClientInterface onLogout={handleLogout} /></>;
+  return <ClientInterface onLogout={handleLogout} />;
 }

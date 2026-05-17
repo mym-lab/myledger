@@ -9,13 +9,26 @@ async function request(method, path, body = null, auth = false) {
   const res  = await fetch(BASE + path, { method, headers, body: body ? JSON.stringify(body) : null });
   const data = await res.json().catch(() => ({}));
   // Token expired or invalidated server-side → clear session and reload to login
+  // Exception: if the token was just issued (< 30 s ago) don't auto-redirect —
+  // it means something else is wrong (e.g. JWT_SECRET mismatch on the server).
+  // In that case just throw so the UI can surface the error instead of boot-looping.
   if (res.status === 401 || res.status === 403) {
-    localStorage.removeItem('ml_token');
-    localStorage.removeItem('ml_user');
-    // Small delay so any in-flight UI can settle before the reload
-    setTimeout(() => {
-      window.location.href = window.location.pathname.startsWith('/admin') ? '/admin' : '/';
-    }, 300);
+    const tok = localStorage.getItem('ml_token');
+    let justIssued = false;
+    try {
+      const payload = JSON.parse(atob(tok.split('.')[1]));
+      // iat (issued-at) is in seconds
+      justIssued = payload.iat && (Date.now() / 1000 - payload.iat) < 30;
+    } catch { /* ignore */ }
+
+    if (!justIssued) {
+      localStorage.removeItem('ml_token');
+      localStorage.removeItem('ml_user');
+      // Small delay so any in-flight UI can settle before the reload
+      setTimeout(() => {
+        window.location.href = window.location.pathname.startsWith('/admin') ? '/admin' : '/';
+      }, 300);
+    }
     throw new Error(data?.error || 'Session expired. Please sign in again.');
   }
   if (!res.ok) throw new Error(data.error || `Request failed (${res.status})`);
