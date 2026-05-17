@@ -1,9 +1,33 @@
 import express from 'express';
 import { v4 as uuidv4 } from 'uuid';
 import { db } from '../db.js';
-import { authenticateToken } from '../middleware/auth.js';
+import { authenticate } from '../middleware/auth.js';
 
 const router = express.Router();
+
+// ─── PUBLIC ROUTE: must be registered BEFORE router.use(authenticate) ────────
+
+router.get('/public/:token', (req, res) => {
+  try {
+    const invoice = db.prepare(`SELECT * FROM invoices WHERE share_token = ?`).get(req.params.token);
+    if (!invoice) return res.status(404).json({ error: 'Invoice not found' });
+
+    // trade_name aliased as business_name for the public view
+    const client = db.prepare(
+      `SELECT trade_name AS business_name, address, tin FROM clients WHERE id = ?`
+    ).get(invoice.client_id);
+
+    const items = db.prepare(`SELECT * FROM invoice_items WHERE invoice_id = ? ORDER BY rowid`).all(invoice.id);
+
+    res.json({ ...invoice, items, issuer: client || {} });
+  } catch (err) {
+    console.error('GET /invoices/public error:', err);
+    res.status(500).json({ error: 'Failed to fetch invoice' });
+  }
+});
+
+// ─── All routes below require a valid JWT ─────────────────────────────────────
+router.use(authenticate);
 
 // ─── HELPERS ─────────────────────────────────────────────────────────────────
 
@@ -36,19 +60,43 @@ function generateInvoiceNumber(clientId, prefix = 'INV') {
 }
 
 function calcTotals(items, vatType = 'vatable') {
-  const subtotal = items.reduce((sum, i) => sum + (i.quantity * i.unit_price), 0);
+  const subtotal   = items.reduce((sum, i) => sum + (i.quantity * i.unit_price), 0);
   const vat_amount = vatType === 'vatable' ? Math.round(subtotal * 0.12 * 100) / 100 : 0;
-  const total = Math.round((subtotal + vat_amount) * 100) / 100;
+  const total      = Math.round((subtotal + vat_amount) * 100) / 100;
   return { subtotal: Math.round(subtotal * 100) / 100, vat_amount, total };
+}
+
+// Verify the requesting user can access the given client record
+function canAccessClient(clientId, userId, userRole) {
+  const client = db.prepare(`SELECT * FROM clients WHERE id = ?`).get(clientId);
+  if (!client) return false;
+  if (userRole === 'admin') return true;
+  const encoderIds = JSON.parse(client.encoder_ids || '[]');
+  return client.owner_id === userId ||
+         client.accountant_id === userId ||
+         encoderIds.includes(userId);
+}
+
+// For client users: get their own client record id
+function getClientIdForUser(userId) {
+  const client = db.prepare(`SELECT id FROM clients WHERE owner_id = ?`).get(userId);
+  return client?.id || null;
 }
 
 // ─── GET ALL INVOICES ─────────────────────────────────────────────────────────
 
-router.get('/', authenticateToken, (req, res) => {
+router.get('/', (req, res) => {
   try {
-    const clientId = req.query.client_id || req.user.clientId;
+    let clientId = req.query.client_id;
 
-    if (req.user.role === 'client' && clientId !== req.user.clientId) {
+    // Client users who don't pass client_id: auto-resolve from their profile
+    if (!clientId && req.userRole === 'client') {
+      clientId = getClientIdForUser(req.userId);
+    }
+
+    if (!clientId) return res.status(400).json({ error: 'client_id is required' });
+
+    if (!canAccessClient(clientId, req.userId, req.userRole)) {
       return res.status(403).json({ error: 'Forbidden' });
     }
 
@@ -78,10 +126,14 @@ router.get('/', authenticateToken, (req, res) => {
 
 // ─── GET SINGLE INVOICE ───────────────────────────────────────────────────────
 
-router.get('/:id', authenticateToken, (req, res) => {
+router.get('/:id', (req, res) => {
   try {
     const invoice = db.prepare(`SELECT * FROM invoices WHERE id = ?`).get(req.params.id);
     if (!invoice) return res.status(404).json({ error: 'Invoice not found' });
+
+    if (!canAccessClient(invoice.client_id, req.userId, req.userRole)) {
+      return res.status(403).json({ error: 'Forbidden' });
+    }
 
     const items = db.prepare(`SELECT * FROM invoice_items WHERE invoice_id = ? ORDER BY rowid`).all(req.params.id);
     res.json({ ...invoice, items });
@@ -90,51 +142,36 @@ router.get('/:id', authenticateToken, (req, res) => {
   }
 });
 
-// ─── PUBLIC: VIEW BY SHARE TOKEN (no auth) ───────────────────────────────────
-
-router.get('/public/:token', (req, res) => {
-  try {
-    const invoice = db.prepare(`SELECT * FROM invoices WHERE share_token = ?`).get(req.params.token);
-    if (!invoice) return res.status(404).json({ error: 'Invoice not found' });
-
-    // Use trade_name aliased as business_name for the public view
-    const client = db.prepare(
-      `SELECT trade_name AS business_name, address, tin FROM clients WHERE id = ?`
-    ).get(invoice.client_id);
-
-    const items = db.prepare(`SELECT * FROM invoice_items WHERE invoice_id = ? ORDER BY rowid`).all(invoice.id);
-
-    res.json({ ...invoice, items, issuer: client || {} });
-  } catch (err) {
-    res.status(500).json({ error: 'Failed to fetch invoice' });
-  }
-});
-
 // ─── CREATE INVOICE ───────────────────────────────────────────────────────────
 
-router.post('/', authenticateToken, (req, res) => {
+router.post('/', (req, res) => {
   try {
     const {
       client_id,
       customer_name,
-      customer_email = '',
-      customer_address = '',
-      customer_tin = '',
+      customer_email    = '',
+      customer_address  = '',
+      customer_tin      = '',
       issue_date,
-      due_date = '',
-      payment_terms = 'Due on Receipt',
-      notes = '',
-      vat_type = 'vatable',
-      invoice_prefix = 'INV',
-      items = [],
+      due_date          = '',
+      payment_terms     = 'Due on Receipt',
+      notes             = '',
+      vat_type          = 'vatable',
+      invoice_prefix    = 'INV',
+      items             = [],
     } = req.body;
 
     if (!customer_name) return res.status(400).json({ error: 'customer_name is required' });
     if (!items.length)  return res.status(400).json({ error: 'At least one line item is required' });
 
-    const targetClientId = client_id || req.user.clientId;
+    // Resolve target client
+    let targetClientId = client_id;
+    if (!targetClientId && req.userRole === 'client') {
+      targetClientId = getClientIdForUser(req.userId);
+    }
+    if (!targetClientId) return res.status(400).json({ error: 'client_id is required' });
 
-    if (req.user.role === 'client' && targetClientId !== req.user.clientId) {
+    if (!canAccessClient(targetClientId, req.userId, req.userRole)) {
       return res.status(403).json({ error: 'Forbidden' });
     }
 
@@ -157,7 +194,7 @@ router.post('/', authenticateToken, (req, res) => {
       customer_name, customer_email, customer_address, customer_tin,
       issue_date || now.slice(0, 10), due_date, payment_terms, notes, vat_type,
       subtotal, vat_amount, total,
-      shareToken, req.user.id, now, now
+      shareToken, req.userId, now, now
     );
 
     const insertItem = db.prepare(`
@@ -167,7 +204,7 @@ router.post('/', authenticateToken, (req, res) => {
     for (const item of items) {
       insertItem.run(
         uuidv4(), id, item.description,
-        item.quantity || 1,
+        item.quantity   || 1,
         item.unit_price || 0,
         Math.round((item.quantity || 1) * (item.unit_price || 0) * 100) / 100
       );
@@ -184,11 +221,15 @@ router.post('/', authenticateToken, (req, res) => {
 
 // ─── UPDATE INVOICE (draft only) ─────────────────────────────────────────────
 
-router.put('/:id', authenticateToken, (req, res) => {
+router.put('/:id', (req, res) => {
   try {
     const invoice = db.prepare(`SELECT * FROM invoices WHERE id = ?`).get(req.params.id);
     if (!invoice) return res.status(404).json({ error: 'Invoice not found' });
     if (invoice.status !== 'draft') return res.status(400).json({ error: 'Only draft invoices can be edited' });
+
+    if (!canAccessClient(invoice.client_id, req.userId, req.userRole)) {
+      return res.status(403).json({ error: 'Forbidden' });
+    }
 
     const {
       customer_name, customer_email, customer_address, customer_tin,
@@ -244,11 +285,15 @@ router.put('/:id', authenticateToken, (req, res) => {
 
 // ─── MARK AS SENT ─────────────────────────────────────────────────────────────
 
-router.post('/:id/send', authenticateToken, (req, res) => {
+router.post('/:id/send', (req, res) => {
   try {
     const invoice = db.prepare(`SELECT * FROM invoices WHERE id = ?`).get(req.params.id);
     if (!invoice) return res.status(404).json({ error: 'Invoice not found' });
     if (invoice.status === 'void') return res.status(400).json({ error: 'Cannot send a voided invoice' });
+
+    if (!canAccessClient(invoice.client_id, req.userId, req.userRole)) {
+      return res.status(403).json({ error: 'Forbidden' });
+    }
 
     const now = new Date().toISOString();
     db.prepare(`UPDATE invoices SET status = 'sent', sent_at = ?, updated_at = ? WHERE id = ?`)
@@ -262,17 +307,21 @@ router.post('/:id/send', authenticateToken, (req, res) => {
 
 // ─── MARK AS PAID → auto-create income transaction ───────────────────────────
 
-router.post('/:id/pay', authenticateToken, (req, res) => {
+router.post('/:id/pay', (req, res) => {
   try {
     const invoice = db.prepare(`SELECT * FROM invoices WHERE id = ?`).get(req.params.id);
     if (!invoice) return res.status(404).json({ error: 'Invoice not found' });
     if (invoice.status === 'paid') return res.status(400).json({ error: 'Invoice already paid' });
     if (invoice.status === 'void') return res.status(400).json({ error: 'Cannot mark a voided invoice as paid' });
 
+    if (!canAccessClient(invoice.client_id, req.userId, req.userRole)) {
+      return res.status(403).json({ error: 'Forbidden' });
+    }
+
     const { settlement = 'cash', payment_date } = req.body;
-    const now     = new Date().toISOString();
-    const paidAt  = payment_date ? `${payment_date}T00:00:00.000Z` : now;
-    const txId    = uuidv4();
+    const now    = new Date().toISOString();
+    const paidAt = payment_date ? `${payment_date}T00:00:00.000Z` : now;
+    const txId   = uuidv4();
 
     // Auto-create income transaction (matches v10-clean transactions schema)
     db.prepare(`
@@ -285,7 +334,7 @@ router.post('/:id/pay', authenticateToken, (req, res) => {
     `).run(
       txId,
       invoice.client_id,
-      req.user.id,
+      req.userId,
       `Invoice ${invoice.invoice_number} — ${invoice.customer_name}`,
       invoice.vat_type,
       settlement,
@@ -311,14 +360,18 @@ router.post('/:id/pay', authenticateToken, (req, res) => {
 
 // ─── VOID INVOICE → reversal transaction if was paid ─────────────────────────
 
-router.post('/:id/void', authenticateToken, (req, res) => {
+router.post('/:id/void', (req, res) => {
   try {
     const invoice = db.prepare(`SELECT * FROM invoices WHERE id = ?`).get(req.params.id);
     if (!invoice) return res.status(404).json({ error: 'Invoice not found' });
     if (invoice.status === 'void') return res.status(400).json({ error: 'Invoice already voided' });
 
+    if (!canAccessClient(invoice.client_id, req.userId, req.userRole)) {
+      return res.status(403).json({ error: 'Forbidden' });
+    }
+
     // Only accountants or admin can void paid invoices
-    if (invoice.status === 'paid' && req.user.role === 'client') {
+    if (invoice.status === 'paid' && req.userRole === 'client') {
       return res.status(403).json({ error: 'Only accountants can void paid invoices' });
     }
 
@@ -339,7 +392,7 @@ router.post('/:id/void', authenticateToken, (req, res) => {
       `).run(
         reversalTxId,
         invoice.client_id,
-        req.user.id,
+        req.userId,
         `VOID: Invoice ${invoice.invoice_number} — ${invoice.customer_name}`,
         invoice.vat_type,
         `VOID-${invoice.invoice_number}`,
@@ -356,7 +409,7 @@ router.post('/:id/void', authenticateToken, (req, res) => {
         status = 'void', void_reason = ?, voided_by = ?, voided_at = ?,
         reversal_transaction_id = ?, updated_at = ?
       WHERE id = ?
-    `).run(void_reason, req.user.id, now, reversalTxId, now, req.params.id);
+    `).run(void_reason, req.userId, now, reversalTxId, now, req.params.id);
 
     res.json({ success: true, status: 'void', reversal_transaction_id: reversalTxId });
   } catch (err) {
@@ -367,11 +420,15 @@ router.post('/:id/void', authenticateToken, (req, res) => {
 
 // ─── DELETE (draft only) ──────────────────────────────────────────────────────
 
-router.delete('/:id', authenticateToken, (req, res) => {
+router.delete('/:id', (req, res) => {
   try {
     const invoice = db.prepare(`SELECT * FROM invoices WHERE id = ?`).get(req.params.id);
     if (!invoice) return res.status(404).json({ error: 'Invoice not found' });
     if (invoice.status !== 'draft') return res.status(400).json({ error: 'Only draft invoices can be deleted' });
+
+    if (!canAccessClient(invoice.client_id, req.userId, req.userRole)) {
+      return res.status(403).json({ error: 'Forbidden' });
+    }
 
     db.prepare(`DELETE FROM invoice_items WHERE invoice_id = ?`).run(req.params.id);
     db.prepare(`DELETE FROM invoices WHERE id = ?`).run(req.params.id);
