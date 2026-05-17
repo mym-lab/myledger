@@ -1,8 +1,12 @@
 // ─── Admin Routes ─────────────────────────────────────────────
 import { Router } from 'express';
 import { db, rowToUser, rowToClient, rowToTx, getSetting, setSetting, getAllSettings } from '../db.js';
+import { authenticate, requireAdmin } from '../middleware/auth.js';
 
 const router = Router();
+
+// All admin routes require a valid JWT + admin role
+router.use(authenticate, requireAdmin);
 const round = (n) => Math.round(n * 100) / 100;
 const sum   = (arr, key) => arr.reduce((s, t) => s + (t[key] || 0), 0);
 

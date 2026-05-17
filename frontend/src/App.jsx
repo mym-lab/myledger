@@ -91,8 +91,11 @@ export default function App() {
     return <InvoicePage />;
   }
 
-  // ── Admin path — no auth required (MVP) ──
+  // ── Admin path — requires valid token + admin role ──
   if (PATH.startsWith('/admin')) {
+    if (!token || user?.role !== 'admin') {
+      return <AuthScreen onLogin={handleLogin} adminMode />;
+    }
     return <CommandCenter onLogout={handleLogout} />;
   }
 
