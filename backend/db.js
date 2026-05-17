@@ -437,6 +437,38 @@ export function rowToAudit(r) {
   };
 }
 
+// ── Admin auto-seed ───────────────────────────────────────────────────────────
+// If ADMIN_EMAIL + ADMIN_PASSWORD env vars are set:
+//   • Creates the admin account on first startup (no admin exists yet)
+//   • If ADMIN_RESET=true, updates the password of the existing admin account
+// This means the admin can always log into /admin even after a DB wipe.
+(async () => {
+  const adminEmail = process.env.ADMIN_EMAIL;
+  const adminPass  = process.env.ADMIN_PASSWORD;
+  if (!adminEmail || !adminPass) return;
+
+  const existing = db.prepare("SELECT * FROM users WHERE email=?").get(adminEmail);
+
+  if (!existing) {
+    // First-time seed
+    const hash = await bcrypt.hash(adminPass, 10);
+    db.prepare(`
+      INSERT INTO users (id, email, name, company, role, password_hash, accountant_tier, firm_name, accent_color, created_at)
+      VALUES (?, ?, ?, ?, 'admin', ?, '', NULL, NULL, ?)
+    `).run(uuidv4(), adminEmail, 'Admin', 'MyLedger', hash, new Date().toISOString());
+    console.log(`🔐  Admin account created for ${adminEmail}`);
+  } else if (process.env.ADMIN_RESET === 'true') {
+    // Force-update password (set ADMIN_RESET=true in Railway, then remove after deploy)
+    const hash = await bcrypt.hash(adminPass, 10);
+    db.prepare("UPDATE users SET password_hash=?, role='admin' WHERE email=?").run(hash, adminEmail);
+    console.log(`🔐  Admin password reset for ${adminEmail}`);
+  } else if (existing.role !== 'admin') {
+    // Promote to admin if somehow demoted
+    db.prepare("UPDATE users SET role='admin' WHERE email=?").run(adminEmail);
+    console.log(`🔐  Admin role restored for ${adminEmail}`);
+  }
+})();
+
 // ── Admin seed — runs on startup if ADMIN_EMAIL + ADMIN_PASSWORD are set ──────
 // Set ADMIN_RESET=true to force-update password on an existing admin account.
 (function seedAdmin() {

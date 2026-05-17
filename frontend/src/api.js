@@ -8,12 +8,15 @@ async function request(method, path, body = null, auth = false) {
   if (auth) headers['Authorization'] = `Bearer ${getToken()}`;
   const res  = await fetch(BASE + path, { method, headers, body: body ? JSON.stringify(body) : null });
   const data = await res.json().catch(() => ({}));
-  // Token expired or invalidated server-side → clear local session and throw
-  // (No forced redirect here — App.jsx handles routing based on token validity)
+  // Token expired or invalidated server-side → clear session and reload to login
   if (res.status === 401 || res.status === 403) {
     localStorage.removeItem('ml_token');
     localStorage.removeItem('ml_user');
-    throw new Error(data?.error || 'Authentication required. Please log in again.');
+    // Small delay so any in-flight UI can settle before the reload
+    setTimeout(() => {
+      window.location.href = window.location.pathname.startsWith('/admin') ? '/admin' : '/';
+    }, 300);
+    throw new Error(data?.error || 'Session expired. Please sign in again.');
   }
   if (!res.ok) throw new Error(data.error || `Request failed (${res.status})`);
   return data;
@@ -124,14 +127,14 @@ export const approveUpgradeRequest          = (id)           => put(`/upgrade-re
 export const rejectUpgradeRequest           = (id, reason)   => put(`/upgrade-requests/${id}/reject`, { reason }, true);
 
 // ─── Admin ────────────────────────────────────────────────────
-export const getAdminStats     = ()           => get('/admin/stats');
-export const getSettings       = ()           => get('/admin/settings');
-export const updateSettings    = (data)       => put('/admin/settings', data);
-export const setAccountantTier         = (userId, tier)           => put(`/admin/users/${userId}/set-tier`,     { tier });
+export const getAdminStats     = ()           => get('/admin/stats',     true);
+export const getSettings       = ()           => get('/admin/settings',  true);
+export const updateSettings    = (data)       => put('/admin/settings',  data, true);
+export const setAccountantTier         = (userId, tier)           => put(`/admin/users/${userId}/set-tier`,     { tier },                 true);
 export const setAccountantBranding     = (userId, firmName, accentColor) =>
-  put(`/admin/users/${userId}/set-branding`, { firmName, accentColor });
-export const setClientSubscriptionTier = (clientId, tier)         => put(`/admin/clients/${clientId}/set-tier`, { tier });
-export const saveSmtpSettings          = (data)                   => put('/admin/smtp', data);
+  put(`/admin/users/${userId}/set-branding`, { firmName, accentColor },                                                                   true);
+export const setClientSubscriptionTier = (clientId, tier)         => put(`/admin/clients/${clientId}/set-tier`, { tier },                 true);
+export const saveSmtpSettings          = (data)                   => put('/admin/smtp',     data,                                         true);
 
 // ─── Notifications ─────────────────────────────────────────────
 export const sendTestEmail      = (to)             => post('/notifications/test',           { to });

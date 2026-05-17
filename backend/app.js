@@ -6,7 +6,7 @@
 
 import express from 'express';
 import cors from 'cors';
-import { existsSync, copyFileSync } from 'fs';
+import { existsSync } from 'fs';
 import { join, dirname } from 'path';
 import { fileURLToPath } from 'url';
 

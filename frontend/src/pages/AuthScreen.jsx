@@ -24,7 +24,7 @@ const inp = {
   outline: 'none', fontFamily: 'inherit', marginBottom: 12,
 };
 
-export default function AuthScreen({ onLogin }) {
+export default function AuthScreen({ onLogin, adminMode = false }) {
   const [mode,        setMode]       = useState('login');
   const [role,        setRole]       = useState('client');
   const [email,       setEmail]      = useState('');
@@ -294,14 +294,21 @@ export default function AuthScreen({ onLogin }) {
 
         {/* Logo */}
         <div style={{ textAlign: 'center', marginBottom: 32 }}>
-          <div style={{ width: 60, height: 60, borderRadius: 16, background: T.accent,
+          <div style={{ width: 60, height: 60, borderRadius: 16,
+            background: adminMode ? '#111827' : T.accent,
             display: 'flex', alignItems: 'center', justifyContent: 'center',
-            margin: '0 auto 14px', boxShadow: '0 6px 20px rgba(0,113,227,0.28)' }}>
-            <span style={{ color: '#fff', fontSize: 22, fontWeight: 800, letterSpacing: '-1px',
+            margin: '0 auto 14px', boxShadow: adminMode ? '0 6px 20px rgba(0,0,0,0.35)' : '0 6px 20px rgba(0,113,227,0.28)' }}>
+            <span style={{ color: adminMode ? '#C9A84C' : '#fff', fontSize: 22, fontWeight: 800, letterSpacing: '-1px',
               fontFamily: '-apple-system, BlinkMacSystemFont, "SF Pro Display", sans-serif' }}>ML</span>
           </div>
           <h1 style={{ margin: 0, fontSize: 26, fontWeight: 700, color: T.text, letterSpacing: '-0.5px' }}>MyLedger</h1>
-          <div style={{ fontSize: 13, color: T.muted, marginTop: 4, letterSpacing: '0.2px' }}>by Kaiman & Co.</div>
+          <div style={{ fontSize: 13, color: T.muted, marginTop: 4, letterSpacing: '0.2px' }}>by Kaiman &amp; Co.</div>
+          {adminMode && (
+            <div style={{ marginTop: 8, display: 'inline-block', background: '#111827', color: '#C9A84C',
+              fontSize: 11, fontWeight: 700, padding: '3px 12px', borderRadius: 20, letterSpacing: '1px' }}>
+              ADMIN ACCESS
+            </div>
+          )}
         </div>
 
         {/* Referral banner */}
