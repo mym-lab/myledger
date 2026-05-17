@@ -167,17 +167,25 @@ const ACCT_TIERS = {
   free:         { label: 'Free',         color: '#6e6e73', maxClients: 1,    price: 0    },
   solo:         { label: 'Solo',         color: '#0071e3', maxClients: 5,    price: 599  },
   professional: { label: 'Professional', color: '#ff9500', maxClients: 15,   price: 1499 },
-  firm:         { label: 'Firm',         color: '#34c759', maxClients: null, price: 2999 },
-  agency:       { label: 'Agency',       color: '#af52de', maxClients: null, price: 4999 },
+  firm:         { label: 'Firm',         color: '#34c759', maxClients: 50,  price: 2999 },
+  agency:       { label: 'Agency',       color: '#af52de', maxClients: 100, price: 4999 },
 };
 
 function ProLock({ onUpgrade }) {
   const isMobile = useMobile();
+  const [hovered, setHovered] = React.useState(null);
+  const tiers = [
+    { tier: 'solo',         label: 'Solo',         price: '₱599',   clients: '5 clients',              color: '#0071e3', note: null },
+    { tier: 'professional', label: 'Professional', price: '₱1,499', clients: '15 clients',             color: '#ff9500', note: null },
+    { tier: 'firm',         label: 'Firm',         price: '₱2,999', clients: '50 clients',             color: '#34c759', note: null },
+    { tier: 'agency',       label: 'Agency',       price: '₱4,999', clients: '100 clients',            color: '#af52de',
+      note: 'Rolling Forecast & Comparative — Phase 2' },
+  ];
   return (
     <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center',
       minHeight: 360, padding: 40 }}>
       <div style={{ background: T.surface, borderRadius: 20, padding: '40px 48px', textAlign: 'center',
-        boxShadow: T.shadowMd, border: `1px solid ${T.border}`, maxWidth: 440 }}>
+        boxShadow: T.shadowMd, border: `1px solid ${T.border}`, maxWidth: 500 }}>
         <div style={{ fontSize: 52, marginBottom: 14 }}>🔒</div>
         <h3 style={{ margin: '0 0 10px', fontSize: 20, fontWeight: 700, color: T.text }}>Paid Plan Feature</h3>
         <p style={{ margin: '0 0 20px', color: T.muted, fontSize: 14, lineHeight: 1.65 }}>
@@ -186,22 +194,41 @@ function ProLock({ onUpgrade }) {
           Financial Statements, and Cash Flow.
         </p>
         <div style={{ display: 'grid', gridTemplateColumns: isMobile ? '1fr' : '1fr 1fr', gap: 8, marginBottom: 16, textAlign: 'left' }}>
-          {[
-            { label: 'Solo',         price: '₱599',   clients: '5 clients',         color: '#0071e3' },
-            { label: 'Professional', price: '₱1,499', clients: '15 clients',        color: '#ff9500' },
-            { label: 'Firm',         price: '₱2,999', clients: 'Unlimited clients', color: '#34c759' },
-            { label: 'Agency',       price: '₱4,999', clients: 'Unlimited + white-label', color: '#af52de' },
-          ].map(t => (
-            <div key={t.label} style={{ background: `${t.color}10`, border: `1px solid ${t.color}30`,
-              borderRadius: 8, padding: '8px 12px' }}>
-              <div style={{ fontWeight: 700, fontSize: 13, color: t.color }}>{t.label}</div>
-              <div style={{ fontSize: 18, fontWeight: 700, color: T.text }}>{t.price}<span style={{ fontSize: 11, color: T.muted, fontWeight: 400 }}>/mo</span></div>
-              <div style={{ fontSize: 11, color: T.muted }}>{t.clients}</div>
+          {tiers.map(t => (
+            <div key={t.tier}
+              onClick={() => onUpgrade && onUpgrade(t.tier)}
+              onMouseEnter={() => setHovered(t.tier)}
+              onMouseLeave={() => setHovered(null)}
+              style={{
+                background: hovered === t.tier ? `${t.color}18` : `${t.color}10`,
+                border: `1.5px solid ${hovered === t.tier ? t.color : t.color + '40'}`,
+                borderRadius: 10, padding: '10px 14px',
+                cursor: onUpgrade ? 'pointer' : 'default',
+                transition: 'all .15s',
+              }}>
+              <div style={{ fontWeight: 700, fontSize: 13, color: t.color, marginBottom: 2 }}>{t.label}</div>
+              <div style={{ fontSize: 18, fontWeight: 700, color: T.text }}>
+                {t.price}<span style={{ fontSize: 11, color: T.muted, fontWeight: 400 }}>/mo</span>
+              </div>
+              <div style={{ fontSize: 11, color: T.muted, marginTop: 2 }}>{t.clients}</div>
+              {t.note && (
+                <div style={{ marginTop: 5, fontSize: 10, fontWeight: 600, color: t.color,
+                  background: `${t.color}15`, borderRadius: 6, padding: '2px 7px', display: 'inline-block',
+                  letterSpacing: '0.2px' }}>
+                  ✦ {t.note}
+                </div>
+              )}
+              {onUpgrade && (
+                <div style={{ marginTop: 6, fontSize: 11, fontWeight: 600, color: t.color,
+                  opacity: hovered === t.tier ? 1 : 0, transition: 'opacity .15s' }}>
+                  Select this plan →
+                </div>
+              )}
             </div>
           ))}
         </div>
         {onUpgrade ? (
-          <button onClick={onUpgrade}
+          <button onClick={() => onUpgrade('solo')}
             style={{ width: '100%', padding: '12px 16px', borderRadius: 10, border: 'none',
               background: T.accent, color: '#fff', fontSize: 14, fontWeight: 700,
               cursor: 'pointer', fontFamily: 'inherit' }}>
@@ -972,7 +999,7 @@ export default function AccountantPortal({ onLogout }) {
   const tierInfo       = ACCT_TIERS[accountantTier] || ACCT_TIERS.free;
   const isPro          = accountantTier !== 'free';   // any paid tier unlocks features
   const isAgency       = accountantTier === 'agency';
-  const maxClients     = tierInfo.maxClients;          // null = unlimited
+  const maxClients     = tierInfo.maxClients;          // number = hard limit per tier
   const firmName       = isAgency && storedUser?.firmName    ? storedUser.firmName    : null;
   const accentOverride = isAgency && storedUser?.accentColor ? storedUser.accentColor : null;
   // Dynamic accent: agency accountants with a custom color override T.accent site-wide in header/badges
@@ -1065,7 +1092,7 @@ export default function AccountantPortal({ onLogout }) {
   const [refCopied,  setRefCopied]  = useState(false);
   // Accountant self-serve upgrade
   const [showUpgrade,    setShowUpgrade]    = useState(false);
-  const [upgradeTarget,  setUpgradeTarget]  = useState('pro');
+  const [upgradeTarget,  setUpgradeTarget]  = useState('solo');
   const [upgradeMethod,  setUpgradeMethod]  = useState('gcash');
   const [upgradeRef,     setUpgradeRef]     = useState('');
   const [upgradeAmount,  setUpgradeAmount]  = useState('');
@@ -1135,7 +1162,7 @@ export default function AccountantPortal({ onLogout }) {
       const r = await getClients();
       // Enforce client limit per accountant tier
       const all = r.clients || [];
-      const visible = maxClients === null ? all : all.slice(0, maxClients);
+      const visible = all.slice(0, maxClients);
       setClients(visible);
       if (visible.length > 0) {
         setActive(visible[0]);
@@ -1549,7 +1576,7 @@ export default function AccountantPortal({ onLogout }) {
                     ⏳ Upgrade pending review — we'll activate within 24 hrs
                   </div>
                 ) : (
-                  <button onClick={() => setShowUpgrade(true)} style={{
+                  <button onClick={() => { setUpgradeTarget('solo'); setShowUpgrade(true); }} style={{
                     padding: '9px 22px', background: T.accent, color: '#fff', border: 'none',
                     borderRadius: 9, fontSize: 13, fontWeight: 700, cursor: 'pointer', fontFamily: 'inherit',
                     whiteSpace: 'nowrap',
@@ -1836,7 +1863,7 @@ export default function AccountantPortal({ onLogout }) {
 
         {/* ════════════ JOURNAL ENTRIES ════════════ */}
         {tab === 'Journal Entries' && active && (
-          !isPro ? <ProLock onUpgrade={() => setShowUpgrade(true)} /> : <div>
+          !isPro ? <ProLock onUpgrade={(tier) => { setUpgradeTarget(tier || 'solo'); setShowUpgrade(true); }} /> : <div>
             <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 20 }}>
               <h2 style={{ margin: 0, fontSize: 22, fontWeight: 600 }}>Journal Entries — {active.tradeName}</h2>
               <Btn onClick={() => setShowJE(true)}>+ New Journal Entry</Btn>
@@ -1928,7 +1955,7 @@ export default function AccountantPortal({ onLogout }) {
 
         {/* ════════════ TRIAL BALANCE ════════════ */}
         {tab === 'Trial Balance' && active && (
-          !isPro ? <ProLock onUpgrade={() => setShowUpgrade(true)} /> : <div>
+          !isPro ? <ProLock onUpgrade={(tier) => { setUpgradeTarget(tier || 'solo'); setShowUpgrade(true); }} /> : <div>
             <h2 style={{ margin: '0 0 8px', fontSize: 22, fontWeight: 600 }}>Trial Balance — {active.tradeName}</h2>
             <div style={{ fontSize: 13, color: T.muted, marginBottom: 20 }}>
               Synthetic trial balance derived from all transactions and manual journal entries.
@@ -2001,7 +2028,7 @@ export default function AccountantPortal({ onLogout }) {
 
         {/* ════════════ BIR RETURNS ════════════ */}
         {tab === 'BIR Returns' && active && (
-          !isPro ? <ProLock onUpgrade={() => setShowUpgrade(true)} /> : (() => {
+          !isPro ? <ProLock onUpgrade={(tier) => { setUpgradeTarget(tier || 'solo'); setShowUpgrade(true); }} /> : (() => {
             const isOPT = active.taxRegime === 'opt';
             // Form options depend on tax regime — 1601-EQ is always available
             const formOptions = isOPT
@@ -2328,7 +2355,7 @@ export default function AccountantPortal({ onLogout }) {
 
         {/* ════════════ ALPHALIST ════════════ */}
         {tab === 'Alphalist' && active && (
-          !isPro ? <ProLock onUpgrade={() => setShowUpgrade(true)} /> : <div>
+          !isPro ? <ProLock onUpgrade={(tier) => { setUpgradeTarget(tier || 'solo'); setShowUpgrade(true); }} /> : <div>
             <h2 style={{ margin: '0 0 8px', fontSize: 22, fontWeight: 600 }}>Alphalist / SLSP — {active.tradeName}</h2>
             <div style={{ fontSize: 13, color: T.muted, marginBottom: 20 }}>
               Expense transactions grouped by vendor/counterparty for BIR Alphalist reporting.
@@ -2401,7 +2428,7 @@ export default function AccountantPortal({ onLogout }) {
 
         {/* ════════════ AUDIT LOG ════════════ */}
         {tab === 'Audit Log' && active && (
-          !isPro ? <ProLock onUpgrade={() => setShowUpgrade(true)} /> : <div>
+          !isPro ? <ProLock onUpgrade={(tier) => { setUpgradeTarget(tier || 'solo'); setShowUpgrade(true); }} /> : <div>
             <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 20 }}>
               <h2 style={{ margin: 0, fontSize: 22, fontWeight: 600 }}>Audit Log — {active.tradeName}</h2>
               <Btn size="sm" variant="ghost" onClick={loadAudit}>↻ Refresh</Btn>
@@ -2449,7 +2476,7 @@ export default function AccountantPortal({ onLogout }) {
 
         {/* ════════════ PERIOD LOCK ════════════ */}
         {tab === 'Period Lock' && active && (
-          !isPro ? <ProLock onUpgrade={() => setShowUpgrade(true)} /> : <div style={{ maxWidth: 640 }}>
+          !isPro ? <ProLock onUpgrade={(tier) => { setUpgradeTarget(tier || 'solo'); setShowUpgrade(true); }} /> : <div style={{ maxWidth: 640 }}>
             <h2 style={{ margin: '0 0 6px', fontSize: 22, fontWeight: 600 }}>Period Locking — {active.tradeName}</h2>
             <p style={{ color: T.muted, fontSize: 13, marginBottom: 24 }}>
               Locked periods block new transactions and voids. Required for CAS compliance.
@@ -2501,7 +2528,7 @@ export default function AccountantPortal({ onLogout }) {
 
         {/* ════════════ COA ════════════ */}
         {tab === 'COA' && active && (
-          !isPro ? <ProLock onUpgrade={() => setShowUpgrade(true)} /> : <div>
+          !isPro ? <ProLock onUpgrade={(tier) => { setUpgradeTarget(tier || 'solo'); setShowUpgrade(true); }} /> : <div>
             <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 20, flexWrap: 'wrap', gap: 12 }}>
               <h2 style={{ margin: 0, fontSize: 22, fontWeight: 600 }}>Chart of Accounts — {active.tradeName}</h2>
               <div style={{ display: 'flex', gap: 10 }}>
@@ -2608,7 +2635,7 @@ export default function AccountantPortal({ onLogout }) {
 
         {/* ════════════ GENERAL JOURNAL ════════════ */}
         {tab === 'General Journal' && active && (
-          !isPro ? <ProLock onUpgrade={() => setShowUpgrade(true)} /> : <div>
+          !isPro ? <ProLock onUpgrade={(tier) => { setUpgradeTarget(tier || 'solo'); setShowUpgrade(true); }} /> : <div>
             <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 20, flexWrap: 'wrap', gap: 12 }}>
               <h2 style={{ margin: 0, fontSize: 22, fontWeight: 600 }}>General Journal — {active.tradeName}</h2>
               <div style={{ display: 'flex', gap: 10, alignItems: 'center', flexWrap: 'wrap' }}>
@@ -2678,7 +2705,7 @@ export default function AccountantPortal({ onLogout }) {
 
         {/* ════════════ GENERAL LEDGER ════════════ */}
         {tab === 'General Ledger' && active && (
-          !isPro ? <ProLock onUpgrade={() => setShowUpgrade(true)} /> : <div>
+          !isPro ? <ProLock onUpgrade={(tier) => { setUpgradeTarget(tier || 'solo'); setShowUpgrade(true); }} /> : <div>
             <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 20, flexWrap: 'wrap', gap: 12 }}>
               <h2 style={{ margin: 0, fontSize: 22, fontWeight: 600 }}>General Ledger — {active.tradeName}</h2>
               <div style={{ display: 'flex', gap: 10, alignItems: 'center', flexWrap: 'wrap' }}>
@@ -2759,7 +2786,7 @@ export default function AccountantPortal({ onLogout }) {
 
         {/* ════════════ INCOME STATEMENT ════════════ */}
         {tab === 'Income Statement' && active && (
-          !isPro ? <ProLock onUpgrade={() => setShowUpgrade(true)} /> : <div>
+          !isPro ? <ProLock onUpgrade={(tier) => { setUpgradeTarget(tier || 'solo'); setShowUpgrade(true); }} /> : <div>
             <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 22 }}>
               <h2 style={{ margin: 0, fontSize: 22, fontWeight: 600 }}>Income Statement — {active.tradeName}</h2>
               {income && (
@@ -2807,7 +2834,7 @@ export default function AccountantPortal({ onLogout }) {
 
         {/* ════════════ BALANCE SHEET ════════════ */}
         {tab === 'Balance Sheet' && active && (
-          !isPro ? <ProLock onUpgrade={() => setShowUpgrade(true)} /> : <div>
+          !isPro ? <ProLock onUpgrade={(tier) => { setUpgradeTarget(tier || 'solo'); setShowUpgrade(true); }} /> : <div>
             <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 22 }}>
               <h2 style={{ margin: 0, fontSize: 22, fontWeight: 600 }}>Statement of Financial Position — {active.tradeName}</h2>
               {balance && (
@@ -2915,7 +2942,7 @@ export default function AccountantPortal({ onLogout }) {
 
         {/* ════════════ BOOKS ════════════ */}
         {tab === 'Books' && active && (
-          !isPro ? <ProLock onUpgrade={() => setShowUpgrade(true)} /> : <div>
+          !isPro ? <ProLock onUpgrade={(tier) => { setUpgradeTarget(tier || 'solo'); setShowUpgrade(true); }} /> : <div>
             <h2 style={{ margin: '0 0 8px', fontSize: 22, fontWeight: 600 }}>Accounting Books — {active.tradeName}</h2>
             <div style={{ fontSize: 13, color: T.muted, marginBottom: 20 }}>
               Philippine SLSP-format subsidiary books derived from transactions. Use these to verify entries and check for adjustments needed.
@@ -3076,7 +3103,7 @@ export default function AccountantPortal({ onLogout }) {
 
         {/* ════════════ CASH FLOW ════════════ */}
         {tab === 'Cash Flow' && active && (
-          !isPro ? <ProLock onUpgrade={() => setShowUpgrade(true)} /> : <div>
+          !isPro ? <ProLock onUpgrade={(tier) => { setUpgradeTarget(tier || 'solo'); setShowUpgrade(true); }} /> : <div>
             <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 8 }}>
               <h2 style={{ margin: 0, fontSize: 22, fontWeight: 600 }}>Cash Flow Statement — {active.tradeName}</h2>
               {cfReport && (
@@ -3196,7 +3223,7 @@ export default function AccountantPortal({ onLogout }) {
 
         {/* ════════════ ASSETS ════════════ */}
         {tab === 'Assets' && active && (
-          !isPro ? <ProLock onUpgrade={() => setShowUpgrade(true)} /> : <div>
+          !isPro ? <ProLock onUpgrade={(tier) => { setUpgradeTarget(tier || 'solo'); setShowUpgrade(true); }} /> : <div>
             <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 20 }}>
               <div>
                 <h2 style={{ margin: '0 0 4px', fontSize: 22, fontWeight: 600 }}>Fixed Assets — {active.tradeName}</h2>
@@ -3285,7 +3312,7 @@ export default function AccountantPortal({ onLogout }) {
 
         {/* ════════════ SLSP ════════════ */}
         {tab === 'SLSP' && active && (
-          !isPro ? <ProLock onUpgrade={() => setShowUpgrade(true)} /> : <div>
+          !isPro ? <ProLock onUpgrade={(tier) => { setUpgradeTarget(tier || 'solo'); setShowUpgrade(true); }} /> : <div>
             <h2 style={{ margin: '0 0 4px', fontSize: 22, fontWeight: 600 }}>SLSP — {active.tradeName}</h2>
             <div style={{ fontSize: 13, color: T.muted, marginBottom: 24 }}>
               Summary List of Sales &amp; Purchases — BIR VAT Relief format. Export CSV for eBIRForms submission.
@@ -3429,7 +3456,7 @@ export default function AccountantPortal({ onLogout }) {
 
         {/* ════════════ CONTACTS ════════════ */}
         {tab === 'Contacts' && active && (
-          !isPro ? <ProLock onUpgrade={() => setShowUpgrade(true)} /> : <div>
+          !isPro ? <ProLock onUpgrade={(tier) => { setUpgradeTarget(tier || 'solo'); setShowUpgrade(true); }} /> : <div>
             <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 22 }}>
               <div>
                 <h2 style={{ margin: '0 0 4px', fontSize: 22, fontWeight: 600 }}>Contacts — {active.tradeName}</h2>
@@ -3816,17 +3843,29 @@ export default function AccountantPortal({ onLogout }) {
                 marginBottom: 8, textTransform: 'uppercase', letterSpacing: '0.5px' }}>Select Plan</label>
               <div style={{ display: 'grid', gridTemplateColumns: isMobile ? '1fr' : '1fr 1fr', gap: 8 }}>
                 {[
-                  { tier: 'pro',    label: 'Solo Pro',  price: '₱2,499', clients: '15 clients',          color: '#0071e3' },
-                  { tier: 'agency', label: 'Agency',    price: '₱5,999', clients: 'Unlimited + white-label', color: '#af52de' },
+                  { tier: 'solo',         label: 'Solo',         price: '₱599',   clients: '5 clients',   color: '#0071e3', note: null },
+                  { tier: 'professional', label: 'Professional', price: '₱1,499', clients: '15 clients',  color: '#ff9500', note: null },
+                  { tier: 'firm',         label: 'Firm',         price: '₱2,999', clients: '50 clients',  color: '#34c759', note: null },
+                  { tier: 'agency',       label: 'Agency',       price: '₱4,999', clients: '100 clients', color: '#af52de',
+                    note: 'Rolling Forecast & Comparative — Phase 2' },
                 ].map(p => (
                   <div key={p.tier} onClick={() => setUpgradeTarget(p.tier)}
                     style={{ border: `2px solid ${upgradeTarget === p.tier ? p.color : T.border}`,
                       borderRadius: 10, padding: '12px 14px', cursor: 'pointer',
-                      background: upgradeTarget === p.tier ? `${p.color}08` : T.bg,
+                      background: upgradeTarget === p.tier ? `${p.color}10` : T.bg,
                       transition: 'all .15s' }}>
                     <div style={{ fontWeight: 700, color: p.color, fontSize: 14 }}>{p.label}</div>
-                    <div style={{ fontSize: 20, fontWeight: 700, color: T.text, margin: '4px 0 2px' }}>{p.price}<span style={{ fontSize: 11, fontWeight: 400, color: T.muted }}>/mo</span></div>
+                    <div style={{ fontSize: 20, fontWeight: 700, color: T.text, margin: '4px 0 2px' }}>
+                      {p.price}<span style={{ fontSize: 11, fontWeight: 400, color: T.muted }}>/mo</span>
+                    </div>
                     <div style={{ fontSize: 11, color: T.muted }}>{p.clients}</div>
+                    {p.note && (
+                      <div style={{ marginTop: 5, fontSize: 10, fontWeight: 600, color: p.color,
+                        background: `${p.color}15`, borderRadius: 6, padding: '2px 7px',
+                        display: 'inline-block', letterSpacing: '0.2px' }}>
+                        ✦ {p.note}
+                      </div>
+                    )}
                   </div>
                 ))}
               </div>
