@@ -5,7 +5,22 @@ import { authenticate, requireAdmin } from '../middleware/auth.js';
 
 const router = Router();
 
-// All admin routes require a valid JWT + admin role
+// ── Public: pricing + payment info (no auth required) ────────────────────────
+// Used by ClientInterface and AccountantPortal to show up-to-date pricing.
+router.get('/public-settings', (req, res) => {
+  try {
+    const pricing           = getSetting('pricing')           || {};
+    const accountantPricing = getSetting('accountantPricing') || {};
+    const payment           = getSetting('payment')           || {};
+    const contactEmail      = getSetting('contactEmail')      || '';
+    const referral          = getSetting('referral')          || {};
+    res.json({ pricing, accountantPricing, payment, contactEmail, referral });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// All remaining admin routes require a valid JWT + admin role
 router.use(authenticate, requireAdmin);
 const round = (n) => Math.round(n * 100) / 100;
 const sum   = (arr, key) => arr.reduce((s, t) => s + (t[key] || 0), 0);

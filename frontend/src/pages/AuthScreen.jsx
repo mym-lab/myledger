@@ -4,7 +4,7 @@
 // Handles ?reset=TOKEN URL param: shows reset-password form
 
 import { useState, useEffect } from 'react';
-import { login, signup, getInvite, getSettings, forgotPassword, resetPassword } from '../api.js';
+import { login, signup, getInvite, getPublicSettings, forgotPassword, resetPassword } from '../api.js';
 
 const T = {
   bg:      '#f5f5f7',
@@ -73,8 +73,8 @@ export default function AuthScreen({ onLogin, adminMode = false }) {
     const ref = params.get('ref');
     if (ref) {
       setRefCode(ref);
-      getSettings().then(r => {
-        const bonus = r?.settings?.referral?.signupBonus;
+      getPublicSettings().then(r => {
+        const bonus = r?.referral?.signupBonus;
         if (bonus != null) setSignupBonus(bonus);
       }).catch(() => {});
     }

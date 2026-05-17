@@ -13,7 +13,7 @@ import {
   getBirDeadlines, getBirVatBalance,
   assignAccountant,
   getPendingInvite, cancelPendingInvite,
-  getSettings,
+  getPublicSettings,
   createUpgradeRequest,
   scanReceipt,
   getMyReferrals,
@@ -1184,7 +1184,7 @@ export default function ClientInterface({ onLogout }) {
 
   useEffect(() => {
     loadClients();
-    getSettings().then(r => { if (r?.settings) setSiteSettings(r.settings); }).catch(() => {});
+    getPublicSettings().then(r => { if (r) setSiteSettings(r); }).catch(() => {});
   }, []);
 
   useEffect(() => {

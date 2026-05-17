@@ -139,6 +139,9 @@ export const getMyUpgradeRequests           = ()             => get('/upgrade-re
 export const approveUpgradeRequest          = (id)           => put(`/upgrade-requests/${id}/approve`, {}, true);
 export const rejectUpgradeRequest           = (id, reason)   => put(`/upgrade-requests/${id}/reject`, { reason }, true);
 
+// ─── Public settings (no auth required — pricing / payment for upgrade modals) ─
+export const getPublicSettings = ()           => get('/admin/public-settings');
+
 // ─── Admin ────────────────────────────────────────────────────
 export const getAdminStats     = ()           => get('/admin/stats',     true);
 export const getSettings       = ()           => get('/admin/settings',  true);
