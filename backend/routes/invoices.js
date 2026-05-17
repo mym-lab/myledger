@@ -60,24 +60,32 @@ function generateInvoiceNumber(clientId, prefix = 'INV') {
 }
 
 function calcTotals(items, vatType = 'vatable') {
-  // Each line can override with its own line_vat_type.
-  // 'reimbursement' lines carry 0% VAT; everything else inherits the invoice-level vatType.
-  let subtotal   = 0;
-  let vat_amount = 0;
+  // subtotal           = VATable services only  → recognized as REVENUE in P&L
+  // reimbursement_total = pass-through lines    → NOT revenue, not taxable income
+  // vat_amount         = 12% on subtotal only
+  // total              = subtotal + vat_amount + reimbursement_total (what customer pays)
+  let subtotal            = 0;
+  let reimbursement_total = 0;
+  let vat_amount          = 0;
 
   for (const item of items) {
     const lineAmt     = Math.round((item.quantity || 1) * (item.unit_price || 0) * 100) / 100;
     const lineVatType = item.line_vat_type || vatType;
-    subtotal  += lineAmt;
-    if (lineVatType === 'vatable') {
+
+    if (lineVatType === 'reimbursement') {
+      reimbursement_total += lineAmt;
+    } else {
+      subtotal   += lineAmt;
       vat_amount += Math.round(lineAmt * 0.12 * 100) / 100;
     }
   }
 
-  subtotal   = Math.round(subtotal   * 100) / 100;
-  vat_amount = Math.round(vat_amount * 100) / 100;
-  const total = Math.round((subtotal + vat_amount) * 100) / 100;
-  return { subtotal, vat_amount, total };
+  subtotal            = Math.round(subtotal            * 100) / 100;
+  reimbursement_total = Math.round(reimbursement_total * 100) / 100;
+  vat_amount          = Math.round(vat_amount          * 100) / 100;
+  const total         = Math.round((subtotal + vat_amount + reimbursement_total) * 100) / 100;
+
+  return { subtotal, reimbursement_total, vat_amount, total };
 }
 
 // Verify the requesting user can access the given client record
@@ -189,7 +197,7 @@ router.post('/', (req, res) => {
       return res.status(403).json({ error: 'Forbidden' });
     }
 
-    const { subtotal, vat_amount, total } = calcTotals(items, vat_type);
+    const { subtotal, reimbursement_total, vat_amount, total } = calcTotals(items, vat_type);
     const invoiceNumber = generateInvoiceNumber(targetClientId, invoice_prefix);
     const shareToken    = generateShareToken();
     const id  = uuidv4();
@@ -200,14 +208,14 @@ router.post('/', (req, res) => {
         id, client_id, invoice_number, invoice_prefix,
         customer_name, customer_email, customer_address, customer_tin,
         issue_date, due_date, payment_terms, notes, vat_type,
-        subtotal, vat_amount, total,
+        subtotal, reimbursement_total, vat_amount, total,
         share_token, status, created_by, created_at, updated_at
-      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'draft', ?, ?, ?)
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'draft', ?, ?, ?)
     `).run(
       id, targetClientId, invoiceNumber, invoice_prefix,
       customer_name, customer_email, customer_address, customer_tin,
       issue_date || now.slice(0, 10), due_date, payment_terms, notes, vat_type,
-      subtotal, vat_amount, total,
+      subtotal, reimbursement_total, vat_amount, total,
       shareToken, req.userId, now, now
     );
 
@@ -251,14 +259,14 @@ router.put('/:id', (req, res) => {
       issue_date, due_date, payment_terms, notes, vat_type, items,
     } = req.body;
 
-    const { subtotal, vat_amount, total } = calcTotals(items || [], vat_type || invoice.vat_type);
+    const { subtotal, reimbursement_total, vat_amount, total } = calcTotals(items || [], vat_type || invoice.vat_type);
     const now = new Date().toISOString();
 
     db.prepare(`
       UPDATE invoices SET
         customer_name = ?, customer_email = ?, customer_address = ?, customer_tin = ?,
         issue_date = ?, due_date = ?, payment_terms = ?, notes = ?, vat_type = ?,
-        subtotal = ?, vat_amount = ?, total = ?, updated_at = ?
+        subtotal = ?, reimbursement_total = ?, vat_amount = ?, total = ?, updated_at = ?
       WHERE id = ?
     `).run(
       customer_name    ?? invoice.customer_name,
@@ -270,7 +278,7 @@ router.put('/:id', (req, res) => {
       payment_terms    || invoice.payment_terms,
       notes            ?? invoice.notes,
       vat_type         || invoice.vat_type,
-      subtotal, vat_amount, total, now,
+      subtotal, reimbursement_total, vat_amount, total, now,
       req.params.id
     );
 
@@ -338,7 +346,11 @@ router.post('/:id/pay', (req, res) => {
     const paidAt = payment_date ? `${payment_date}T00:00:00.000Z` : now;
     const txId   = uuidv4();
 
-    // Auto-create income transaction (matches v10-clean transactions schema)
+    // Auto-create income transaction.
+    // amount_net   = VATable services subtotal ONLY (reimbursements excluded → not taxable income)
+    // amount_vat   = VAT on services only
+    // amount_gross = subtotal + vat (cash collected for services; reimbursement is a pass-through)
+    const serviceGross = Math.round((invoice.subtotal + invoice.vat_amount) * 100) / 100;
     db.prepare(`
       INSERT INTO transactions (
         id, client_id, user_id, type, description, category,
@@ -354,9 +366,9 @@ router.post('/:id/pay', (req, res) => {
       invoice.vat_type,
       settlement,
       invoice.invoice_number,
-      invoice.subtotal,
+      invoice.subtotal,       // ← VATable services only, NOT inflated by reimbursements
       invoice.vat_amount,
-      invoice.total,
+      serviceGross,           // ← subtotal + VAT only (reimbursement excluded)
       paidAt,
       invoice.id
     );

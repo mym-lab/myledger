@@ -282,6 +282,8 @@ try { db.exec("ALTER TABLE users ADD COLUMN reset_token_expires TEXT"); }
 catch (_) { /* column already exists */ }
 try { db.exec("ALTER TABLE invoice_items ADD COLUMN line_vat_type TEXT NOT NULL DEFAULT 'vatable'"); }
 catch (_) { /* column already exists */ }
+try { db.exec("ALTER TABLE invoices ADD COLUMN reimbursement_total REAL NOT NULL DEFAULT 0"); }
+catch (_) { /* column already exists */ }
 
 // ── Default settings bootstrap ────────────────────────────────────────────────
 const DEFAULT_SETTINGS = {

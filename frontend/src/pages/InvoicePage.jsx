@@ -171,15 +171,21 @@ export default function InvoicePage() {
 
             {/* Totals */}
             <div style={{ marginTop: 16, display: 'flex', justifyContent: 'flex-end' }}>
-              <div style={{ width: 280 }}>
+              <div style={{ width: 300 }}>
                 <div style={{ display: 'flex', justifyContent: 'space-between', padding: '8px 0', borderBottom: '1px solid #f3f4f6', fontSize: 13, color: '#6b7280' }}>
-                  <span>Subtotal (NET)</span>
+                  <span>Services Subtotal (NET)</span>
                   <span style={{ fontWeight: 600, color: '#111827' }}>₱{Number(invoice.subtotal).toLocaleString('en-PH', { minimumFractionDigits: 2 })}</span>
                 </div>
                 <div style={{ display: 'flex', justifyContent: 'space-between', padding: '8px 0', borderBottom: '1px solid #f3f4f6', fontSize: 13, color: '#6b7280' }}>
                   <span>VAT (12%)</span>
                   <span style={{ fontWeight: 600, color: '#C9A84C' }}>₱{Number(invoice.vat_amount).toLocaleString('en-PH', { minimumFractionDigits: 2 })}</span>
                 </div>
+                {Number(invoice.reimbursement_total) > 0 && (
+                  <div style={{ display: 'flex', justifyContent: 'space-between', padding: '8px 0', borderBottom: '1px solid #f3f4f6', fontSize: 13, color: '#6b7280' }}>
+                    <span>Reimbursements (pass-through)</span>
+                    <span style={{ fontWeight: 600, color: '#92400e' }}>₱{Number(invoice.reimbursement_total).toLocaleString('en-PH', { minimumFractionDigits: 2 })}</span>
+                  </div>
+                )}
                 <div style={{ display: 'flex', justifyContent: 'space-between', padding: '12px 0', fontSize: 16, fontWeight: 800, color: '#111827' }}>
                   <span>Total Due</span>
                   <span>₱{Number(invoice.total).toLocaleString('en-PH', { minimumFractionDigits: 2 })}</span>
