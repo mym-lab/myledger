@@ -6,7 +6,7 @@
 
 import express from 'express';
 import cors from 'cors';
-import { existsSync } from 'fs';
+import { existsSync, copyFileSync } from 'fs';
 import { join, dirname } from 'path';
 import { fileURLToPath } from 'url';
 
@@ -65,6 +65,25 @@ app.use('/api/ocr',              ocrRoutes);
 app.use('/api/invitations',      invitationRoutes);
 app.use('/api/referrals',        referralRoutes);
 app.use('/api/invoices',         invoiceRoutes);
+
+// ─── One-time DB migration helper ────────────────────────────
+// Call GET /api/migrate-db once after switching to a volume-backed DB_PATH.
+// Copies old local DB → new volume path, then restarts so the app reloads it.
+app.get('/api/migrate-db', (req, res) => {
+  const oldPath = join(__dirname, 'myledger.db');
+  const newPath = process.env.DB_PATH;
+  if (!newPath || newPath === oldPath)
+    return res.json({ ok: false, reason: 'DB_PATH not set or already same path' });
+  if (!existsSync(oldPath))
+    return res.json({ ok: false, reason: `Old DB not found at ${oldPath} — data may already be gone` });
+  try {
+    copyFileSync(oldPath, newPath);
+    res.json({ ok: true, message: `Copied ${oldPath} → ${newPath}. Server restarting…` });
+    setTimeout(() => process.exit(0), 400); // Railway auto-restarts the process
+  } catch (e) {
+    res.json({ ok: false, reason: e.message });
+  }
+});
 
 // ─── Health Check ─────────────────────────────────────────────
 app.get('/api/health', (req, res) => {
