@@ -53,6 +53,8 @@ export const createClient      = (data)       => post('/clients', data, true);
 export const updateClient      = (id, data)   => put(`/clients/${id}`, data, true);
 export const deleteClient      = (id)         => del(`/clients/${id}`, true);
 export const backupClient      = (id)         => get(`/clients/${id}/backup`, true);
+export const restoreBackup     = (data, force = false) =>
+  post(`/clients/restore${force ? '?force=true' : ''}`, data, true);
 export const assignAccountant  = (id, email)  =>
   put(`/clients/${id}/assign-accountant`, { accountantEmail: email }, true);
 export const assignEncoder     = (id, email)  =>

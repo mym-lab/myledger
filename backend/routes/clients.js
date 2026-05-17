@@ -166,18 +166,270 @@ router.delete('/:id', (req, res, next) => {
   } catch (err) { next(err); }
 });
 
-// GET /api/clients/:id/backup
+// GET /api/clients/:id/backup  — full snapshot (all related data)
 router.get('/:id/backup', (req, res, next) => {
   try {
     const client = rowToClient(stmtClientById.get(req.params.id));
     if (!client || !canAccess(client, req.userId))
       return res.status(404).json({ error: 'Client not found' });
 
-    const transactions = stmtTxsByClient.all(req.params.id).map(rowToTx);
+    const id = req.params.id;
+
+    const transactions   = db.prepare('SELECT * FROM transactions   WHERE client_id=?').all(id);
+    const journalEntries = db.prepare('SELECT * FROM journal_entries WHERE client_id=?').all(id);
+    const assets         = db.prepare('SELECT * FROM assets          WHERE client_id=?').all(id);
+    const coa            = db.prepare('SELECT * FROM coa             WHERE client_id=?').all(id);
+    const contacts       = db.prepare('SELECT * FROM contacts        WHERE client_id=?').all(id);
+    const periods        = db.prepare('SELECT * FROM locked_periods  WHERE client_id=?').all(id);
+    const invoices       = db.prepare('SELECT * FROM invoices        WHERE client_id=?').all(id);
+    const invoiceItems   = invoices.length
+      ? db.prepare(
+          `SELECT * FROM invoice_items WHERE invoice_id IN (${invoices.map(() => '?').join(',')})`
+        ).all(...invoices.map(i => i.id))
+      : [];
+
+    const safeName = client.tradeName.replace(/[^a-zA-Z0-9]/g, '-');
     res.setHeader('Content-Type', 'application/json');
     res.setHeader('Content-Disposition',
-      `attachment; filename="myledger-${client.tradeName.replace(/\s+/g, '-')}-${Date.now()}.json"`);
-    res.json({ exportedAt: new Date().toISOString(), client, transactions });
+      `attachment; filename="myledger-backup-${safeName}-${Date.now()}.json"`);
+    res.json({
+      version:     2,
+      exportedAt:  new Date().toISOString(),
+      client,
+      transactions,
+      journalEntries,
+      assets,
+      coa,
+      contacts,
+      periods,
+      invoices,
+      invoiceItems,
+    });
+  } catch (err) { next(err); }
+});
+
+// POST /api/clients/restore  — admin only, restores a full backup JSON
+// Accepts the JSON produced by GET /api/clients/:id/backup (version 2).
+// Safe: if a client with the same ID already exists the restore is SKIPPED
+// (returns a 409) so live data is never overwritten accidentally.
+// To force-restore over existing data, pass ?force=true.
+router.post('/restore', (req, res, next) => {
+  try {
+    // Admin or owner only
+    const userRow = db.prepare('SELECT role FROM users WHERE id=?').get(req.userId);
+    if (userRow?.role !== 'admin')
+      return res.status(403).json({ error: 'Only admins can restore backups' });
+
+    const backup = req.body;
+    if (!backup?.client || !backup?.exportedAt)
+      return res.status(400).json({ error: 'Invalid backup file — missing client or exportedAt' });
+
+    const { client, transactions = [], journalEntries = [], assets = [],
+            coa = [], contacts = [], periods = [], invoices = [], invoiceItems = [] } = backup;
+
+    // Check if this client already exists
+    const existing = db.prepare('SELECT id FROM clients WHERE id=?').get(client.id);
+    if (existing && req.query.force !== 'true')
+      return res.status(409).json({
+        error: `Client "${client.tradeName}" (ID: ${client.id}) already exists. Pass ?force=true to overwrite.`,
+        clientId: client.id,
+      });
+
+    const now = new Date().toISOString();
+
+    db.exec('BEGIN');
+    try {
+      if (existing) {
+        // Force-overwrite: delete everything for this client first
+        db.prepare('DELETE FROM transactions   WHERE client_id=?').run(client.id);
+        db.prepare('DELETE FROM journal_entries WHERE client_id=?').run(client.id);
+        db.prepare('DELETE FROM assets          WHERE client_id=?').run(client.id);
+        db.prepare('DELETE FROM coa             WHERE client_id=?').run(client.id);
+        db.prepare('DELETE FROM contacts        WHERE client_id=?').run(client.id);
+        db.prepare('DELETE FROM locked_periods  WHERE client_id=?').run(client.id);
+        const oldInvoices = db.prepare('SELECT id FROM invoices WHERE client_id=?').all(client.id);
+        for (const inv of oldInvoices)
+          db.prepare('DELETE FROM invoice_items WHERE invoice_id=?').run(inv.id);
+        db.prepare('DELETE FROM invoices WHERE client_id=?').run(client.id);
+        db.prepare('DELETE FROM clients  WHERE id=?').run(client.id);
+      }
+
+      // Restore client
+      db.prepare(`
+        INSERT INTO clients (id, owner_id, accountant_id, encoder_ids, trade_name, tin, address,
+          business_type, type, tax_regime, opt_rate, birthday, subscription_tier, tax_types, created_at)
+        VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
+      `).run(
+        client.id, client.ownerId, client.accountantId || null,
+        JSON.stringify(client.encoderIds || []),
+        client.tradeName, client.tin, client.address || '',
+        client.businessType || '', client.type || 'Corporation',
+        client.taxRegime || 'vat', client.optRate || 0.03,
+        client.birthday || null, client.subscriptionTier || 'free',
+        JSON.stringify(client.taxTypes || []),
+        client.createdAt || now,
+      );
+
+      // Restore transactions
+      const txStmt = db.prepare(`
+        INSERT OR IGNORE INTO transactions
+          (id, client_id, user_id, type, description, category, account, vat_type,
+           supplier_vat_type, settlement, settlement_account, counterparty_name,
+           counterparty_tin, counterparty_address, reference_no, notes,
+           amount_net, amount_vat, amount_gross, percentage_tax, ewt_rate, ewt_amount,
+           voided_at, voided_by, void_reason, invoice_id, created_at)
+        VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
+      `);
+      for (const t of transactions) {
+        txStmt.run(
+          t.id, client.id, t.user_id || t.userId || req.userId,
+          t.type, t.description || '', t.category || '', t.account || '',
+          t.vat_type || t.vatType || 'vatable',
+          t.supplier_vat_type || t.supplierVatType || null,
+          t.settlement || 'cash', t.settlement_account || t.settlementAccount || null,
+          t.counterparty_name || t.counterpartyName || null,
+          t.counterparty_tin  || t.counterpartyTin  || null,
+          t.counterparty_address || t.counterpartyAddress || null,
+          t.reference_no || t.referenceNo || null,
+          t.notes || null,
+          t.amount_net, t.amount_vat, t.amount_gross,
+          t.percentage_tax || t.percentageTax || null,
+          t.ewt_rate || t.ewtRate || null,
+          t.ewt_amount || t.ewtAmount || null,
+          t.voided_at || t.voidedAt || null,
+          t.voided_by || t.voidedBy || null,
+          t.void_reason || t.voidReason || null,
+          t.invoice_id || t.invoiceId || null,
+          t.created_at || t.createdAt || now,
+        );
+      }
+
+      // Restore journal entries
+      const jeStmt = db.prepare(`
+        INSERT OR IGNORE INTO journal_entries (id, client_id, user_id, date, description, reference_no, entries, created_at)
+        VALUES (?,?,?,?,?,?,?,?)
+      `);
+      for (const je of journalEntries) {
+        jeStmt.run(
+          je.id, client.id, je.user_id || je.userId || req.userId,
+          je.date, je.description || '', je.reference_no || je.referenceNo || null,
+          typeof je.entries === 'string' ? je.entries : JSON.stringify(je.entries || []),
+          je.created_at || je.createdAt || now,
+        );
+      }
+
+      // Restore assets
+      const assetStmt = db.prepare(`
+        INSERT OR IGNORE INTO assets (id, client_id, name, category, cost, salvage_value, useful_life_months, start_date, status, created_at)
+        VALUES (?,?,?,?,?,?,?,?,?,?)
+      `);
+      for (const a of assets) {
+        assetStmt.run(
+          a.id, client.id, a.name, a.category || '',
+          a.cost, a.salvage_value || a.salvageValue || 0,
+          a.useful_life_months || a.usefulLifeMonths || 60,
+          a.start_date || a.startDate, a.status || 'active',
+          a.created_at || a.createdAt || now,
+        );
+      }
+
+      // Restore COA
+      const coaStmt = db.prepare(`
+        INSERT OR IGNORE INTO coa (id, client_id, code, name, category, type, normal_balance, created_at)
+        VALUES (?,?,?,?,?,?,?,?)
+      `);
+      for (const c of coa) {
+        coaStmt.run(
+          c.id, client.id, c.code, c.name, c.category || '',
+          c.type || '', c.normal_balance || c.normalBalance || 'debit',
+          c.created_at || c.createdAt || now,
+        );
+      }
+
+      // Restore contacts
+      const contactStmt = db.prepare(`
+        INSERT OR IGNORE INTO contacts (id, client_id, user_id, name, type, tin, address, phone, email, notes, created_at)
+        VALUES (?,?,?,?,?,?,?,?,?,?,?)
+      `);
+      for (const c of contacts) {
+        contactStmt.run(
+          c.id, client.id, c.user_id || c.userId || req.userId,
+          c.name, c.type || 'vendor', c.tin || null, c.address || null,
+          c.phone || null, c.email || null, c.notes || null,
+          c.created_at || c.createdAt || now,
+        );
+      }
+
+      // Restore period locks
+      const periodStmt = db.prepare(`
+        INSERT OR IGNORE INTO locked_periods (id, client_id, period, locked_by, locked_at)
+        VALUES (?,?,?,?,?)
+      `);
+      for (const p of periods) {
+        periodStmt.run(
+          p.id, client.id, p.period,
+          p.locked_by || p.lockedBy || req.userId,
+          p.locked_at || p.lockedAt || now,
+        );
+      }
+
+      // Restore invoices + items
+      const invStmt = db.prepare(`
+        INSERT OR IGNORE INTO invoices
+          (id, client_id, invoice_number, invoice_prefix, customer_name, customer_email,
+           customer_address, customer_tin, issue_date, due_date, payment_terms, notes,
+           vat_type, subtotal, vat_amount, total, reimbursement_total, status, share_token,
+           transaction_id, reversal_transaction_id, void_reason, voided_by, voided_at,
+           sent_at, paid_at, created_by, created_at, updated_at)
+        VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
+      `);
+      for (const inv of invoices) {
+        invStmt.run(
+          inv.id, client.id, inv.invoice_number, inv.invoice_prefix || 'INV',
+          inv.customer_name, inv.customer_email || '',
+          inv.customer_address || '', inv.customer_tin || '',
+          inv.issue_date, inv.due_date || '', inv.payment_terms || 'Due on Receipt',
+          inv.notes || '', inv.vat_type || 'vatable',
+          inv.subtotal || 0, inv.vat_amount || 0, inv.total || 0,
+          inv.reimbursement_total || 0,
+          inv.status || 'draft', inv.share_token || null,
+          inv.transaction_id || '', inv.reversal_transaction_id || '',
+          inv.void_reason || '', inv.voided_by || '', inv.voided_at || '',
+          inv.sent_at || '', inv.paid_at || '',
+          inv.created_by || req.userId,
+          inv.created_at || now, inv.updated_at || now,
+        );
+      }
+      const itemStmt = db.prepare(`
+        INSERT OR IGNORE INTO invoice_items (id, invoice_id, description, quantity, unit_price, amount, line_vat_type)
+        VALUES (?,?,?,?,?,?,?)
+      `);
+      for (const item of invoiceItems) {
+        itemStmt.run(
+          item.id, item.invoice_id, item.description,
+          item.quantity || 1, item.unit_price || 0, item.amount || 0,
+          item.line_vat_type || 'vatable',
+        );
+      }
+
+      db.exec('COMMIT');
+    } catch (e) {
+      db.exec('ROLLBACK');
+      throw e;
+    }
+
+    res.json({
+      message:  `Backup restored successfully for "${client.tradeName}"`,
+      clientId: client.id,
+      restored: {
+        transactions:   transactions.length,
+        journalEntries: journalEntries.length,
+        assets:         assets.length,
+        coa:            coa.length,
+        contacts:       contacts.length,
+        invoices:       invoices.length,
+      },
+    });
   } catch (err) { next(err); }
 });
 

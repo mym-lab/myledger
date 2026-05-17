@@ -10,6 +10,7 @@ import {
   saveSmtpSettings, sendTestEmail, sendBIRReminders,
   getAuditLog,
   getAllReferrals, creditReferral,
+  restoreBackup,
 } from '../api.js';
 
 const T = {
@@ -64,6 +65,90 @@ function MetricCard({ label, value, sub, color }) {
 }
 
 const TABS = ['Overview', 'Upgrade Requests', 'Referrals', 'Clients', 'Users', 'Audit Log', 'Settings'];
+
+// ── Restore Backup Button ─────────────────────────────────────────────────────
+function RestoreBackupButton({ onDone }) {
+  const [status, setStatus] = useState(null); // null | 'loading' | 'success' | 'conflict' | 'error'
+  const [msg,    setMsg]    = useState('');
+  const [pending, setPending] = useState(null); // backup data waiting for force-confirm
+
+  async function handleFile(e) {
+    const file = e.target.files[0];
+    if (!file) return;
+    e.target.value = '';
+    setStatus('loading'); setMsg('');
+    try {
+      const text = await file.text();
+      const data = JSON.parse(text);
+      if (!data.client || !data.exportedAt)
+        throw new Error('Invalid backup file — not a MyLedger backup.');
+      await doRestore(data, false);
+    } catch (err) {
+      setStatus('error');
+      setMsg(err.message || 'Restore failed');
+    }
+  }
+
+  async function doRestore(data, force) {
+    setStatus('loading'); setMsg('');
+    try {
+      const r = await restoreBackup(data, force);
+      setStatus('success');
+      setMsg(`✅ "${r.clientId ? data.client.tradeName : ''}" restored — ${r.restored?.transactions ?? 0} transactions, ${r.restored?.invoices ?? 0} invoices.`);
+      setPending(null);
+      if (onDone) onDone();
+    } catch (err) {
+      if (err.message?.includes('already exists')) {
+        setStatus('conflict');
+        setMsg(err.message);
+        setPending(data);
+      } else {
+        setStatus('error');
+        setMsg(err.message || 'Restore failed');
+      }
+    }
+  }
+
+  return (
+    <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'flex-end', gap: 6 }}>
+      <label style={{
+        display: 'inline-flex', alignItems: 'center', gap: 6, cursor: 'pointer',
+        background: '#1d1d1f', color: '#fff', fontSize: 13, fontWeight: 600,
+        padding: '8px 16px', borderRadius: 8, userSelect: 'none',
+        opacity: status === 'loading' ? 0.6 : 1,
+      }}>
+        {status === 'loading' ? '⏳ Restoring…' : '⬆ Restore Backup'}
+        <input type="file" accept=".json" onChange={handleFile}
+          style={{ display: 'none' }} disabled={status === 'loading'} />
+      </label>
+
+      {status === 'conflict' && (
+        <div style={{ background: '#fff8ec', border: '1px solid #ff9500', borderRadius: 8,
+          padding: '10px 14px', fontSize: 13, maxWidth: 380, textAlign: 'right' }}>
+          <div style={{ color: '#ff9500', fontWeight: 600, marginBottom: 6 }}>⚠ Client already exists</div>
+          <div style={{ color: '#1d1d1f', marginBottom: 10, fontSize: 12 }}>{msg}</div>
+          <div style={{ display: 'flex', gap: 8, justifyContent: 'flex-end' }}>
+            <button onClick={() => { setStatus(null); setMsg(''); setPending(null); }}
+              style={{ padding: '6px 14px', borderRadius: 6, border: '1px solid #d2d2d7',
+                background: '#fff', fontSize: 12, cursor: 'pointer' }}>Cancel</button>
+            <button onClick={() => doRestore(pending, true)}
+              style={{ padding: '6px 14px', borderRadius: 6, border: 'none',
+                background: '#ff3b30', color: '#fff', fontSize: 12, fontWeight: 600, cursor: 'pointer' }}>
+              Overwrite & Restore
+            </button>
+          </div>
+        </div>
+      )}
+
+      {(status === 'success' || status === 'error') && (
+        <div style={{ fontSize: 12, color: status === 'success' ? '#34c759' : '#ff3b30',
+          maxWidth: 380, textAlign: 'right' }}>
+          {msg}
+        </div>
+      )}
+    </div>
+  );
+}
 
 export default function CommandCenter({ onLogout }) {
   const [tab,      setTab]     = useState('Overview');
@@ -751,9 +836,12 @@ export default function CommandCenter({ onLogout }) {
         {/* ════════════ CLIENTS ════════════ */}
         {tab === 'Clients' && (
           <div>
-            <h2 style={{ margin: '0 0 22px', fontSize: 22, fontWeight: 600 }}>
-              Client Businesses ({stats?.totalClients ?? 0})
-            </h2>
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 22 }}>
+              <h2 style={{ margin: 0, fontSize: 22, fontWeight: 600 }}>
+                Client Businesses ({stats?.totalClients ?? 0})
+              </h2>
+              <RestoreBackupButton onDone={loadStats} />
+            </div>
             {!stats || stats.clients.length === 0 ? (
               <div style={{ color: T.muted, padding: 20 }}>No clients yet.</div>
             ) : (

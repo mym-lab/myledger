@@ -1176,8 +1176,10 @@ export default function ClientInterface({ onLogout }) {
 
   // Modals
   const [showTx,      setShowTx]      = useState(false);
-  const [showBiz,     setShowBiz]     = useState(false);
-  const [bizIsEdit,   setBizIsEdit]   = useState(false);
+  const [showBiz,       setShowBiz]       = useState(false);
+  const [bizIsEdit,     setBizIsEdit]     = useState(false);
+  const [showDeleteConfirm, setShowDeleteConfirm] = useState(false);
+  const [deleteConfirmText, setDeleteConfirmText] = useState('');
   const [showAssign,    setShowAssign]    = useState(false);
   const [pendingInvite, setPendingInvite] = useState(null);  // { email, expires_at } or null
   const [showPayment,   setShowPayment]   = useState(false);
@@ -1318,11 +1320,20 @@ export default function ClientInterface({ onLogout }) {
   }
 
   async function handleDeleteBiz() {
-    if (!confirm(`Delete "${active.tradeName}" and ALL transactions? Cannot be undone.`)) return;
-    await deleteClient(active.id);
-    const rest = clients.filter(c => c.id !== active.id);
-    setClients(rest); setActive(rest[0] || null);
-    setTxns([]); setIncome(null); setVatBal(null); setDL([]); setOverTxns([]);
+    // Open the confirmation modal instead of browser confirm()
+    setDeleteConfirmText('');
+    setShowDeleteConfirm(true);
+  }
+
+  async function confirmDeleteBiz() {
+    try {
+      await deleteClient(active.id);
+      const rest = clients.filter(c => c.id !== active.id);
+      setClients(rest); setActive(rest[0] || null);
+      setTxns([]); setIncome(null); setVatBal(null); setDL([]); setOverTxns([]);
+    } catch (e) { alert(e.message); }
+    setShowDeleteConfirm(false);
+    setDeleteConfirmText('');
   }
 
   async function saveBusiness(form) {
@@ -1373,6 +1384,52 @@ export default function ClientInterface({ onLogout }) {
     <div style={{ minHeight: '100vh', background: T.bg,
       fontFamily: '-apple-system, BlinkMacSystemFont, "SF Pro Display", "Helvetica Neue", sans-serif',
       color: T.text }}>
+
+      {/* ── Delete confirmation modal ── */}
+      {showDeleteConfirm && active && (
+        <div style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.5)',
+          zIndex: 2000, display: 'flex', alignItems: 'center', justifyContent: 'center', padding: 16 }}>
+          <div style={{ background: '#fff', borderRadius: 16, padding: 28, maxWidth: 420, width: '100%',
+            boxShadow: '0 8px 40px rgba(0,0,0,0.2)' }}>
+            <div style={{ fontSize: 32, marginBottom: 8, textAlign: 'center' }}>⚠️</div>
+            <h3 style={{ margin: '0 0 8px', fontSize: 18, fontWeight: 700, textAlign: 'center', color: T.red }}>
+              Delete Business?
+            </h3>
+            <p style={{ margin: '0 0 18px', fontSize: 14, color: T.muted, textAlign: 'center', lineHeight: 1.6 }}>
+              This will permanently delete <strong style={{ color: T.text }}>{active.tradeName}</strong> and{' '}
+              <strong style={{ color: T.red }}>all its transactions, reports, assets, and invoices</strong>.
+              This cannot be undone.
+            </p>
+            <p style={{ margin: '0 0 8px', fontSize: 13, fontWeight: 600, color: T.text }}>
+              Type the business name to confirm:
+            </p>
+            <input
+              value={deleteConfirmText}
+              onChange={e => setDeleteConfirmText(e.target.value)}
+              placeholder={active.tradeName}
+              style={{ width: '100%', padding: '10px 12px', borderRadius: 8, border: `1px solid ${T.border}`,
+                fontSize: 14, marginBottom: 16, boxSizing: 'border-box' }}
+              autoFocus
+            />
+            <div style={{ display: 'flex', gap: 10 }}>
+              <button onClick={() => { setShowDeleteConfirm(false); setDeleteConfirmText(''); }}
+                style={{ flex: 1, padding: '10px', borderRadius: 8, border: `1px solid ${T.border}`,
+                  background: '#fff', fontSize: 14, cursor: 'pointer' }}>
+                Cancel
+              </button>
+              <button
+                disabled={deleteConfirmText.trim() !== active.tradeName.trim()}
+                onClick={confirmDeleteBiz}
+                style={{ flex: 1, padding: '10px', borderRadius: 8, border: 'none',
+                  background: deleteConfirmText.trim() === active.tradeName.trim() ? T.red : '#ffd5d5',
+                  color: '#fff', fontSize: 14, fontWeight: 700,
+                  cursor: deleteConfirmText.trim() === active.tradeName.trim() ? 'pointer' : 'not-allowed' }}>
+                Delete Forever
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
 
       {/* ── Header ── */}
       <div style={{ background: 'rgba(255,255,255,0.88)', backdropFilter: 'blur(20px)',
