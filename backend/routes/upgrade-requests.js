@@ -9,6 +9,7 @@ import { v4 as uuid } from 'uuid';
 import jwt from 'jsonwebtoken';
 import { db, rowToClient, getSetting } from '../db.js';
 import { authenticate } from '../middleware/auth.js';
+import { sendEmail } from '../email.js';
 
 const JWT_SECRET = process.env.JWT_SECRET || 'myledger-dev-secret-change-in-prod';
 
@@ -95,6 +96,76 @@ router.post('/', authenticate, (req, res, next) => {
     });
 
     const upgradeRequest = enrichUpgrade(rowToUpgrade(stmtUpgradeById.get(id)));
+
+    // ── Notify admin by email ──────────────────────────────────────────────────
+    const submitter = stmtUserById.get(req.userId);
+    const tierLabel = targetTier.charAt(0).toUpperCase() + targetTier.slice(1);
+    const typeLabel = requestType === 'accountant' ? '🧾 Accountant' : '🏢 Client';
+    const clientName = requestType === 'client' && clientId
+      ? (rowToClient(stmtClientById.get(clientId))?.tradeName || '—')
+      : '—';
+    const prices = getSetting('accountantTierPrices') || {};
+    const priceHint = prices[targetTier] ? `₱${Number(prices[targetTier]).toLocaleString()}/mo` : '';
+
+    sendEmail({
+      to: 'mym@kaimanco.com',
+      subject: `💳 MyLedger Upgrade Request — ${typeLabel} → ${tierLabel} ${priceHint}`,
+      html: `
+        <div style="font-family:-apple-system,Arial,sans-serif;max-width:540px;margin:0 auto;padding:32px 0">
+          <div style="background:#111827;padding:20px 28px;border-radius:12px 12px 0 0;display:flex;align-items:center;gap:12px">
+            <span style="color:#fff;font-size:20px;font-weight:700">MyLedger</span>
+            <span style="color:#C9A84C;font-size:12px;font-weight:600;letter-spacing:1px">UPGRADE REQUEST</span>
+          </div>
+          <div style="background:#fff;padding:28px;border:1px solid #e5e5e7;border-radius:0 0 12px 12px">
+            <h2 style="margin:0 0 6px;font-size:20px;color:#111827">New Upgrade Request</h2>
+            <p style="margin:0 0 24px;color:#6b7280;font-size:14px">A payment notification has been submitted and is waiting for your approval.</p>
+
+            <table style="width:100%;border-collapse:collapse;font-size:14px;margin-bottom:24px">
+              <tr style="border-bottom:1px solid #f3f4f6">
+                <td style="padding:10px 0;color:#6b7280;width:140px">Type</td>
+                <td style="padding:10px 0;font-weight:600;color:#111827">${typeLabel}</td>
+              </tr>
+              <tr style="border-bottom:1px solid #f3f4f6">
+                <td style="padding:10px 0;color:#6b7280">Submitted by</td>
+                <td style="padding:10px 0;font-weight:600;color:#111827">${submitter?.name || ''} &lt;${submitter?.email || '—'}&gt;</td>
+              </tr>
+              ${clientName !== '—' ? `
+              <tr style="border-bottom:1px solid #f3f4f6">
+                <td style="padding:10px 0;color:#6b7280">Client</td>
+                <td style="padding:10px 0;font-weight:600;color:#111827">${clientName}</td>
+              </tr>` : ''}
+              <tr style="border-bottom:1px solid #f3f4f6">
+                <td style="padding:10px 0;color:#6b7280">Target Plan</td>
+                <td style="padding:10px 0;font-weight:700;color:#0071e3">${tierLabel} ${priceHint}</td>
+              </tr>
+              <tr style="border-bottom:1px solid #f3f4f6">
+                <td style="padding:10px 0;color:#6b7280">Payment Method</td>
+                <td style="padding:10px 0;font-weight:600;color:#111827;text-transform:uppercase">${method}</td>
+              </tr>
+              <tr style="border-bottom:1px solid #f3f4f6">
+                <td style="padding:10px 0;color:#6b7280">Reference No.</td>
+                <td style="padding:10px 0;font-weight:700;color:#111827;font-family:monospace;font-size:15px">${refNo}</td>
+              </tr>
+              <tr>
+                <td style="padding:10px 0;color:#6b7280">Amount Declared</td>
+                <td style="padding:10px 0;font-weight:700;color:#15803d;font-size:16px">₱${Number(amount || 0).toLocaleString()}</td>
+              </tr>
+            </table>
+
+            <a href="https://app.kaimanco.com/admin"
+              style="display:inline-block;background:#111827;color:#fff;text-decoration:none;padding:12px 28px;border-radius:9px;font-size:14px;font-weight:700">
+              Review in Admin Console →
+            </a>
+
+            <p style="margin:20px 0 0;font-size:12px;color:#9ca3af">
+              Verify the payment via ${method.toUpperCase()} before approving. Reference: <strong>${refNo}</strong>
+            </p>
+          </div>
+        </div>`,
+      text: `New MyLedger Upgrade Request\n\nType: ${typeLabel}\nSubmitted by: ${submitter?.email}\nClient: ${clientName}\nTarget Plan: ${tierLabel} ${priceHint}\nPayment: ${method.toUpperCase()} — Ref: ${refNo}\nAmount: ₱${Number(amount || 0).toLocaleString()}\n\nReview at: https://app.kaimanco.com/admin`,
+    }).catch(e => console.error('Upgrade notify email failed:', e.message));
+    // ──────────────────────────────────────────────────────────────────────────
+
     res.status(201).json({ upgradeRequest });
   } catch (err) { next(err); }
 });
