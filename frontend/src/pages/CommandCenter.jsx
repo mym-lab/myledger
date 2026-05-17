@@ -1138,8 +1138,8 @@ export default function CommandCenter({ onLogout }) {
                   {[
                     { key: 'solo',         label: 'Solo',         color: '#0071e3', desc: 'Up to 5 clients' },
                     { key: 'professional', label: 'Professional', color: '#ff9500', desc: 'Up to 15 clients' },
-                    { key: 'firm',         label: 'Firm',         color: '#34c759', desc: 'Unlimited clients' },
-                    { key: 'agency',       label: 'Agency',       color: '#af52de', desc: 'Unlimited + white-label' },
+                    { key: 'firm',         label: 'Firm',         color: '#34c759', desc: 'Up to 50 clients' },
+                    { key: 'agency',       label: 'Agency',       color: '#af52de', desc: 'Up to 100 clients + white-label' },
                   ].map(({ key, label, color, desc }) => (
                     <div key={key}>
                       <label style={{ display: 'flex', flexDirection: 'column', marginBottom: 6 }}>
@@ -1265,8 +1265,8 @@ export default function CommandCenter({ onLogout }) {
                 {[
                   { key: 'solo',         label: 'Solo',         color: '#0071e3', clients: '5 clients',              desc: 'All portal features' },
                   { key: 'professional', label: 'Professional', color: '#ff9500', clients: '15 clients',             desc: 'All features + priority support' },
-                  { key: 'firm',         label: 'Firm',         color: '#34c759', clients: 'Unlimited clients',      desc: 'All features + multi-user' },
-                  { key: 'agency',       label: 'Agency',       color: '#af52de', clients: 'Unlimited + white-label', desc: 'Full branding & firm customization' },
+                  { key: 'firm',         label: 'Firm',         color: '#34c759', clients: 'Up to 50 clients',          desc: 'All features + multi-user' },
+                  { key: 'agency',       label: 'Agency',       color: '#af52de', clients: 'Up to 100 clients',        desc: 'Full branding & firm customization (+ Rolling Forecast & Comparative — Phase 2)' },
                 ].map(({ key, label, color, clients, desc }) => (
                   <div key={key} style={{ flex: 1, minWidth: 160, borderRadius: 12, padding: '16px',
                     border: `2px solid ${color}`, background: `${color}06` }}>

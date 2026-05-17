@@ -1468,14 +1468,29 @@ export default function AccountantPortal({ onLogout }) {
                       padding: '2px 8px', borderRadius: 6 }}>ACCOUNTANT</span>
                   </>
                 )}
-                <span style={{
-                  background: tierInfo.color + (accountantTier === 'free' ? '00' : ''),
-                  color: accountantTier === 'free' ? T.muted : '#fff',
-                  fontSize: 10, fontWeight: 700, padding: '2px 8px', borderRadius: 6,
-                  textTransform: 'uppercase', letterSpacing: '0.4px',
-                  border: accountantTier === 'free' ? `1px solid ${T.border}` : 'none',
-                  background: accountantTier === 'free' ? T.bg : (accentOverride && isAgency ? accentOverride : tierInfo.color),
-                }}>{tierInfo.label}</span>
+                <span
+                  onClick={accountantTier !== 'agency' ? () => {
+                    // Pre-select next tier up from current
+                    const order = ['free','solo','professional','firm','agency'];
+                    const nextIdx = Math.min(order.indexOf(accountantTier) + 1, order.length - 1);
+                    setUpgradeTarget(order[nextIdx]);
+                    setShowUpgrade(true);
+                  } : undefined}
+                  title={accountantTier !== 'agency' ? 'Click to upgrade plan' : tierInfo.label}
+                  style={{
+                    fontSize: 10, fontWeight: 700, padding: '2px 8px', borderRadius: 6,
+                    textTransform: 'uppercase', letterSpacing: '0.4px',
+                    border: accountantTier === 'free' ? `1px solid ${T.border}` : 'none',
+                    background: accountantTier === 'free' ? T.bg : (accentOverride && isAgency ? accentOverride : tierInfo.color),
+                    color: accountantTier === 'free' ? T.muted : '#fff',
+                    cursor: accountantTier !== 'agency' ? 'pointer' : 'default',
+                    transition: 'opacity .15s',
+                  }}
+                  onMouseEnter={e => { if (accountantTier !== 'agency') e.currentTarget.style.opacity = '0.75'; }}
+                  onMouseLeave={e => { e.currentTarget.style.opacity = '1'; }}
+                >
+                  {tierInfo.label}{accountantTier !== 'agency' ? ' ↑' : ''}
+                </span>
               </div>
               {clients.length > 0 && (
                 <>
