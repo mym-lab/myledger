@@ -6,6 +6,7 @@
 
 import { useState, useEffect, useRef } from 'react';
 import { useMobile } from '../hooks/useMobile.js';
+import { InvoicesTab } from '../components/InvoiceModal.jsx';
 import {
   getClients,
   getTransactions, createTransaction, voidTransaction,
@@ -952,7 +953,7 @@ function computeOPT(transactions, client, year, month, isQuarterly) {
   return { grossSales, optRate, percentageTax, txCount: filtered.length };
 }
 
-const TABS = ['Dashboard', 'Transactions', 'Journal Entries', 'Trial Balance', 'Books', 'General Journal', 'General Ledger', 'COA', 'Period Lock', 'Audit Log', 'BIR Returns', 'Alphalist', 'SLSP', 'Income Statement', 'Balance Sheet', 'Cash Flow', 'Assets', 'Contacts', 'BIR Reminders', 'Referral'];
+const TABS = ['Dashboard', 'Transactions', 'Invoices', 'Journal Entries', 'Trial Balance', 'Books', 'General Journal', 'General Ledger', 'COA', 'Period Lock', 'Audit Log', 'BIR Returns', 'Alphalist', 'SLSP', 'Income Statement', 'Balance Sheet', 'Cash Flow', 'Assets', 'Contacts', 'BIR Reminders', 'Referral'];
 
 const BOOKS_COLUMNS = {
   sales: ['Date','Ref / OR No.','Customer','Description','Gross Sales','Output VAT','Net Sales'],
@@ -3575,6 +3576,11 @@ export default function AccountantPortal({ onLogout }) {
               </Card>
             )}
           </div>
+        )}
+
+        {/* ══════════ INVOICES ══════════ */}
+        {tab === 'Invoices' && active && (
+          <InvoicesTab clientId={active.id} isAccountant={true} />
         )}
 
         {/* ══════════ REFERRAL ══════════ */}

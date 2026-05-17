@@ -191,6 +191,17 @@ export const getMyReferrals    = ()           => get('/referrals/me', true);
 export const getAllReferrals    = ()           => get('/referrals/list', true);
 export const creditReferral    = (id)         => post(`/referrals/credit/${id}`, {}, true);
 
+// ─── Invoices ────────────────────────────────────────────────
+export const getInvoices       = (clientId)        => get(`/invoices?client_id=${clientId}`, true);
+export const getInvoice        = (id)              => get(`/invoices/${id}`, true);
+export const createInvoice     = (data)            => post('/invoices', data, true);
+export const updateInvoice     = (id, data)        => put(`/invoices/${id}`, data, true);
+export const markInvoiceSent   = (id)              => post(`/invoices/${id}/send`, {}, true);
+export const markInvoicePaid   = (id, settlement, payment_date) =>
+  post(`/invoices/${id}/pay`, { settlement, payment_date }, true);
+export const voidInvoice       = (id, void_reason) => post(`/invoices/${id}/void`, { void_reason }, true);
+export const deleteInvoice     = (id)              => del(`/invoices/${id}`, true);
+
 // ─── Health ───────────────────────────────────────────────────
 export const healthCheck       = ()           => get('/health');
 

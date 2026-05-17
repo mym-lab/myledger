@@ -210,12 +210,63 @@ CREATE TABLE IF NOT EXISTS referrals (
   created_at   TEXT NOT NULL
 );
 CREATE INDEX IF NOT EXISTS idx_ref_referrer ON referrals(referrer_id);
+
+CREATE TABLE IF NOT EXISTS invoices (
+  id                      TEXT PRIMARY KEY,
+  client_id               TEXT NOT NULL,
+  invoice_number          TEXT NOT NULL UNIQUE,
+  invoice_prefix          TEXT DEFAULT 'INV',
+  customer_name           TEXT NOT NULL,
+  customer_email          TEXT DEFAULT '',
+  customer_address        TEXT DEFAULT '',
+  customer_tin            TEXT DEFAULT '',
+  issue_date              TEXT NOT NULL,
+  due_date                TEXT DEFAULT '',
+  payment_terms           TEXT DEFAULT 'Due on Receipt',
+  notes                   TEXT DEFAULT '',
+  vat_type                TEXT DEFAULT 'vatable',
+  subtotal                REAL DEFAULT 0,
+  vat_amount              REAL DEFAULT 0,
+  total                   REAL DEFAULT 0,
+  status                  TEXT DEFAULT 'draft',
+  share_token             TEXT UNIQUE,
+  transaction_id          TEXT DEFAULT '',
+  reversal_transaction_id TEXT DEFAULT '',
+  void_reason             TEXT DEFAULT '',
+  voided_by               TEXT DEFAULT '',
+  voided_at               TEXT DEFAULT '',
+  sent_at                 TEXT DEFAULT '',
+  paid_at                 TEXT DEFAULT '',
+  created_by              TEXT NOT NULL,
+  created_at              TEXT DEFAULT (datetime('now')),
+  updated_at              TEXT DEFAULT (datetime('now'))
+);
+CREATE INDEX IF NOT EXISTS idx_inv_client ON invoices(client_id);
+
+CREATE TABLE IF NOT EXISTS invoice_items (
+  id          TEXT PRIMARY KEY,
+  invoice_id  TEXT NOT NULL,
+  description TEXT NOT NULL,
+  quantity    REAL DEFAULT 1,
+  unit_price  REAL DEFAULT 0,
+  amount      REAL DEFAULT 0,
+  FOREIGN KEY (invoice_id) REFERENCES invoices(id)
+);
+
+CREATE TABLE IF NOT EXISTS invoice_sequences (
+  client_id   TEXT NOT NULL,
+  year        INTEGER NOT NULL,
+  last_number INTEGER DEFAULT 0,
+  PRIMARY KEY (client_id, year)
+);
 `);
 
 // ── Column migrations — add columns that were missing in earlier versions ──────
 try { db.exec("ALTER TABLE clients ADD COLUMN tax_types TEXT NOT NULL DEFAULT '[]'"); }
 catch (_) { /* column already exists — safe to ignore */ }
 try { db.exec("ALTER TABLE users ADD COLUMN referral_code TEXT"); }
+catch (_) { /* column already exists */ }
+try { db.exec("ALTER TABLE transactions ADD COLUMN invoice_id TEXT DEFAULT ''"); }
 catch (_) { /* column already exists */ }
 try { db.exec("ALTER TABLE users ADD COLUMN referral_balance REAL NOT NULL DEFAULT 0"); }
 catch (_) { /* column already exists */ }

@@ -4,6 +4,7 @@
 
 import { useState, useEffect, useRef } from 'react';
 import { useMobile } from '../hooks/useMobile.js';
+import { InvoicesTab } from '../components/InvoiceModal.jsx';
 import {
   getClients, createClient, updateClient, deleteClient, backupClient,
   getTransactions, createTransaction, voidTransaction,
@@ -1100,7 +1101,7 @@ function LapsingModal({ data, onClose }) {
   );
 }
 
-const TABS = ['Overview', 'Transactions', 'Income Statement', 'Balance Sheet', 'Cash Flow', 'Books', 'Assets', 'BIR Reminders', 'Referral', 'Business Setup'];
+const TABS = ['Overview', 'Transactions', 'Invoices', 'Income Statement', 'Balance Sheet', 'Cash Flow', 'Books', 'Assets', 'BIR Reminders', 'Referral', 'Business Setup'];
 // Minimum tier required per tab (undefined = always accessible)
 const TAB_TIER = {
   'BIR Reminders':   'starter',
@@ -2104,6 +2105,11 @@ export default function ClientInterface({ onLogout }) {
               </Card>
             )}
           </div>
+        )}
+
+        {/* ══════════ INVOICES ══════════ */}
+        {tab === 'Invoices' && active && (
+          <InvoicesTab clientId={active.id} isAccountant={false} />
         )}
 
         {/* ══════════ REFERRAL ══════════ */}

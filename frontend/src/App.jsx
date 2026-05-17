@@ -15,6 +15,7 @@ import EncoderPortal     from './pages/EncoderPortal.jsx';
 import CommandCenter     from './pages/CommandCenter.jsx';
 import AuthScreen        from './pages/AuthScreen.jsx';
 import OnboardingWizard  from './pages/OnboardingWizard.jsx';
+import InvoicePage       from './pages/InvoicePage.jsx';
 
 // Returns true if this user has already completed onboarding
 function hasOnboarded(userId) {
@@ -83,6 +84,11 @@ export default function App() {
     localStorage.removeItem('ml_user');
     setToken(''); setUser(null);
     window.location.href = '/';
+  }
+
+  // ── Public invoice view — no auth required ──
+  if (PATH.startsWith('/invoice/')) {
+    return <InvoicePage />;
   }
 
   // ── Admin path — no auth required (MVP) ──
