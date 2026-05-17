@@ -60,10 +60,24 @@ function generateInvoiceNumber(clientId, prefix = 'INV') {
 }
 
 function calcTotals(items, vatType = 'vatable') {
-  const subtotal   = items.reduce((sum, i) => sum + (i.quantity * i.unit_price), 0);
-  const vat_amount = vatType === 'vatable' ? Math.round(subtotal * 0.12 * 100) / 100 : 0;
-  const total      = Math.round((subtotal + vat_amount) * 100) / 100;
-  return { subtotal: Math.round(subtotal * 100) / 100, vat_amount, total };
+  // Each line can override with its own line_vat_type.
+  // 'reimbursement' lines carry 0% VAT; everything else inherits the invoice-level vatType.
+  let subtotal   = 0;
+  let vat_amount = 0;
+
+  for (const item of items) {
+    const lineAmt     = Math.round((item.quantity || 1) * (item.unit_price || 0) * 100) / 100;
+    const lineVatType = item.line_vat_type || vatType;
+    subtotal  += lineAmt;
+    if (lineVatType === 'vatable') {
+      vat_amount += Math.round(lineAmt * 0.12 * 100) / 100;
+    }
+  }
+
+  subtotal   = Math.round(subtotal   * 100) / 100;
+  vat_amount = Math.round(vat_amount * 100) / 100;
+  const total = Math.round((subtotal + vat_amount) * 100) / 100;
+  return { subtotal, vat_amount, total };
 }
 
 // Verify the requesting user can access the given client record
@@ -198,15 +212,16 @@ router.post('/', (req, res) => {
     );
 
     const insertItem = db.prepare(`
-      INSERT INTO invoice_items (id, invoice_id, description, quantity, unit_price, amount)
-      VALUES (?, ?, ?, ?, ?, ?)
+      INSERT INTO invoice_items (id, invoice_id, description, quantity, unit_price, amount, line_vat_type)
+      VALUES (?, ?, ?, ?, ?, ?, ?)
     `);
     for (const item of items) {
       insertItem.run(
         uuidv4(), id, item.description,
-        item.quantity   || 1,
-        item.unit_price || 0,
-        Math.round((item.quantity || 1) * (item.unit_price || 0) * 100) / 100
+        item.quantity     || 1,
+        item.unit_price   || 0,
+        Math.round((item.quantity || 1) * (item.unit_price || 0) * 100) / 100,
+        item.line_vat_type || 'vatable'
       );
     }
 

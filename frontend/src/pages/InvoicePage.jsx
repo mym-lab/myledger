@@ -148,14 +148,24 @@ export default function InvoicePage() {
                 </tr>
               </thead>
               <tbody>
-                {(invoice.items || []).map((item, i) => (
-                  <tr key={item.id || i} style={{ borderBottom: '1px solid #f3f4f6' }}>
-                    <td style={{ padding: '12px 16px', fontSize: 13, color: '#374151' }}>{item.description}</td>
-                    <td style={{ padding: '12px 16px', fontSize: 13, color: '#374151', textAlign: 'center' }}>{item.quantity}</td>
-                    <td style={{ padding: '12px 16px', fontSize: 13, color: '#374151', textAlign: 'right' }}>₱{Number(item.unit_price).toLocaleString('en-PH', { minimumFractionDigits: 2 })}</td>
-                    <td style={{ padding: '12px 16px', fontSize: 13, fontWeight: 600, color: '#111827', textAlign: 'right' }}>₱{Number(item.amount).toLocaleString('en-PH', { minimumFractionDigits: 2 })}</td>
-                  </tr>
-                ))}
+                {(invoice.items || []).map((item, i) => {
+                  const isReim = item.line_vat_type === 'reimbursement';
+                  return (
+                    <tr key={item.id || i} style={{ borderBottom: '1px solid #f3f4f6', background: isReim ? '#fffbeb' : 'transparent' }}>
+                      <td style={{ padding: '12px 16px', fontSize: 13, color: '#374151' }}>
+                        {item.description}
+                        {isReim && (
+                          <span style={{ marginLeft: 8, fontSize: 10, fontWeight: 700, background: '#fef3c7', color: '#92400e', borderRadius: 10, padding: '2px 8px', textTransform: 'uppercase', letterSpacing: 0.5 }}>
+                            Reimbursement
+                          </span>
+                        )}
+                      </td>
+                      <td style={{ padding: '12px 16px', fontSize: 13, color: '#374151', textAlign: 'center' }}>{item.quantity}</td>
+                      <td style={{ padding: '12px 16px', fontSize: 13, color: '#374151', textAlign: 'right' }}>₱{Number(item.unit_price).toLocaleString('en-PH', { minimumFractionDigits: 2 })}</td>
+                      <td style={{ padding: '12px 16px', fontSize: 13, fontWeight: 600, color: '#111827', textAlign: 'right' }}>₱{Number(item.amount).toLocaleString('en-PH', { minimumFractionDigits: 2 })}</td>
+                    </tr>
+                  );
+                })}
               </tbody>
             </table>
 

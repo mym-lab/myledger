@@ -45,7 +45,7 @@ function StatusBadge({ status }) {
 export function InvoiceFormModal({ clientId, invoice, onClose, onSaved }) {
   const isEdit = !!invoice;
 
-  const emptyItem = () => ({ key: Date.now() + Math.random(), description: '', quantity: 1, unit_price: 0 });
+  const emptyItem = () => ({ key: Date.now() + Math.random(), description: '', quantity: 1, unit_price: 0, line_vat_type: 'vatable' });
 
   const [form, setForm] = useState({
     customer_name:    invoice?.customer_name    || '',
@@ -59,7 +59,7 @@ export function InvoiceFormModal({ clientId, invoice, onClose, onSaved }) {
     vat_type:         invoice?.vat_type         || 'vatable',
     invoice_prefix:   invoice?.invoice_prefix   || 'INV',
     items: invoice?.items?.length
-      ? invoice.items.map(i => ({ ...i, key: i.id || Math.random() }))
+      ? invoice.items.map(i => ({ ...i, key: i.id || Math.random(), line_vat_type: i.line_vat_type || 'vatable' }))
       : [emptyItem()],
   });
   const [saving, setSaving] = useState(false);
@@ -81,10 +81,18 @@ export function InvoiceFormModal({ clientId, invoice, onClose, onSaved }) {
     setForm(f => ({ ...f, items: f.items.filter((_, i) => i !== idx) }));
   }
 
-  // Live totals
-  const subtotal  = form.items.reduce((s, i) => s + (parseFloat(i.quantity) || 0) * (parseFloat(i.unit_price) || 0), 0);
-  const vatAmount = form.vat_type === 'vatable' ? Math.round(subtotal * 0.12 * 100) / 100 : 0;
-  const total     = Math.round((subtotal + vatAmount) * 100) / 100;
+  // Live totals — per-line VAT awareness
+  let subtotal  = 0;
+  let vatAmount = 0;
+  for (const i of form.items) {
+    const lineAmt     = (parseFloat(i.quantity) || 0) * (parseFloat(i.unit_price) || 0);
+    const lineVatType = i.line_vat_type || form.vat_type;
+    subtotal  += lineAmt;
+    if (lineVatType === 'vatable') vatAmount += lineAmt * 0.12;
+  }
+  subtotal  = Math.round(subtotal  * 100) / 100;
+  vatAmount = Math.round(vatAmount * 100) / 100;
+  const total = Math.round((subtotal + vatAmount) * 100) / 100;
 
   async function handleSubmit(e) {
     e.preventDefault();
@@ -98,9 +106,10 @@ export function InvoiceFormModal({ clientId, invoice, onClose, onSaved }) {
         items: form.items
           .filter(i => i.description.trim())
           .map(i => ({
-            description: i.description,
-            quantity:    parseFloat(i.quantity) || 1,
-            unit_price:  parseFloat(i.unit_price) || 0,
+            description:   i.description,
+            quantity:      parseFloat(i.quantity) || 1,
+            unit_price:    parseFloat(i.unit_price) || 0,
+            line_vat_type: i.line_vat_type || 'vatable',
           })),
       };
       if (isEdit) {
@@ -201,17 +210,19 @@ export function InvoiceFormModal({ clientId, invoice, onClose, onSaved }) {
             <thead>
               <tr style={{ background: '#f5f5f7' }}>
                 <th style={{ padding: '8px 10px', fontSize: 11, fontWeight: 600, color: T.muted, textAlign: 'left' }}>Description</th>
-                <th style={{ padding: '8px 10px', fontSize: 11, fontWeight: 600, color: T.muted, textAlign: 'center', width: 70 }}>Qty</th>
-                <th style={{ padding: '8px 10px', fontSize: 11, fontWeight: 600, color: T.muted, textAlign: 'right', width: 120 }}>Unit Price</th>
-                <th style={{ padding: '8px 10px', fontSize: 11, fontWeight: 600, color: T.muted, textAlign: 'right', width: 110 }}>Amount</th>
-                <th style={{ width: 32 }}></th>
+                <th style={{ padding: '8px 10px', fontSize: 11, fontWeight: 600, color: T.muted, textAlign: 'center', width: 60 }}>Qty</th>
+                <th style={{ padding: '8px 10px', fontSize: 11, fontWeight: 600, color: T.muted, textAlign: 'right', width: 110 }}>Unit Price</th>
+                <th style={{ padding: '8px 10px', fontSize: 11, fontWeight: 600, color: T.muted, textAlign: 'center', width: 130 }}>Type</th>
+                <th style={{ padding: '8px 10px', fontSize: 11, fontWeight: 600, color: T.muted, textAlign: 'right', width: 100 }}>Amount</th>
+                <th style={{ width: 28 }}></th>
               </tr>
             </thead>
             <tbody>
               {form.items.map((item, idx) => {
-                const amt = (parseFloat(item.quantity) || 0) * (parseFloat(item.unit_price) || 0);
+                const amt         = (parseFloat(item.quantity) || 0) * (parseFloat(item.unit_price) || 0);
+                const isReim      = item.line_vat_type === 'reimbursement';
                 return (
-                  <tr key={item.key} style={{ borderBottom: `1px solid ${T.border}` }}>
+                  <tr key={item.key} style={{ borderBottom: `1px solid ${T.border}`, background: isReim ? '#fffbeb' : 'transparent' }}>
                     <td style={{ padding: '6px 4px' }}>
                       <input style={{ ...inp, border: 'none', background: 'transparent', padding: '6px 6px' }}
                         value={item.description} onChange={e => setItem(idx, 'description', e.target.value)} placeholder="Item description" />
@@ -225,6 +236,16 @@ export function InvoiceFormModal({ clientId, invoice, onClose, onSaved }) {
                       <input style={{ ...inp, border: 'none', background: 'transparent', padding: '6px 6px', textAlign: 'right' }}
                         type="number" min="0" step="0.01"
                         value={item.unit_price} onChange={e => setItem(idx, 'unit_price', e.target.value)} />
+                    </td>
+                    <td style={{ padding: '6px 4px', textAlign: 'center' }}>
+                      <select
+                        value={item.line_vat_type || 'vatable'}
+                        onChange={e => setItem(idx, 'line_vat_type', e.target.value)}
+                        style={{ fontSize: 11, fontWeight: 600, border: `1px solid ${T.border}`, borderRadius: 6, padding: '4px 6px', cursor: 'pointer', fontFamily: 'inherit',
+                          background: isReim ? '#fef3c7' : '#f0fdf4', color: isReim ? '#92400e' : '#15803d' }}>
+                        <option value="vatable">VATable (12%)</option>
+                        <option value="reimbursement">Reimbursement (0%)</option>
+                      </select>
                     </td>
                     <td style={{ padding: '6px 10px', textAlign: 'right', fontSize: 13, color: T.text, fontWeight: 600 }}>
                       {peso(amt)}
@@ -246,20 +267,38 @@ export function InvoiceFormModal({ clientId, invoice, onClose, onSaved }) {
           </button>
 
           {/* Totals preview */}
-          <div style={{ display: 'flex', justifyContent: 'flex-end', marginBottom: 16 }}>
-            <div style={{ width: 260, background: '#f5f5f7', borderRadius: 10, padding: '12px 16px' }}>
-              <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: 13, color: T.muted, marginBottom: 6 }}>
-                <span>Subtotal (NET)</span><span style={{ color: T.text, fontWeight: 600 }}>{peso(subtotal)}</span>
+          {(() => {
+            const reimbTotal = form.items
+              .filter(i => i.line_vat_type === 'reimbursement')
+              .reduce((s, i) => s + (parseFloat(i.quantity) || 0) * (parseFloat(i.unit_price) || 0), 0);
+            const vatableTotal = subtotal - reimbTotal;
+            return (
+              <div style={{ display: 'flex', justifyContent: 'flex-end', marginBottom: 16 }}>
+                <div style={{ width: 280, background: '#f5f5f7', borderRadius: 10, padding: '12px 16px' }}>
+                  {reimbTotal > 0 && (
+                    <>
+                      <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: 12, color: T.muted, marginBottom: 4 }}>
+                        <span>VATable Services</span><span style={{ color: T.text, fontWeight: 600 }}>{peso(vatableTotal)}</span>
+                      </div>
+                      <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: 12, color: T.muted, marginBottom: 6 }}>
+                        <span>Reimbursements (no VAT)</span><span style={{ color: '#92400e', fontWeight: 600 }}>{peso(reimbTotal)}</span>
+                      </div>
+                    </>
+                  )}
+                  <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: 13, color: T.muted, marginBottom: 6 }}>
+                    <span>Subtotal (NET)</span><span style={{ color: T.text, fontWeight: 600 }}>{peso(subtotal)}</span>
+                  </div>
+                  <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: 13, color: T.muted, marginBottom: 8 }}>
+                    <span>VAT (12% on VATable)</span>
+                    <span style={{ color: '#C9A84C', fontWeight: 600 }}>{peso(vatAmount)}</span>
+                  </div>
+                  <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: 15, fontWeight: 800, color: T.text, borderTop: `1px solid ${T.border}`, paddingTop: 8 }}>
+                    <span>Total Due</span><span>{peso(total)}</span>
+                  </div>
+                </div>
               </div>
-              <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: 13, color: T.muted, marginBottom: 8 }}>
-                <span>VAT ({form.vat_type === 'vatable' ? '12%' : '0%'})</span>
-                <span style={{ color: '#C9A84C', fontWeight: 600 }}>{peso(vatAmount)}</span>
-              </div>
-              <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: 15, fontWeight: 800, color: T.text, borderTop: `1px solid ${T.border}`, paddingTop: 8 }}>
-                <span>Total Due</span><span>{peso(total)}</span>
-              </div>
-            </div>
-          </div>
+            );
+          })()}
 
           {/* Notes */}
           <div>
