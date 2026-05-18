@@ -2100,7 +2100,7 @@ export default function AccountantPortal({ onLogout }) {
                     printReport({
                       title: `BIR Form ${effectiveBirType} — ${active.tradeName}`,
                       subtitle: `${periodLabel} ${birYear}`,
-                      bodyHtml: buildBIRReturnHtml({ isOPT, effectiveBirType, periodLabel, birYear, r, clientName: active.tradeName }),
+                      bodyHtml: buildBIRReturnHtml({ isOPT, effectiveBirType, periodLabel, birYear, r, client: active }),
                       firmLabel: firmName || 'MyLedger by Kaiman & Co.',
                       accentColor: brandAccent,
                     });

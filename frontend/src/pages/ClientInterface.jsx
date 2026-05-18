@@ -759,7 +759,9 @@ function TxModal({ clientId, client, onSaved, onClose }) {
 function BusinessModal({ initialValues, isEdit, onSave, onClose }) {
   const isMobile = useMobile();
   const blank = { tradeName: '', tin: '', type: 'Corporation', address: '',
-                  taxTypes: [], ownerBirthdate: '', subscriptionTier: 'free',
+                  zipCode: '', telephone: '', rdoCode: '',
+                  ownerBirthdate: '', incorporationDate: '',
+                  taxTypes: [], subscriptionTier: 'free',
                   taxRegime: 'vat', optRate: '0.03' };
   const [form,   setForm]   = useState(() => initialValues ? { ...blank, ...initialValues } : blank);
   const [err,    setErr]    = useState('');
@@ -829,6 +831,24 @@ function BusinessModal({ initialValues, isEdit, onSave, onClose }) {
             <input style={inp} value={form.address} onChange={set('address')} placeholder="Registered business address" />
           </Fld>
         </div>
+        <div style={{ display: 'grid', gridTemplateColumns: isMobile ? '1fr' : '1fr 1fr 1fr', gap: '0 16px' }}>
+          <Fld label="ZIP Code">
+            <input style={inp} value={form.zipCode} onChange={set('zipCode')} placeholder="1234" />
+          </Fld>
+          <Fld label="Telephone">
+            <input style={inp} value={form.telephone} onChange={set('telephone')} placeholder="02-8123-4567" />
+          </Fld>
+          <Fld label="RDO Code">
+            <input style={inp} value={form.rdoCode} onChange={set('rdoCode')} placeholder="e.g. 040" />
+          </Fld>
+        </div>
+
+        {/* ── Corporation incorporation date (1702 requirement) ── */}
+        {!isSoleProp && (
+          <Fld label="Date of Incorporation (for BIR Form 1702)">
+            <input style={inp} type="date" value={form.incorporationDate} onChange={set('incorporationDate')} />
+          </Fld>
+        )}
 
         {/* ── Sole Proprietor birthday (1701 requirement) ── */}
         {isSoleProp && (

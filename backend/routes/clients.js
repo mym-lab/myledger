@@ -14,16 +14,22 @@ const stmtClientById  = db.prepare('SELECT * FROM clients WHERE id = ?');
 const stmtInsertClient = db.prepare(`
   INSERT INTO clients
     (id, owner_id, accountant_id, encoder_ids, trade_name, tin, address,
-     business_type, type, tax_regime, opt_rate, birthday, subscription_tier, tax_types, created_at)
+     zip_code, telephone, rdo_code,
+     business_type, type, tax_regime, opt_rate, birthday, incorporation_date,
+     subscription_tier, tax_types, created_at)
   VALUES
     (@id, @owner_id, @accountant_id, @encoder_ids, @trade_name, @tin, @address,
-     @business_type, @type, @tax_regime, @opt_rate, @birthday, @subscription_tier, @tax_types, @created_at)
+     @zip_code, @telephone, @rdo_code,
+     @business_type, @type, @tax_regime, @opt_rate, @birthday, @incorporation_date,
+     @subscription_tier, @tax_types, @created_at)
 `);
 const stmtUpdateClient = db.prepare(`
   UPDATE clients SET
     trade_name=@trade_name, tin=@tin, type=@type, address=@address,
+    zip_code=@zip_code, telephone=@telephone, rdo_code=@rdo_code,
     business_type=@business_type, tax_regime=@tax_regime, opt_rate=@opt_rate,
-    birthday=@birthday, subscription_tier=@subscription_tier, tax_types=@tax_types
+    birthday=@birthday, incorporation_date=@incorporation_date,
+    subscription_tier=@subscription_tier, tax_types=@tax_types
   WHERE id=@id
 `);
 const stmtDeleteClient = db.prepare('DELETE FROM clients WHERE id = ?');
@@ -67,7 +73,9 @@ router.post('/', (req, res, next) => {
   try {
     const {
       tradeName, tin, type, address = '', businessType = '',
-      ownerBirthdate = '', subscriptionTier = 'free',
+      zipCode = '', telephone = '', rdoCode = '',
+      ownerBirthdate = '', incorporationDate = '',
+      subscriptionTier = 'free',
       taxRegime = 'vat', optRate = 0.03,
       taxTypes = [],
     } = req.body;
@@ -84,17 +92,21 @@ router.post('/', (req, res, next) => {
       owner_id:          (role === 'client' || role === 'admin') ? req.userId : null,
       accountant_id:     role === 'accountant' ? req.userId : null,
       encoder_ids:       '[]',
-      trade_name:        tradeName,
+      trade_name:          tradeName,
       tin,
       address,
-      business_type:     businessType,
-      type:              type || 'Corporation',
-      tax_regime:        taxRegime,
-      opt_rate:          Number(optRate) || 0.03,
-      birthday:          ownerBirthdate || null,
-      subscription_tier: subscriptionTier,
-      tax_types:         JSON.stringify(Array.isArray(taxTypes) ? taxTypes : []),
-      created_at:        new Date().toISOString(),
+      zip_code:            zipCode || null,
+      telephone:           telephone || null,
+      rdo_code:            rdoCode || null,
+      business_type:       businessType,
+      type:                type || 'Corporation',
+      tax_regime:          taxRegime,
+      opt_rate:            Number(optRate) || 0.03,
+      birthday:            ownerBirthdate || null,
+      incorporation_date:  incorporationDate || null,
+      subscription_tier:   subscriptionTier,
+      tax_types:           JSON.stringify(Array.isArray(taxTypes) ? taxTypes : []),
+      created_at:          new Date().toISOString(),
     });
 
     const client = rowToClient(stmtClientById.get(id));
@@ -121,23 +133,29 @@ router.put('/:id', (req, res, next) => {
 
     const {
       tradeName, tin, type, address, businessType,
-      ownerBirthdate, subscriptionTier, taxRegime, optRate, taxTypes,
+      zipCode, telephone, rdoCode,
+      ownerBirthdate, incorporationDate,
+      subscriptionTier, taxRegime, optRate, taxTypes,
     } = req.body;
 
     stmtUpdateClient.run({
-      id:                req.params.id,
-      trade_name:        tradeName        ?? existing.tradeName,
-      tin:               tin              ?? existing.tin,
-      type:              type             ?? existing.type,
-      address:           address          ?? existing.address,
-      business_type:     businessType     ?? existing.businessType,
-      tax_regime:        taxRegime        ?? existing.taxRegime,
-      opt_rate:          optRate != null ? Number(optRate) : existing.optRate,
-      birthday:          ownerBirthdate   ?? existing.birthday,
-      subscription_tier: subscriptionTier ?? existing.subscriptionTier,
-      tax_types:         taxTypes != null
-                           ? JSON.stringify(Array.isArray(taxTypes) ? taxTypes : [])
-                           : JSON.stringify(existing.taxTypes || []),
+      id:                   req.params.id,
+      trade_name:           tradeName           ?? existing.tradeName,
+      tin:                  tin                 ?? existing.tin,
+      type:                 type                ?? existing.type,
+      address:              address             ?? existing.address,
+      zip_code:             zipCode             ?? existing.zipCode,
+      telephone:            telephone           ?? existing.telephone,
+      rdo_code:             rdoCode             ?? existing.rdoCode,
+      business_type:        businessType        ?? existing.businessType,
+      tax_regime:           taxRegime           ?? existing.taxRegime,
+      opt_rate:             optRate != null ? Number(optRate) : existing.optRate,
+      birthday:             ownerBirthdate      ?? existing.birthday,
+      incorporation_date:   incorporationDate   ?? existing.incorporationDate,
+      subscription_tier:    subscriptionTier    ?? existing.subscriptionTier,
+      tax_types:            taxTypes != null
+                              ? JSON.stringify(Array.isArray(taxTypes) ? taxTypes : [])
+                              : JSON.stringify(existing.taxTypes || []),
     });
 
     const client = rowToClient(stmtClientById.get(req.params.id));

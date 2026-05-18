@@ -45,21 +45,25 @@ CREATE TABLE IF NOT EXISTS users (
 );
 
 CREATE TABLE IF NOT EXISTS clients (
-  id                TEXT PRIMARY KEY,
-  owner_id          TEXT NOT NULL,
-  accountant_id     TEXT,
-  encoder_ids       TEXT NOT NULL DEFAULT '[]',
-  trade_name        TEXT NOT NULL,
-  tin               TEXT,
-  address           TEXT,
-  business_type     TEXT,
-  type              TEXT,
-  tax_regime        TEXT NOT NULL DEFAULT 'vat',
-  opt_rate          REAL NOT NULL DEFAULT 0.03,
-  birthday          TEXT,
-  subscription_tier TEXT NOT NULL DEFAULT 'free',
-  tax_types         TEXT NOT NULL DEFAULT '[]',
-  created_at        TEXT NOT NULL
+  id                   TEXT PRIMARY KEY,
+  owner_id             TEXT NOT NULL,
+  accountant_id        TEXT,
+  encoder_ids          TEXT NOT NULL DEFAULT '[]',
+  trade_name           TEXT NOT NULL,
+  tin                  TEXT,
+  address              TEXT,
+  zip_code             TEXT,
+  telephone            TEXT,
+  rdo_code             TEXT,
+  business_type        TEXT,
+  type                 TEXT,
+  tax_regime           TEXT NOT NULL DEFAULT 'vat',
+  opt_rate             REAL NOT NULL DEFAULT 0.03,
+  birthday             TEXT,
+  incorporation_date   TEXT,
+  subscription_tier    TEXT NOT NULL DEFAULT 'free',
+  tax_types            TEXT NOT NULL DEFAULT '[]',
+  created_at           TEXT NOT NULL
 );
 
 CREATE TABLE IF NOT EXISTS transactions (
@@ -284,6 +288,15 @@ try { db.exec("ALTER TABLE invoice_items ADD COLUMN line_vat_type TEXT NOT NULL 
 catch (_) { /* column already exists */ }
 try { db.exec("ALTER TABLE invoices ADD COLUMN reimbursement_total REAL NOT NULL DEFAULT 0"); }
 catch (_) { /* column already exists */ }
+// ── v10+ client profile fields ────────────────────────────────────────────────
+try { db.exec("ALTER TABLE clients ADD COLUMN zip_code TEXT"); }
+catch (_) { /* column already exists */ }
+try { db.exec("ALTER TABLE clients ADD COLUMN telephone TEXT"); }
+catch (_) { /* column already exists */ }
+try { db.exec("ALTER TABLE clients ADD COLUMN rdo_code TEXT"); }
+catch (_) { /* column already exists */ }
+try { db.exec("ALTER TABLE clients ADD COLUMN incorporation_date TEXT"); }
+catch (_) { /* column already exists */ }
 
 // ── Default settings bootstrap ────────────────────────────────────────────────
 const DEFAULT_SETTINGS = {
@@ -362,6 +375,8 @@ export function rowToClient(r) {
     encoderIds:   JSON.parse(r.encoder_ids || '[]'),
     taxTypes:     JSON.parse(r.tax_types   || '[]'),
     tradeName: r.trade_name, tin: r.tin, address: r.address,
+    zipCode: r.zip_code || '', telephone: r.telephone || '',
+    rdoCode: r.rdo_code || '', incorporationDate: r.incorporation_date || '',
     businessType: r.business_type, type: r.type,
     taxRegime: r.tax_regime, optRate: r.opt_rate,
     birthday: r.birthday, ownerBirthdate: r.birthday, subscriptionTier: r.subscription_tier,
