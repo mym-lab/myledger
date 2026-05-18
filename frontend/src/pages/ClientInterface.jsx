@@ -2430,13 +2430,19 @@ export default function ClientInterface({ onLogout }) {
               <Card>
                 <SectionHead>Business Information</SectionHead>
                 {[
-                  ['Trade Name', active.tradeName],
-                  ['TIN', active.tin],
-                  ['Type', active.type],
-                  ['Address', active.address || '—'],
-                  ['Tax Regime', active.taxRegime === 'opt' ? `OPT / Percentage Tax (${((Number(active.optRate)||0.03)*100).toFixed(1)}%)` : active.taxRegime === 'non_vat_exempt' ? 'Non-VAT Exempt' : 'VAT Registered (12%)'],
+                  ['Trade Name',   active.tradeName],
+                  ['TIN',          active.tin],
+                  ['Type',         active.type],
+                  ['Address',      active.address || '—'],
+                  ['ZIP Code',     active.zipCode || '—'],
+                  ['Telephone',    active.telephone || '—'],
+                  ['RDO Code',     active.rdoCode || '—'],
+                  ['Tax Regime',   active.taxRegime === 'opt' ? `OPT / Percentage Tax (${((Number(active.optRate)||0.03)*100).toFixed(1)}%)` : active.taxRegime === 'non_vat_exempt' ? 'Non-VAT Exempt' : 'VAT Registered (12%)'],
                   ...(active.type === 'Sole Proprietor' && active.ownerBirthdate
-                    ? [['Owner Birthday', new Date(active.ownerBirthdate).toLocaleDateString('en-PH', { month: 'long', day: 'numeric', year: 'numeric' })]]
+                    ? [['Date of Birth', new Date(active.ownerBirthdate).toLocaleDateString('en-PH', { month: 'long', day: 'numeric', year: 'numeric' })]]
+                    : []),
+                  ...(active.type !== 'Sole Proprietor' && active.incorporationDate
+                    ? [['Date of Incorporation', new Date(active.incorporationDate).toLocaleDateString('en-PH', { month: 'long', day: 'numeric', year: 'numeric' })]]
                     : []),
                   ['Client Since', fmtDt(active.createdAt)],
                 ].map(([k, v]) => (
