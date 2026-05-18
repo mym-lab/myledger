@@ -1018,9 +1018,9 @@ function computeIncomeTax(transactions, client, year, quarter /* null = annual *
   const income  = filtered.filter(t => t.type === 'income');
   const expense = filtered.filter(t => t.type === 'expense');
 
-  const grossRevenue  = round2(income.reduce((s, t)  => s + (t.amount_gross || 0), 0));
-  const netRevenue    = round2(income.reduce((s, t)  => s + (t.amount_net   || 0), 0));
-  const totalExpenses = round2(expense.reduce((s, t) => s + (t.amount_net   || 0), 0));
+  const grossRevenue  = round2(income.reduce((s, t)  => s + (t.gross || 0), 0));
+  const netRevenue    = round2(income.reduce((s, t)  => s + (t.net   || 0), 0));
+  const totalExpenses = round2(expense.reduce((s, t) => s + (t.net   || 0), 0));
   const taxableIncome = round2(netRevenue - totalExpenses);
 
   const type      = client?.type || 'Corporation';
