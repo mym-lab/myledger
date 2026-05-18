@@ -58,8 +58,12 @@ const T = {
   shadowMd:'0 4px 24px rgba(0,0,0,0.12)',
 };
 
-const INCOME_CATS  = ['Sale of Goods','Sale of Services','Professional Fees','Rental Income','Interest Income','Commission Income','Dividend Income','Other Income'];
+const INCOME_CATS  = ['Sale of Goods','Sale of Services','Professional Fees','Rental Income','Interest Income','Commission Income','Dividend Income','Other Income',
+  // Non-taxable / pass-through
+  'Reimbursement','Capital Contribution','Loan Proceeds','Other Non-Taxable Income'];
 const EXPENSE_CATS = ['Cost of Goods Sold','Salaries & Wages','Rent','Utilities','Office Supplies','Advertising & Marketing','Transportation & Travel','Professional Fees','Repairs & Maintenance','Bank Charges & Fees','Taxes & Licenses','Depreciation','Insurance','Interest Expense','Other Expenses'];
+// Income categories excluded from Income Tax Return (1701 / 1701A / 1702 / 1702Q)
+const NON_TAXABLE_INCOME_CATS = ['Reimbursement','Capital Contribution','Loan Proceeds','Other Non-Taxable Income'];
 const CUSTOM_OPT   = '＋ Other (specify)';
 
 const TAX_TYPES = [
@@ -1015,12 +1019,18 @@ function computeIncomeTax(transactions, client, year, quarter /* null = annual *
     return true; // annual — all months
   });
 
-  const income  = filtered.filter(t => t.type === 'income');
-  const expense = filtered.filter(t => t.type === 'expense');
+  const allIncome  = filtered.filter(t => t.type === 'income');
+  const expense    = filtered.filter(t => t.type === 'expense');
 
-  const grossRevenue  = round2(income.reduce((s, t)  => s + (t.gross || 0), 0));
-  const netRevenue    = round2(income.reduce((s, t)  => s + (t.net   || 0), 0));
-  const totalExpenses = round2(expense.reduce((s, t) => s + (t.net   || 0), 0));
+  // Split income: taxable vs non-taxable (reimbursements, capital contributions, etc.)
+  const nonTaxIncome = allIncome.filter(t => NON_TAXABLE_INCOME_CATS.includes(t.category));
+  const income       = allIncome.filter(t => !NON_TAXABLE_INCOME_CATS.includes(t.category));
+
+  const grossRevenue    = round2(income.reduce((s, t)  => s + (t.gross || 0), 0));
+  const netRevenue      = round2(income.reduce((s, t)  => s + (t.net   || 0), 0));
+  const totalExpenses   = round2(expense.reduce((s, t) => s + (t.net   || 0), 0));
+  const nonTaxableTotal = round2(nonTaxIncome.reduce((s, t) => s + (t.gross || 0), 0));
+  const totalGrossAll   = round2(allIncome.reduce((s, t) => s + (t.gross || 0), 0));
   const taxableIncome = round2(netRevenue - totalExpenses);
 
   const type      = client?.type || 'Corporation';
@@ -1095,6 +1105,7 @@ function computeIncomeTax(transactions, client, year, quarter /* null = annual *
       grossIncome, cogs,
       rcit, mcit, rcitRate, mcitRate, applyMCIT, mcitApplicable,
       taxDue, method,
+      nonTaxableTotal, totalGrossAll,
       isSoleProp: false, taxOption: 'rcit',
       txCount: filtered.length,
     };
@@ -1104,6 +1115,7 @@ function computeIncomeTax(transactions, client, year, quarter /* null = annual *
   return {
     year, quarter, periodLabel,
     grossRevenue, netRevenue, totalExpenses, taxableIncome,
+    nonTaxableTotal, totalGrossAll,
     taxDue, method,
     isSoleProp, taxOption,
     txCount: filtered.length,
@@ -2358,6 +2370,31 @@ export default function AccountantPortal({ onLogout }) {
                           <div style={{ fontSize: 11, color: T.muted, marginTop: 3 }}>Before credits / penalties</div>
                         </div>
                       </div>
+
+                      {/* Non-taxable income reconciliation note */}
+                      {(r.nonTaxableTotal > 0) && (
+                        <div style={{ background: '#fffbec', border: `1px solid ${T.yellow}60`,
+                          borderRadius: T.radius, padding: '12px 16px', marginBottom: 16, fontSize: 13 }}>
+                          <div style={{ fontWeight: 600, color: '#a07000', marginBottom: 6 }}>
+                            ⚠ Non-Taxable Income Excluded from ITR
+                          </div>
+                          <div style={{ color: T.text, marginBottom: 4 }}>
+                            Total gross collections: <strong>₱{(r.totalGrossAll||0).toLocaleString('en-PH',{minimumFractionDigits:2})}</strong>
+                          </div>
+                          <div style={{ color: T.muted }}>
+                            Less: Non-taxable items (Reimbursements, Capital Contributions, Loan Proceeds):
+                            <strong style={{ color: '#a07000', marginLeft: 6 }}>
+                              ₱{(r.nonTaxableTotal||0).toLocaleString('en-PH',{minimumFractionDigits:2})}
+                            </strong>
+                          </div>
+                          <div style={{ color: T.text, marginTop: 4 }}>
+                            Taxable gross revenue used for ITR: <strong>₱{(r.grossRevenue||0).toLocaleString('en-PH',{minimumFractionDigits:2})}</strong>
+                          </div>
+                          <div style={{ fontSize: 12, color: T.muted, marginTop: 6 }}>
+                            Tag income transactions as "Reimbursement", "Capital Contribution", or "Loan Proceeds" to exclude them from income tax computation.
+                          </div>
+                        </div>
+                      )}
 
                       {/* MCIT vs RCIT breakdown for corporate clients */}
                       {!r.isSoleProp && (

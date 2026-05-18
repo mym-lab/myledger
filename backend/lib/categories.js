@@ -1,6 +1,7 @@
 // ─── BIR-aligned transaction categories ──────────────────────
 
 export const INCOME_CATEGORIES = [
+  // ── Taxable income ────────────────────────────────────────────────────────
   'Sale of Goods',
   'Sale of Services',
   'Professional Fees',
@@ -9,6 +10,19 @@ export const INCOME_CATEGORIES = [
   'Commission Income',
   'Dividend Income',
   'Other Income',
+  // ── Non-taxable / pass-through (excluded from ITR computation) ────────────
+  'Reimbursement',           // expenses paid by client, collected & paid through — not income
+  'Capital Contribution',    // owner equity injection — not income
+  'Loan Proceeds',           // borrowings — not income
+  'Other Non-Taxable Income',
+];
+
+// Categories excluded from 1700-series Income Tax Return computation
+export const NON_TAXABLE_INCOME_CATS = [
+  'Reimbursement',
+  'Capital Contribution',
+  'Loan Proceeds',
+  'Other Non-Taxable Income',
 ];
 
 export const EXPENSE_CATEGORIES = [

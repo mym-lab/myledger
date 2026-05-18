@@ -63,7 +63,7 @@ const TAX_TYPES = [
   { code: '1550',   label: '1550 — Documentary Stamp Tax' },
 ];
 
-const INCOME_CATS  = ['Sale of Goods','Sale of Services','Professional Fees','Rental Income','Interest Income','Commission Income','Dividend Income','Other Income'];
+const INCOME_CATS  = ['Sale of Goods','Sale of Services','Professional Fees','Rental Income','Interest Income','Commission Income','Dividend Income','Other Income','Reimbursement','Capital Contribution','Loan Proceeds','Other Non-Taxable Income'];
 const EXPENSE_CATS = ['Cost of Goods Sold','Salaries & Wages','Rent','Utilities','Office Supplies','Advertising & Marketing','Transportation & Travel','Professional Fees','Repairs & Maintenance','Bank Charges & Fees','Taxes & Licenses','Depreciation','Insurance','Interest Expense','Other Expenses'];
 const CUSTOM_OPT   = '＋ Other (specify)';
 
