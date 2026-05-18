@@ -540,11 +540,59 @@ export function buildIncomeStatementHtml(income, clientName) {
 
   rows.push(fsSpacer());
 
-  // ── COSTS AND EXPENSES ──
-  rows.push(fsSectionHeader('COSTS AND EXPENSES'));
-  rows.push(fsRow({ label: 'Total Costs and Expenses', amount: income.expenses > 0 ? -income.expenses : 0, indent: 1, noteRef: '2', showPesoSign: true }));
+  // ── COST OF SALES ──
+  const eb     = income.expenseBreakdown || {};
+  const cogsMap = eb.cogs || {};
+  const opexMap = eb.opex || {};
+  const cogsEntries = Object.entries(cogsMap).filter(([, v]) => v > 0);
+  const opexEntries = Object.entries(opexMap).filter(([, v]) => v > 0);
+  const grossProfit = income.grossProfit ?? (income.revenue - (income.costOfSales || 0));
+  const costOfSales = income.costOfSales || 0;
 
-  rows.push(fsSpacer());
+  if (costOfSales > 0 || cogsEntries.length > 0) {
+    rows.push(fsSectionHeader('COST OF SALES'));
+    if (cogsEntries.length > 0) {
+      for (const [cat, amt] of cogsEntries) {
+        rows.push(fsRow({ label: cat, amount: amt > 0 ? -amt : 0, indent: 2, showPesoSign: false }));
+      }
+      rows.push(fsRow({ label: 'Total Cost of Sales', amount: costOfSales > 0 ? -costOfSales : 0, indent: 1, noteRef: '2', type: 'subtotal', showPesoSign: true }));
+    } else {
+      rows.push(fsRow({ label: 'Cost of Goods Sold', amount: costOfSales > 0 ? -costOfSales : 0, indent: 1, noteRef: '2', showPesoSign: true }));
+    }
+    rows.push(fsSpacer());
+
+    // ── GROSS PROFIT ──
+    rows.push(fsRow({
+      label: grossProfit >= 0 ? 'GROSS PROFIT' : 'GROSS LOSS',
+      amount: grossProfit,
+      indent: 0,
+      type: 'subtotal',
+      showPesoSign: true,
+    }));
+    rows.push(fsSpacer());
+  }
+
+  // ── OPERATING EXPENSES ──
+  const operatingExpenses = income.operatingExpenses || (income.expenses - costOfSales);
+  if (operatingExpenses > 0 || opexEntries.length > 0) {
+    rows.push(fsSectionHeader('OPERATING EXPENSES'));
+    if (opexEntries.length > 0) {
+      for (const [cat, amt] of opexEntries) {
+        rows.push(fsRow({ label: cat, amount: amt > 0 ? -amt : 0, indent: 2, showPesoSign: false }));
+      }
+      rows.push(fsRow({ label: 'Total Operating Expenses', amount: operatingExpenses > 0 ? -operatingExpenses : 0, indent: 1, noteRef: '2', type: 'subtotal', showPesoSign: true }));
+    } else if (operatingExpenses > 0) {
+      rows.push(fsRow({ label: 'Total Operating Expenses', amount: -operatingExpenses, indent: 1, noteRef: '2', showPesoSign: true }));
+    }
+    rows.push(fsSpacer());
+  }
+
+  // ── If no COGS split, show old combined section for backwards compat ──
+  if (costOfSales === 0 && operatingExpenses === 0 && income.expenses > 0) {
+    rows.push(fsSectionHeader('COSTS AND EXPENSES'));
+    rows.push(fsRow({ label: 'Total Costs and Expenses', amount: -income.expenses, indent: 1, noteRef: '2', showPesoSign: true }));
+    rows.push(fsSpacer());
+  }
 
   // ── Income before tax ──
   const profitBeforeTax = income.revenue - income.expenses;
@@ -580,13 +628,14 @@ export function buildIncomeStatementHtml(income, clientName) {
         For OPT-registered entities, gross receipts are presented; 3% percentage tax is computed separately.
       </p>
       <p><strong>Note 2 — Costs and Expenses.</strong>
-        Expenses represent the net (VAT-exclusive) cost of goods and services consumed during the period.
-        Input VAT on purchases is treated as a recoverable asset and excluded from expense.
+        Cost of Sales represents direct costs (e.g., cost of goods sold) deducted from revenues to arrive at gross profit.
+        Operating expenses represent indirect costs of running the business during the period.
+        All amounts are net (VAT-exclusive); input VAT on purchases is treated as a recoverable asset.
         Expanded withholding taxes (EWT), if applicable, are deducted at source.
       </p>
       <p><strong>Note 3 — Income Tax.</strong>
-        Provision for income tax has not been computed. A separate schedule should be prepared by the
-        registered CPA to determine the applicable corporate or individual income tax.
+        Provision for income tax has not been computed. Please consult your tax adviser to determine
+        the applicable corporate or individual income tax for the period.
       </p>
       <p style="margin-top:10px;font-style:italic;font-size:9pt;color:#555">
         This statement was prepared on a PFRS basis using transaction data recorded in MyLedger.
@@ -702,8 +751,7 @@ export function buildCashFlowHtml(cf, clientName) {
       <p style="margin-top:10px;font-style:italic;font-size:9pt;color:#555">
         Period covered: ${cf.period || 'All periods'}.
         This statement is derived from transaction data in MyLedger and is intended for management
-        review only. A formal cash flow statement prepared for external reporting or audit requires
-        additional adjustments and CPA certification.
+        review. Figures are based on recorded settlements and may require adjustment for formal reporting.
       </p>
     </div>
   `;
@@ -823,12 +871,12 @@ export function buildBalanceSheetHtml(balance, clientName) {
       </p>
       <p><strong>Note 10 — Equity.</strong>
         Derived as Total Assets less Total Liabilities. Includes net income for the period computed on a PFRS basis.
-        A formal equity schedule should be prepared by the registered CPA.
+        Equity is presented for management reference; a formal equity schedule may be prepared separately.
       </p>
       <p style="margin-top:10px;font-style:italic;font-size:9pt;color:#555">
         This statement of financial position is derived from transaction data in MyLedger and includes
         VAT accounts, settlement-based cash/receivable/payable positions, and recorded fixed assets.
-        A formal balance sheet prepared for external reporting requires additional schedules and CPA certification.
+        Figures are based on recorded transaction data and are intended for management review.
         As of: ${balance.asOf || '—'}.
       </p>
     </div>

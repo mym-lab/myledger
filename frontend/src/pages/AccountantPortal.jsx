@@ -2850,30 +2850,73 @@ export default function AccountantPortal({ onLogout }) {
               All amounts are NET (VAT-exclusive) — correct P&amp;L basis under PFRS.
             </div>
 
-            {!income ? <div style={{ color: T.muted }}>Loading…</div> : (
-              <Card style={{ maxWidth: 520 }}>
-                <SectionHead>Profit &amp; Loss</SectionHead>
-                {[
-                  { label: 'Net Revenue',  value: income.revenue,             color: T.green,  bold: false },
-                  { label: 'Net Expenses', value: -Math.abs(income.expenses), color: T.red,    bold: false },
-                  { label: null },
-                  { label: 'Net Profit',   value: income.profit, color: income.profit >= 0 ? T.accent : T.red, bold: true },
-                ].map((row, i) => row.label === null
-                  ? <hr key={i} style={{ border: 'none', borderTop: `2px solid ${T.border}`, margin: '8px 0' }} />
-                  : (
-                    <div key={row.label} style={{ display: 'flex', justifyContent: 'space-between',
-                      padding: row.bold ? '12px 0 4px' : '8px 0',
-                      borderBottom: row.bold ? 'none' : `1px solid ${T.border}` }}>
-                      <span style={{ fontSize: 14, fontWeight: row.bold ? 700 : 400, color: row.bold ? T.text : T.muted }}>{row.label}</span>
-                      <span style={{ fontSize: row.bold ? 18 : 14, fontWeight: row.bold ? 700 : 500, color: row.color }}>
-                        {row.value < 0 ? `(${peso(Math.abs(row.value))})` : peso(row.value)}
+            {!income ? <div style={{ color: T.muted }}>Loading…</div> : (() => {
+              const eb       = income.expenseBreakdown || {};
+              const cogsMap  = eb.cogs || {};
+              const opexMap  = eb.opex || {};
+              const cogsEntries = Object.entries(cogsMap).filter(([,v]) => v > 0);
+              const opexEntries = Object.entries(opexMap).filter(([,v]) => v > 0);
+              const hasCOGS  = (income.costOfSales || 0) > 0;
+              const grossProfit = income.grossProfit ?? (income.revenue - (income.costOfSales || 0));
+
+              const Row = ({ label, value, indent = false, bold = false, color, divider = false, section = false }) => {
+                if (divider) return <hr style={{ border: 'none', borderTop: `2px solid ${T.border}`, margin: '4px 0' }} />;
+                return (
+                  <div style={{ display: 'flex', justifyContent: 'space-between',
+                    padding: bold ? '10px 0 4px' : section ? '14px 0 2px' : '7px 0',
+                    borderBottom: (bold || section) ? 'none' : `1px solid ${T.border}`,
+                    paddingLeft: indent ? 16 : 0 }}>
+                    <span style={{ fontSize: section ? 11 : 14, fontWeight: section ? 600 : bold ? 700 : 400,
+                      color: section ? T.muted : bold ? T.text : T.muted,
+                      textTransform: section ? 'uppercase' : 'none', letterSpacing: section ? '0.05em' : 0 }}>
+                      {label}
+                    </span>
+                    {value != null && (
+                      <span style={{ fontSize: bold ? 18 : 14, fontWeight: bold ? 700 : 500, color: color || T.text }}>
+                        {value < 0 ? `(${peso(Math.abs(value))})` : peso(value)}
                       </span>
-                    </div>
-                  )
-                )}
-                <div style={{ marginTop: 16, fontSize: 12, color: T.muted, fontStyle: 'italic' }}>{income.note}</div>
-              </Card>
-            )}
+                    )}
+                  </div>
+                );
+              };
+
+              return (
+                <Card style={{ maxWidth: 560 }}>
+                  <SectionHead>Profit &amp; Loss</SectionHead>
+
+                  {/* REVENUES */}
+                  <Row section label="Revenues" />
+                  <Row label="Net Sales / Revenues" value={income.revenue} color={T.green} />
+                  <Row divider />
+
+                  {/* COST OF SALES */}
+                  {hasCOGS && (<>
+                    <Row section label="Cost of Sales" />
+                    {cogsEntries.map(([cat, amt]) => <Row key={cat} label={cat} value={-amt} indent color={T.red} />)}
+                    {cogsEntries.length > 1 && <Row label="Total Cost of Sales" value={-(income.costOfSales||0)} color={T.red} />}
+                    <Row divider />
+                    <Row label="Gross Profit" value={grossProfit} bold color={grossProfit >= 0 ? T.accent : T.red} />
+                    <Row divider />
+                  </>)}
+
+                  {/* OPERATING EXPENSES */}
+                  <Row section label="Operating Expenses" />
+                  {opexEntries.length > 0
+                    ? opexEntries.map(([cat, amt]) => <Row key={cat} label={cat} value={-amt} indent color={T.red} />)
+                    : (!hasCOGS && income.expenses > 0 &&
+                        <Row label="Total Costs and Expenses" value={-income.expenses} color={T.red} />)
+                  }
+                  {opexEntries.length > 1 && <Row label="Total Operating Expenses" value={-(income.operatingExpenses||0)} color={T.red} />}
+                  <Row divider />
+
+                  {/* NET PROFIT */}
+                  <Row label={income.profit >= 0 ? 'Net Profit' : 'Net Loss'} value={income.profit}
+                    bold color={income.profit >= 0 ? T.accent : T.red} />
+
+                  <div style={{ marginTop: 16, fontSize: 12, color: T.muted, fontStyle: 'italic' }}>{income.note}</div>
+                </Card>
+              );
+            })()}
           </div>
         )}
 
@@ -2895,7 +2938,7 @@ export default function AccountantPortal({ onLogout }) {
               )}
             </div>
             <div style={{ fontSize: 13, color: T.muted, marginBottom: 20 }}>
-              Derived from transaction settlements and VAT accounts. Full FS requires CPA review.
+              Derived from transaction settlements and VAT accounts. All amounts VAT-exclusive.
             </div>
 
             {!balance ? <div style={{ color: T.muted }}>Loading…</div> : (() => {

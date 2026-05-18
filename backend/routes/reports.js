@@ -76,12 +76,36 @@ router.get('/income', (req, res, next) => {
     const exempt    = round(sum(income.filter(t => t.vatType === 'exempt'),     'amount_net'));
     const optSales  = round(sum(income.filter(t => t.vatType === 'opt'),        'amount_net'));
 
+    // ── COGS vs Operating expense split ──────────────────────────────────────
+    const COGS_CATS = ['Cost of Goods Sold'];
+    const cogsExpense = expense.filter(t =>  COGS_CATS.includes(t.category));
+    const opexExpense = expense.filter(t => !COGS_CATS.includes(t.category));
+
+    const costOfSales       = round(sum(cogsExpense, 'amount_net'));
+    const operatingExpenses = round(sum(opexExpense, 'amount_net'));
+    const grossProfit       = round(revenue - costOfSales);
+
+    // Itemised by category (only include categories that have amounts)
+    function byCategory(txList) {
+      const map = {};
+      for (const t of txList) {
+        const cat = t.category || 'Other Expenses';
+        map[cat] = round((map[cat] || 0) + (t.amount_net || 0));
+      }
+      return map;
+    }
+
     res.json({
       period: from && to ? `${from} to ${to}` : from ? `From ${from}` : to ? `Up to ${to}` : 'All periods',
       revenue, expenses,
+      costOfSales, operatingExpenses, grossProfit,
       profit:   round(revenue - expenses),
       optTax,
       revenueBreakdown: { vatable, zeroRated, exempt, optSales },
+      expenseBreakdown: {
+        cogs: byCategory(cogsExpense),
+        opex: byCategory(opexExpense),
+      },
       note: 'All amounts NET (VAT-exclusive) — correct for P&L reporting.',
     });
   } catch (err) { next(err); }

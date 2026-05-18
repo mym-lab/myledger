@@ -1795,35 +1795,99 @@ export default function ClientInterface({ onLogout }) {
                   {(incFrom || incTo) && <Btn variant="ghost" onClick={() => { setIncFrom(''); setIncTo(''); setIncRep(null); }} style={{ marginBottom: 14 }}>All Periods</Btn>}
                 </div>
               </Card>
-              {incRep ? (
-                <div>
-                  <div style={{ fontSize: 12, color: T.muted, marginBottom: 16 }}>Period: {incRep.period}</div>
-                  <div style={{ display: 'flex', gap: 14, flexWrap: 'wrap', marginBottom: 20 }}>
-                    <MetricCard label="Net Revenue"  value={peso(incRep.revenue)}  sub="VAT-exclusive" color={T.green} />
-                    <MetricCard label="Net Expenses" value={peso(incRep.expenses)} sub="VAT-exclusive" color={T.red} />
-                    <MetricCard label="Net Profit"   value={peso(incRep.profit)}
-                      sub={incRep.profit >= 0 ? 'Profitable ✓' : 'Net loss'}
-                      color={incRep.profit >= 0 ? T.accent : T.red} />
-                    {(incRep.optTax ?? 0) > 0 && <MetricCard label="Percentage Tax" value={peso(incRep.optTax)} sub="OPT payable" color={T.orange} />}
+              {incRep ? (() => {
+                const eb = incRep.expenseBreakdown || {};
+                const cogsMap = eb.cogs || {};
+                const opexMap = eb.opex || {};
+                const cogsEntries = Object.entries(cogsMap).filter(([,v]) => v > 0);
+                const opexEntries = Object.entries(opexMap).filter(([,v]) => v > 0);
+                const hasCOGS = (incRep.costOfSales || 0) > 0;
+                const grossProfit = incRep.grossProfit ?? (incRep.revenue - (incRep.costOfSales || 0));
+
+                const PLRow = ({ label, value, indent, bold, color, divider, section }) => {
+                  if (divider) return <hr style={{ border: 'none', borderTop: `2px solid ${T.border}`, margin: '4px 0' }} />;
+                  return (
+                    <div style={{ display: 'flex', justifyContent: 'space-between',
+                      padding: bold ? '10px 0 4px' : section ? '14px 0 2px' : '7px 0',
+                      borderBottom: (bold || section) ? 'none' : `1px solid ${T.border}`,
+                      paddingLeft: indent ? 16 : 0 }}>
+                      <span style={{ fontSize: section ? 11 : 14, fontWeight: section ? 600 : bold ? 700 : 400,
+                        color: section ? T.muted : bold ? T.text : T.muted,
+                        textTransform: section ? 'uppercase' : 'none', letterSpacing: section ? '0.05em' : 0 }}>
+                        {label}
+                      </span>
+                      {value != null && (
+                        <span style={{ fontSize: bold ? 16 : 14, fontWeight: bold ? 700 : 500, color: color || T.text }}>
+                          {value < 0 ? `(${peso(Math.abs(value))})` : peso(value)}
+                        </span>
+                      )}
+                    </div>
+                  );
+                };
+
+                return (
+                  <div>
+                    <div style={{ fontSize: 12, color: T.muted, marginBottom: 16 }}>Period: {incRep.period}</div>
+
+                    {/* Summary metric cards */}
+                    <div style={{ display: 'flex', gap: 14, flexWrap: 'wrap', marginBottom: 20 }}>
+                      <MetricCard label="Net Revenue"  value={peso(incRep.revenue)}  sub="VAT-exclusive" color={T.green} />
+                      {hasCOGS && <MetricCard label="Gross Profit" value={peso(grossProfit)} sub="Revenue − COGS" color={grossProfit >= 0 ? T.accent : T.red} />}
+                      <MetricCard label="Net Expenses" value={peso(incRep.expenses)} sub="VAT-exclusive" color={T.red} />
+                      <MetricCard label="Net Profit"   value={peso(incRep.profit)}
+                        sub={incRep.profit >= 0 ? 'Profitable ✓' : 'Net loss'}
+                        color={incRep.profit >= 0 ? T.accent : T.red} />
+                      {(incRep.optTax ?? 0) > 0 && <MetricCard label="Percentage Tax" value={peso(incRep.optTax)} sub="OPT payable" color={T.orange} />}
+                    </div>
+
+                    {/* P&L detail card */}
+                    <Card style={{ marginBottom: 16 }}>
+                      <SectionHead>Profit &amp; Loss Detail</SectionHead>
+                      <PLRow section label="Revenues" />
+                      <PLRow label="Net Sales / Revenues" value={incRep.revenue} color={T.green} />
+                      <PLRow divider />
+
+                      {hasCOGS && (<>
+                        <PLRow section label="Cost of Sales" />
+                        {cogsEntries.map(([cat, amt]) => <PLRow key={cat} label={cat} value={-amt} indent color={T.red} />)}
+                        {cogsEntries.length > 1 && <PLRow label="Total Cost of Sales" value={-(incRep.costOfSales||0)} color={T.red} />}
+                        <PLRow divider />
+                        <PLRow label="Gross Profit" value={grossProfit} bold color={grossProfit >= 0 ? T.accent : T.red} />
+                        <PLRow divider />
+                      </>)}
+
+                      <PLRow section label="Operating Expenses" />
+                      {opexEntries.length > 0
+                        ? opexEntries.map(([cat, amt]) => <PLRow key={cat} label={cat} value={-amt} indent color={T.red} />)
+                        : (!hasCOGS && incRep.expenses > 0 && <PLRow label="Total Costs and Expenses" value={-incRep.expenses} color={T.red} />)
+                      }
+                      {opexEntries.length > 1 && <PLRow label="Total Operating Expenses" value={-(incRep.operatingExpenses||0)} color={T.red} />}
+                      <PLRow divider />
+                      <PLRow label={incRep.profit >= 0 ? 'Net Profit' : 'Net Loss'} value={incRep.profit} bold color={incRep.profit >= 0 ? T.accent : T.red} />
+                      <div style={{ fontSize: 12, color: T.muted, marginTop: 12, fontStyle: 'italic' }}>{incRep.note}</div>
+                    </Card>
+
+                    {/* Revenue breakdown by VAT type (only if mixed) */}
+                    {((incRep.revenueBreakdown?.zeroRated > 0) || (incRep.revenueBreakdown?.exempt > 0) || (incRep.revenueBreakdown?.optSales > 0)) && (
+                      <Card>
+                        <SectionHead>Revenue Breakdown by VAT Type</SectionHead>
+                        {[
+                          ['Vatable Sales (12% VAT)',     incRep.revenueBreakdown?.vatable,   T.accent],
+                          ['Zero-rated Sales',             incRep.revenueBreakdown?.zeroRated, T.green],
+                          ['Exempt Sales',                 incRep.revenueBreakdown?.exempt,    T.muted],
+                          ['OPT / Percentage Tax Sales',   incRep.revenueBreakdown?.optSales,  T.orange],
+                        ].filter(([,v]) => (v ?? 0) > 0).map(([label, val, color]) => (
+                          <div key={label} style={{ display: 'flex', justifyContent: 'space-between',
+                            padding: '9px 0', borderBottom: `1px solid ${T.border}`, fontSize: 14 }}>
+                            <span style={{ color: T.muted }}>{label}</span>
+                            <span style={{ fontWeight: 600, color }}>{peso(val)}</span>
+                          </div>
+                        ))}
+                      </Card>
+                    )}
                   </div>
-                  <Card>
-                    <SectionHead>Revenue Breakdown by VAT Type</SectionHead>
-                    {[
-                      ['Vatable Sales (12% VAT)', incRep.revenueBreakdown?.vatable,   T.accent],
-                      ['Zero-rated Sales',         incRep.revenueBreakdown?.zeroRated, T.green],
-                      ['Exempt Sales',             incRep.revenueBreakdown?.exempt,    T.muted],
-                      ['OPT / Percentage Tax Sales', incRep.revenueBreakdown?.optSales, T.orange],
-                    ].filter(([,v]) => (v ?? 0) > 0).map(([label, val, color]) => (
-                      <div key={label} style={{ display: 'flex', justifyContent: 'space-between',
-                        padding: '9px 0', borderBottom: `1px solid ${T.border}`, fontSize: 14 }}>
-                        <span style={{ color: T.muted }}>{label}</span>
-                        <span style={{ fontWeight: 600, color }}>{peso(val)}</span>
-                      </div>
-                    ))}
-                    <div style={{ fontSize: 12, color: T.muted, marginTop: 12 }}>{incRep.note}</div>
-                  </Card>
-                </div>
-              ) : (
+                );
+              })() : (
                 <div style={{ color: T.muted, textAlign: 'center', padding: 48 }}>
                   Select a date range above and click <strong>Run Report</strong>.<br />
                   <span style={{ fontSize: 12 }}>Leave dates blank to include all periods.</span>
