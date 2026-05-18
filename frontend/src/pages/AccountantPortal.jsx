@@ -27,6 +27,7 @@ import {
   downloadCSV,
   createAccountantUpgradeRequest,
   getMyUpgradeRequests,
+  getMe,
 } from '../api.js';
 import {
   printReport,
@@ -1000,15 +1001,16 @@ const BOOKS_COLUMNS = {
 export default function AccountantPortal({ onLogout }) {
   const isMobile = useMobile();
   const [sidebarOpen, setSidebarOpen] = useState(false);
-  // Read stored user to determine tier
-  const storedUser    = (() => { try { return JSON.parse(localStorage.getItem('ml_user') || 'null'); } catch { return null; } })();
-  const accountantTier = storedUser?.accountantTier || 'free';
+  // Read stored user to determine tier — state so it updates after admin approval
+  const storedUser = (() => { try { return JSON.parse(localStorage.getItem('ml_user') || 'null'); } catch { return null; } })();
+  const [accountantTier, setAccountantTier] = useState(storedUser?.accountantTier || 'free');
+  const [meData, setMeData]                 = useState(storedUser);
   const tierInfo       = ACCT_TIERS[accountantTier] || ACCT_TIERS.free;
   const isPro          = accountantTier !== 'free';   // any paid tier unlocks features
   const isAgency       = accountantTier === 'agency';
   const maxClients     = tierInfo.maxClients;          // number = hard limit per tier
-  const firmName       = isAgency && storedUser?.firmName    ? storedUser.firmName    : null;
-  const accentOverride = isAgency && storedUser?.accentColor ? storedUser.accentColor : null;
+  const firmName       = isAgency && meData?.firmName    ? meData.firmName    : null;
+  const accentOverride = isAgency && meData?.accentColor ? meData.accentColor : null;
   // Dynamic accent: agency accountants with a custom color override T.accent site-wide in header/badges
   const brandAccent    = accentOverride || T.accent;
 
@@ -1107,7 +1109,28 @@ export default function AccountantPortal({ onLogout }) {
   const [upgradeMsg,     setUpgradeMsg]     = useState('');
   const [myUpgradeReqs,  setMyUpgradeReqs]  = useState([]);
 
-  useEffect(() => { loadClients(); loadMyUpgradeReqs(); }, []);
+  useEffect(() => {
+    loadClients();
+    loadMyUpgradeReqs();
+    // Fetch fresh user data so tier reflects any admin approval since last login
+    getMe().then(freshUser => {
+      setMeData(freshUser);
+      const freshTier = freshUser?.accountantTier || 'free';
+      setAccountantTier(freshTier);
+      // Keep localStorage in sync so next page load shows correct tier
+      try {
+        const stored = JSON.parse(localStorage.getItem('ml_user') || 'null');
+        if (stored) {
+          localStorage.setItem('ml_user', JSON.stringify({
+            ...stored,
+            accountantTier: freshTier,
+            firmName:    freshUser?.firmName    ?? stored.firmName,
+            accentColor: freshUser?.accentColor ?? stored.accentColor,
+          }));
+        }
+      } catch { /* ignore */ }
+    }).catch(() => { /* network hiccup — keep showing stored tier */ });
+  }, []);
 
   async function loadMyUpgradeReqs() {
     try { const r = await getMyUpgradeRequests(); setMyUpgradeReqs(r.upgradeRequests || []); }

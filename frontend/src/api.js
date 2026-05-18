@@ -45,6 +45,7 @@ export const signup         = (data)            => post('/auth/signup',         
 export const login          = (data)            => post('/auth/login',           data);
 export const forgotPassword = (email)           => post('/auth/forgot-password', { email });
 export const resetPassword  = (token, password) => post('/auth/reset-password',  { token, password });
+export const getMe          = ()                => get('/auth/me',               true);
 
 // ─── Clients (businesses) ─────────────────────────────────────
 export const getClients        = ()           => get('/clients', true);

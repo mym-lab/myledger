@@ -5,6 +5,7 @@ import jwt from 'jsonwebtoken';
 import { v4 as uuid } from 'uuid';
 import { randomBytes } from 'crypto';
 import { db, rowToUser } from '../db.js';
+import { authenticate } from '../middleware/auth.js';
 import { recordReferral } from './referrals.js';
 import { sendEmail } from '../email.js';
 
@@ -143,6 +144,19 @@ router.post('/forgot-password', async (req, res, next) => {
 
     res.json({ message: 'If this email is registered, a reset link has been sent.' });
   } catch (err) { next(err); }
+});
+
+// GET /api/auth/me — returns fresh user data (used to sync accountant tier after admin approval)
+router.get('/me', authenticate, (req, res) => {
+  const row = db.prepare('SELECT * FROM users WHERE id = ?').get(req.userId);
+  if (!row) return res.status(404).json({ error: 'User not found' });
+  const user = rowToUser(row);
+  res.json({
+    id: user.id, email: user.email, name: user.name, company: user.company,
+    role: user.role, accountantTier: user.accountantTier || undefined,
+    firmName:    user.firmName    || null,
+    accentColor: user.accentColor || null,
+  });
 });
 
 // POST /api/auth/reset-password
