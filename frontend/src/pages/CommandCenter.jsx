@@ -197,6 +197,11 @@ export default function CommandCenter({ onLogout }) {
   const [refMsg,         setRefMsg]         = useState('');
   const [refFilter,      setRefFilter]      = useState('all');
 
+  // Named function so RestoreBackupButton (and other places) can call it
+  function loadStats() {
+    getAdminStats().then(setStats).catch(e => setError(e.message));
+  }
+
   useEffect(() => {
     loadUpgradeRequests();
     // auditClients is derived from stats.clients (loaded below) — no separate call needed
@@ -242,7 +247,7 @@ export default function CommandCenter({ onLogout }) {
       await approveUpgradeRequest(id);
       setActionMsg('✓ Approved — plan activated.');
       loadUpgradeRequests();
-      getAdminStats().then(setStats).catch(() => {});
+      loadStats();
       setTimeout(() => setActionMsg(''), 4000);
     } catch (e) { alert(e.message); }
   }
@@ -263,7 +268,7 @@ export default function CommandCenter({ onLogout }) {
   }, [tab]);
 
   useEffect(() => {
-    getAdminStats().then(setStats).catch(e => setError(e.message));
+    loadStats();
     getSettings().then(r => {
       if (!r?.settings) return;
       const s = r.settings;
@@ -308,7 +313,7 @@ export default function CommandCenter({ onLogout }) {
     try {
       await setClientSubscriptionTier(clientId, tier);
       setTierMsg(`✓ Subscription set to "${tier}"`);
-      getAdminStats().then(setStats).catch(() => {});
+      loadStats();
       setTimeout(() => setTierMsg(''), 3000);
     } catch (e) { alert(e.message); }
   }
@@ -317,7 +322,7 @@ export default function CommandCenter({ onLogout }) {
     try {
       await setAccountantTier(userId, tier);
       setTierMsg(`✓ Tier set to "${tier}"`);
-      getAdminStats().then(setStats).catch(() => {});
+      loadStats();
       setTimeout(() => setTierMsg(''), 3000);
     } catch (e) { alert(e.message); }
   }
@@ -336,7 +341,7 @@ export default function CommandCenter({ onLogout }) {
     try {
       await setAccountantBranding(u.id, form.firmName, form.accentColor);
       setBrandingMsg(`✓ Branding saved for ${u.name || u.email}`);
-      getAdminStats().then(setStats).catch(() => {});
+      loadStats();
       setTimeout(() => setBrandingMsg(''), 3000);
     } catch (e) { alert(e.message); }
   }
