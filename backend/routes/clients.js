@@ -16,11 +16,13 @@ const stmtInsertClient = db.prepare(`
     (id, owner_id, accountant_id, encoder_ids, trade_name, tin, address,
      zip_code, telephone, rdo_code,
      business_type, type, tax_regime, opt_rate, birthday, incorporation_date,
+     civil_status, spouse_tin, tax_option, is_msme,
      subscription_tier, tax_types, created_at)
   VALUES
     (@id, @owner_id, @accountant_id, @encoder_ids, @trade_name, @tin, @address,
      @zip_code, @telephone, @rdo_code,
      @business_type, @type, @tax_regime, @opt_rate, @birthday, @incorporation_date,
+     @civil_status, @spouse_tin, @tax_option, @is_msme,
      @subscription_tier, @tax_types, @created_at)
 `);
 const stmtUpdateClient = db.prepare(`
@@ -29,6 +31,8 @@ const stmtUpdateClient = db.prepare(`
     zip_code=@zip_code, telephone=@telephone, rdo_code=@rdo_code,
     business_type=@business_type, tax_regime=@tax_regime, opt_rate=@opt_rate,
     birthday=@birthday, incorporation_date=@incorporation_date,
+    civil_status=@civil_status, spouse_tin=@spouse_tin,
+    tax_option=@tax_option, is_msme=@is_msme,
     subscription_tier=@subscription_tier, tax_types=@tax_types
   WHERE id=@id
 `);
@@ -75,6 +79,7 @@ router.post('/', (req, res, next) => {
       tradeName, tin, type, address = '', businessType = '',
       zipCode = '', telephone = '', rdoCode = '',
       ownerBirthdate = '', incorporationDate = '',
+      civilStatus = 'Single', spouseTin = '', taxOption = 'graduated', isMsme = false,
       subscriptionTier = 'free',
       taxRegime = 'vat', optRate = 0.03,
       taxTypes = [],
@@ -104,6 +109,10 @@ router.post('/', (req, res, next) => {
       opt_rate:            Number(optRate) || 0.03,
       birthday:            ownerBirthdate || null,
       incorporation_date:  incorporationDate || null,
+      civil_status:        civilStatus || 'Single',
+      spouse_tin:          spouseTin || null,
+      tax_option:          taxOption || 'graduated',
+      is_msme:             isMsme ? 1 : 0,
       subscription_tier:   subscriptionTier,
       tax_types:           JSON.stringify(Array.isArray(taxTypes) ? taxTypes : []),
       created_at:          new Date().toISOString(),
@@ -135,6 +144,7 @@ router.put('/:id', (req, res, next) => {
       tradeName, tin, type, address, businessType,
       zipCode, telephone, rdoCode,
       ownerBirthdate, incorporationDate,
+      civilStatus, spouseTin, taxOption, isMsme,
       subscriptionTier, taxRegime, optRate, taxTypes,
     } = req.body;
 
@@ -152,6 +162,10 @@ router.put('/:id', (req, res, next) => {
       opt_rate:             optRate != null ? Number(optRate) : existing.optRate,
       birthday:             ownerBirthdate      ?? existing.birthday,
       incorporation_date:   incorporationDate   ?? existing.incorporationDate,
+      civil_status:         civilStatus         ?? existing.civilStatus,
+      spouse_tin:           spouseTin           ?? existing.spouseTin,
+      tax_option:           taxOption           ?? existing.taxOption,
+      is_msme:              isMsme != null ? (isMsme ? 1 : 0) : (existing.isMsme ? 1 : 0),
       subscription_tier:    subscriptionTier    ?? existing.subscriptionTier,
       tax_types:            taxTypes != null
                               ? JSON.stringify(Array.isArray(taxTypes) ? taxTypes : [])

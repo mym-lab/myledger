@@ -436,6 +436,280 @@ export function buildBIRReturnHtml({ isOPT, effectiveBirType, periodLabel, birYe
       </div>
     </div>`;
 
+  // ── Helper: peso formatter ────────────────────────────────────────────────
+  const pesoFmt = v => `₱ ${(v || 0).toLocaleString('en-PH', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
+
+  // ── Part I extended for income tax forms (adds civil status / spouse TIN) ──
+  const itPartI = `
+    <div class="bir-part">
+      <div class="bir-part-title">Part I — Background Information</div>
+      <div class="bir-row">
+        ${birField('1 Taxpayer Identification Number (TIN)', tinFormatted || c.tin || '', 'flex:1.5')}
+        ${birField('2 RDO Code', c.rdoCode || '', 'width:80px')}
+        ${birField('3 Line of Business / Occupation', c.businessType || '', 'flex:2')}
+      </div>
+      <div class="bir-row">
+        ${birField('4A Taxpayer\'s Name (Last, First, Middle)', c.tradeName || '', 'flex:3')}
+        ${birField('4B Civil Status', c.civilStatus || 'Single', 'flex:1')}
+      </div>
+      ${c.civilStatus === 'Married' ? `
+      <div class="bir-row">
+        ${birField('5A Spouse\'s Name', '—', 'flex:2')}
+        ${birField('5B Spouse\'s TIN', c.spouseTin || '', 'flex:1.5')}
+        ${birField('5C Spouse\'s RDO Code', '', 'width:90px')}
+      </div>` : ''}
+      <div class="bir-row">
+        ${birField('6 Registered Address', c.address || '', 'flex:3')}
+        ${birField('ZIP Code', c.zipCode || '', 'width:70px')}
+        ${birField('7 Telephone', c.telephone || '', 'flex:1')}
+      </div>
+      <div class="bir-row">
+        ${birField('8 Amended Return?', 'No', 'flex:1')}
+        ${birField('9 No. of Sheets Attached', '—', 'flex:1')}
+        ${birField('10 Date of Birth (MM/DD/YYYY)', c.birthday ? new Date(c.birthday).toLocaleDateString('en-US') : '', 'flex:1.5')}
+        ${birField('11 Tax Year (YYYY)', String(r.year || birYear), 'flex:0.8')}
+      </div>
+    </div>`;
+
+  // ── 1701 — Annual Income Tax Return (Individual / Sole Prop) ─────────────
+  if (effectiveBirType === '1701') {
+    const ti    = r.taxableIncome || 0;
+    const txDue = r.taxDue        || 0;
+    return `${birCss}
+    <div class="bir-wrap">
+      <div class="bir-header">
+        <div class="form-no">BIR Form No. 1701</div>
+        <div class="form-title">Annual Income Tax Return — Individuals (Including Mixed Income Earners)</div>
+        <div class="form-sub">Republic of the Philippines · Department of Finance · Bureau of Internal Revenue</div>
+      </div>
+      ${itPartI}
+      <div class="bir-part">
+        <div class="bir-part-title">Part II — Computation of Taxable Income</div>
+        ${birRow(1,  'Gross Sales / Revenues / Receipts / Fees', r.grossRevenue)}
+        ${birRow(2,  'Less: Cost of Sales / Services', 0)}
+        ${birRow(3,  'Gross Income  (Line 1 − Line 2)', r.grossRevenue, 'bir-total')}
+        ${birRow(4,  'Less: Allowable Itemized Deductions', r.totalExpenses)}
+        ${birRow(5,  'Taxable Compensation Income', 0)}
+        ${birRow(6,  'Total Taxable Income  (Line 3 − Line 4 + Line 5)', ti, 'bir-total')}
+      </div>
+      <div class="bir-part">
+        <div class="bir-part-title">Part III — Computation of Tax (TRAIN Law Graduated Rates, eff. 2023)</div>
+        ${birRow(7,  'Income Tax Due on Taxable Income (TRAIN Law Schedule)', txDue)}
+        ${birRow(8,  'Less: Tax Credits / Payments / Withholding Tax', 0)}
+        ${birRow(9,  'Net Tax Due / (Overpayment)', txDue, 'bir-payable')}
+      </div>
+      <div class="bir-part">
+        <div class="bir-part-title">Part IV — Penalties</div>
+        ${birRow(10, 'Surcharge (25% / 50%)', 0)}
+        ${birRow(11, 'Interest (12% per annum)', 0)}
+        ${birRow(12, 'Compromise', 0)}
+      </div>
+      <div class="bir-part">
+        <div class="bir-part-title">Part V — Summary</div>
+        ${birRow('', 'Total Amount Payable / (Overpayment)  (Sum of Lines 9–12)', txDue, 'bir-payable')}
+      </div>
+      <div class="bir-part" style="background:#fffbea; padding:12px 16px; font-size:12px; color:#7a5f00;">
+        <strong>TRAIN Law Tax Table Applied (eff. 2023):</strong><br>
+        ₱0–₱250K: 0% &nbsp;·&nbsp; ₱250K–₱400K: 15% &nbsp;·&nbsp; ₱400K–₱800K: ₱22,500 + 20% &nbsp;·&nbsp;
+        ₱800K–₱2M: ₱102,500 + 25% &nbsp;·&nbsp; ₱2M–₱8M: ₱402,500 + 30% &nbsp;·&nbsp; Over ₱8M: ₱2,202,500 + 35%
+      </div>
+      <div class="bir-sig">
+        <div class="bir-sig-box">Signature over Printed Name of Taxpayer / Authorized Representative</div>
+        <div class="bir-sig-box">Title / Designation</div>
+        <div class="bir-sig-box">TIN of Signatory</div>
+        <div class="bir-sig-box">Date Signed</div>
+      </div>
+      <p class="bir-note">${r.txCount} transaction(s) included · Due: April 15 of the following year · All amounts in Philippine Peso (₱).</p>
+    </div>`;
+  }
+
+  // ── 1701A — Annual Income Tax Return (Simplified — 8% / OSD) ────────────
+  if (effectiveBirType === '1701A') {
+    const gross   = r.grossRevenue || 0;
+    const txDue   = r.taxDue       || 0;
+    const is8pct  = (c.taxOption || r.taxOption) === '8percent';
+    const taxBase = is8pct ? Math.max(gross - 250000, 0) : gross * 0.60; // OSD: 60% of gross
+    return `${birCss}
+    <div class="bir-wrap">
+      <div class="bir-header">
+        <div class="form-no">BIR Form No. 1701A</div>
+        <div class="form-title">Annual Income Tax Return — Individuals Earning Purely from Business/Profession</div>
+        <div class="form-sub">Republic of the Philippines · Department of Finance · Bureau of Internal Revenue</div>
+      </div>
+      ${itPartI}
+      <div class="bir-part">
+        <div class="bir-part-title">Part II — Method of Deduction</div>
+        <div class="bir-row">
+          ${birField('Availment of 8% Income Tax Rate?', is8pct ? 'YES' : 'NO', 'flex:1')}
+          ${birField('Elected OSD (40% / Optional Standard Deduction)?', !is8pct ? 'YES' : 'NO', 'flex:1')}
+        </div>
+      </div>
+      <div class="bir-part">
+        <div class="bir-part-title">Part III — Computation of Tax</div>
+        ${birRow(1, 'Gross Sales / Revenues / Receipts / Fees', gross)}
+        ${is8pct
+          ? `${birRow(2, 'Less: ₱250,000 Exemption (8% option)', 250000)}
+             ${birRow(3, 'Tax Base (Line 1 − ₱250,000)', taxBase, 'bir-total')}
+             ${birRow(4, 'Income Tax Due (Line 3 × 8%)', txDue, 'bir-payable')}`
+          : `${birRow(2, 'Less: OSD (40% of Gross Revenue)', gross * 0.40)}
+             ${birRow(3, 'Taxable Income after OSD', taxBase, 'bir-total')}
+             ${birRow(4, 'Income Tax Due (TRAIN Graduated Rates)', txDue, 'bir-payable')}`
+        }
+        ${birRow(5, 'Less: Tax Credits / Payments', 0)}
+        ${birRow(6, 'Net Tax Due / (Overpayment)', txDue, 'bir-payable')}
+      </div>
+      <div class="bir-part">
+        <div class="bir-part-title">Part IV — Penalties</div>
+        ${birRow(7, 'Surcharge', 0)}
+        ${birRow(8, 'Interest', 0)}
+        ${birRow(9, 'Compromise', 0)}
+      </div>
+      <div class="bir-part">
+        <div class="bir-part-title">Part V — Summary</div>
+        ${birRow('', 'Total Amount Payable / (Overpayment)', txDue, 'bir-payable')}
+      </div>
+      <div class="bir-sig">
+        <div class="bir-sig-box">Signature over Printed Name of Taxpayer / Authorized Representative</div>
+        <div class="bir-sig-box">Title / Designation</div>
+        <div class="bir-sig-box">TIN of Signatory</div>
+        <div class="bir-sig-box">Date Signed</div>
+      </div>
+      <p class="bir-note">${r.txCount} transaction(s) included · Due: April 15 of the following year · All amounts in Philippine Peso (₱).</p>
+    </div>`;
+  }
+
+  // ── 1702 — Annual Corporate Income Tax Return ────────────────────────────
+  if (effectiveBirType === '1702') {
+    const ti    = r.taxableIncome || 0;
+    const txDue = r.taxDue        || 0;
+    const rate  = c.isMsme ? 20 : 25;
+    const corpPartI = `
+      <div class="bir-part">
+        <div class="bir-part-title">Part I — Background Information</div>
+        <div class="bir-row">
+          ${birField('1 Taxpayer Identification Number (TIN)', tinFormatted || c.tin || '', 'flex:1.5')}
+          ${birField('2 RDO Code', c.rdoCode || '', 'width:80px')}
+          ${birField('3 Line of Business / Industry', c.businessType || '', 'flex:2')}
+        </div>
+        <div class="bir-row">
+          ${birField('4 Corporate Name', c.tradeName || '', 'flex:3')}
+          ${birField('5 Taxpayer Type', c.type || 'Corporation', 'flex:1')}
+        </div>
+        <div class="bir-row">
+          ${birField('6 Registered Address', c.address || '', 'flex:3')}
+          ${birField('ZIP Code', c.zipCode || '', 'width:70px')}
+          ${birField('7 Telephone', c.telephone || '', 'flex:1')}
+        </div>
+        <div class="bir-row">
+          ${birField('8 Amended Return?', 'No', 'flex:1')}
+          ${birField('9 MSME?', c.isMsme ? 'YES — 20% RCIT' : 'NO — 25% RCIT', 'flex:1')}
+          ${birField('10 Date of Incorporation', c.incorporationDate ? new Date(c.incorporationDate).toLocaleDateString('en-US') : '', 'flex:1.5')}
+          ${birField('11 Tax Year (YYYY)', String(r.year || birYear), 'flex:0.8')}
+        </div>
+      </div>`;
+    return `${birCss}
+    <div class="bir-wrap">
+      <div class="bir-header">
+        <div class="form-no">BIR Form No. 1702</div>
+        <div class="form-title">Annual Income Tax Return — Corporations, Partnerships, and Other Non-Individual Taxpayers</div>
+        <div class="form-sub">Republic of the Philippines · Department of Finance · Bureau of Internal Revenue</div>
+      </div>
+      ${corpPartI}
+      <div class="bir-part">
+        <div class="bir-part-title">Part II — Computation of Income Tax</div>
+        ${birRow(1,  'Gross Sales / Revenues / Receipts / Fees', r.grossRevenue)}
+        ${birRow(2,  'Less: Cost of Sales / Services (COGS)', 0)}
+        ${birRow(3,  'Gross Income  (Line 1 − Line 2)', r.grossRevenue, 'bir-total')}
+        ${birRow(4,  'Less: Allowable Deductions / Operating Expenses', r.totalExpenses)}
+        ${birRow(5,  'Taxable Income (Net Income)  (Line 3 − Line 4)', ti, 'bir-total')}
+        ${birRow(6,  `Regular Corporate Income Tax (RCIT) — ${rate}%`, txDue)}
+        ${birRow(7,  'Minimum Corporate Income Tax (MCIT) — 2% of Gross Income', Math.round(r.grossRevenue * 0.02 * 100) / 100)}
+        ${birRow(8,  `Income Tax Due (Higher of RCIT or MCIT = RCIT ${rate}%)`, txDue, 'bir-total')}
+        ${birRow(9,  'Less: Tax Credits / CWT / Payments', 0)}
+        ${birRow(10, 'Net Tax Due / (Overpayment)', txDue, 'bir-payable')}
+      </div>
+      <div class="bir-part">
+        <div class="bir-part-title">Part III — Penalties</div>
+        ${birRow(11, 'Surcharge (25% / 50%)', 0)}
+        ${birRow(12, 'Interest (12% per annum)', 0)}
+        ${birRow(13, 'Compromise', 0)}
+      </div>
+      <div class="bir-part">
+        <div class="bir-part-title">Part IV — Summary</div>
+        ${birRow('', 'Total Amount Payable / (Overpayment)  (Lines 10 + 11 + 12 + 13)', txDue, 'bir-payable')}
+      </div>
+      <div class="bir-sig">
+        <div class="bir-sig-box">Signature over Printed Name of Authorized Officer</div>
+        <div class="bir-sig-box">Title / Designation</div>
+        <div class="bir-sig-box">TIN of Signatory</div>
+        <div class="bir-sig-box">Date Signed</div>
+      </div>
+      <p class="bir-note">${r.txCount} transaction(s) included · Due: April 15 of the following year · Rate: ${rate}% RCIT · All amounts in Philippine Peso (₱).</p>
+    </div>`;
+  }
+
+  // ── 1702Q — Quarterly Corporate Income Tax Return ────────────────────────
+  if (effectiveBirType === '1702Q') {
+    const ti      = r.taxableIncome || 0;
+    const txDue   = r.taxDue        || 0;
+    const rate    = c.isMsme ? 20 : 25;
+    const qtr     = r.quarter || 1;
+    const qLabel  = `Q${qtr} (Cumulative Jan – ${['Mar','Jun','Sep','Dec'][qtr - 1]})`;
+    return `${birCss}
+    <div class="bir-wrap">
+      <div class="bir-header">
+        <div class="form-no">BIR Form No. 1702Q</div>
+        <div class="form-title">Quarterly Income Tax Return — Corporations, Partnerships, and Other Non-Individual Taxpayers</div>
+        <div class="form-sub">Republic of the Philippines · Department of Finance · Bureau of Internal Revenue · Period: ${qLabel} ${r.year || birYear}</div>
+      </div>
+      <div class="bir-part">
+        <div class="bir-part-title">Part I — Background Information</div>
+        <div class="bir-row">
+          ${birField('1 TIN', tinFormatted || '', 'flex:1.5')}
+          ${birField('2 RDO Code', c.rdoCode || '', 'width:80px')}
+          ${birField('3 Line of Business', c.businessType || '', 'flex:2')}
+        </div>
+        <div class="bir-row">
+          ${birField('4 Corporate Name', c.tradeName || '', 'flex:3')}
+          ${birField('5 Taxpayer Type', c.type || 'Corporation', 'flex:1')}
+        </div>
+        <div class="bir-row">
+          ${birField('6 Registered Address', c.address || '', 'flex:3')}
+          ${birField('ZIP', c.zipCode || '', 'width:60px')}
+          ${birField('7 Quarter', qLabel, 'flex:1.5')}
+        </div>
+      </div>
+      <div class="bir-part">
+        <div class="bir-part-title">Part II — Computation of Cumulative Income Tax (Quarter ${qtr})</div>
+        ${birRow(1,  `Gross Sales / Revenues (Cumulative Jan – ${['Mar','Jun','Sep','Dec'][qtr-1]})`, r.grossRevenue)}
+        ${birRow(2,  'Less: Deductions / Operating Expenses (Cumulative)', r.totalExpenses)}
+        ${birRow(3,  'Cumulative Taxable Income  (Line 1 − Line 2)', ti, 'bir-total')}
+        ${birRow(4,  `Income Tax — ${rate}% RCIT (Cumulative)`, txDue)}
+        ${birRow(5,  'Less: Income Tax Paid in Previous Quarter(s)', 0)}
+        ${birRow(6,  'Income Tax Due for this Quarter  (Line 4 − Line 5)', txDue, 'bir-payable')}
+        ${birRow(7,  'Less: Creditable Withholding Tax', 0)}
+        ${birRow(8,  'Net Tax Due / (Overpayment)', txDue, 'bir-payable')}
+      </div>
+      <div class="bir-part">
+        <div class="bir-part-title">Part III — Penalties</div>
+        ${birRow(9,  'Surcharge', 0)}
+        ${birRow(10, 'Interest', 0)}
+        ${birRow(11, 'Compromise', 0)}
+      </div>
+      <div class="bir-part">
+        <div class="bir-part-title">Part IV — Summary</div>
+        ${birRow('', 'Total Amount Payable / (Overpayment)  (Lines 8 + 9 + 10 + 11)', txDue, 'bir-payable')}
+      </div>
+      <div class="bir-sig">
+        <div class="bir-sig-box">Signature over Printed Name of Authorized Officer</div>
+        <div class="bir-sig-box">Title / Designation</div>
+        <div class="bir-sig-box">TIN of Signatory</div>
+        <div class="bir-sig-box">Date Signed</div>
+      </div>
+      <p class="bir-note">${r.txCount} transaction(s) included in cumulative figures · Due: 60 days after end of each quarter · Rate: ${rate}% RCIT · All amounts in Philippine Peso (₱).</p>
+    </div>`;
+  }
+
   // ── 2551M / 2551Q (Percentage Tax — OPT) ─────────────────────────────────
   if (isOPT) {
     const optPct = (r.optRate * 100).toFixed(0);

@@ -988,6 +988,83 @@ function computeOPT(transactions, client, year, month, isQuarterly) {
   return { grossSales, optRate, percentageTax, txCount: filtered.length };
 }
 
+// ─── TRAIN Law income tax helpers ────────────────────────────────────────────
+const round2 = n => Math.round(n * 100) / 100;
+
+function trainGraduated(taxableIncome) {
+  if (taxableIncome <= 0)         return 0;
+  if (taxableIncome <= 250000)    return 0;
+  if (taxableIncome <= 400000)    return round2((taxableIncome - 250000) * 0.15);
+  if (taxableIncome <= 800000)    return round2(22500  + (taxableIncome - 400000) * 0.20);
+  if (taxableIncome <= 2000000)   return round2(102500 + (taxableIncome - 800000) * 0.25);
+  if (taxableIncome <= 8000000)   return round2(402500 + (taxableIncome - 2000000) * 0.30);
+  return round2(2202500 + (taxableIncome - 8000000) * 0.35);
+}
+
+// Annual income tax computation (1701 / 1701A / 1702 / 1702Q)
+function computeIncomeTax(transactions, client, year, quarter /* null = annual */) {
+  const isQuarterly = quarter !== null && quarter !== undefined;
+  const filtered = transactions.filter(t => {
+    const d  = new Date(t.createdAt);
+    if (d.getFullYear() !== year) return false;
+    if (isQuarterly) {
+      // quarter = 1..4; months in quarter: Q1=1-3, Q2=1-6, Q3=1-9, Q4=1-12 (cumulative)
+      const m = d.getMonth() + 1;
+      return m <= quarter * 3;
+    }
+    return true; // annual — all months
+  });
+
+  const income  = filtered.filter(t => t.type === 'income');
+  const expense = filtered.filter(t => t.type === 'expense');
+
+  const grossRevenue  = round2(income.reduce((s, t)  => s + (t.amount_gross || 0), 0));
+  const netRevenue    = round2(income.reduce((s, t)  => s + (t.amount_net   || 0), 0));
+  const totalExpenses = round2(expense.reduce((s, t) => s + (t.amount_net   || 0), 0));
+  const taxableIncome = round2(netRevenue - totalExpenses);
+
+  const type      = client?.type || 'Corporation';
+  const taxOption = client?.taxOption || 'graduated';
+  const isMsme    = !!client?.isMsme;
+
+  const isSoleProp = type === 'Sole Proprietor' || type === 'Individual';
+
+  let taxDue = 0;
+  let method = '';
+
+  if (isSoleProp) {
+    if (taxOption === '8percent') {
+      // 8% flat on (gross revenue - 250,000) — no deductions
+      taxDue = round2(Math.max(grossRevenue - 250000, 0) * 0.08);
+      method = '8% Flat Tax on Gross Revenue − ₱250,000';
+    } else if (taxOption === 'osd') {
+      // OSD: 40% of gross revenue as deduction, then graduated
+      const osdDeduction = round2(grossRevenue * 0.40);
+      const osdTaxable   = round2(grossRevenue - osdDeduction);
+      taxDue = trainGraduated(osdTaxable);
+      method = `OSD (40%) — Taxable Income: ₱${osdTaxable.toLocaleString()}`;
+    } else {
+      // Graduated — net income after actual expenses
+      taxDue = trainGraduated(taxableIncome);
+      method = 'Graduated Rates (Actual Deductions)';
+    }
+  } else {
+    // Corporate: RCIT 25% (regular) or 20% (MSME)
+    const rate = isMsme ? 0.20 : 0.25;
+    taxDue = round2(Math.max(taxableIncome, 0) * rate);
+    method = `${isMsme ? '20% RCIT (MSME)' : '25% RCIT'} on Net Income`;
+  }
+
+  const periodLabel = isQuarterly ? `Q${quarter}` : 'Annual';
+  return {
+    year, quarter, periodLabel,
+    grossRevenue, netRevenue, totalExpenses, taxableIncome,
+    taxDue, method,
+    isSoleProp, taxOption,
+    txCount: filtered.length,
+  };
+}
+
 const TABS = ['Dashboard', 'Transactions', 'Invoices', 'Journal Entries', 'Trial Balance', 'Books', 'General Journal', 'General Ledger', 'COA', 'Period Lock', 'Audit Log', 'BIR Returns', 'Alphalist', 'SLSP', 'Income Statement', 'Balance Sheet', 'Cash Flow', 'Assets', 'Contacts', 'BIR Reminders', 'Referral'];
 
 const BOOKS_COLUMNS = {
@@ -2074,20 +2151,40 @@ export default function AccountantPortal({ onLogout }) {
         {/* ════════════ BIR RETURNS ════════════ */}
         {tab === 'BIR Returns' && active && (
           !isPro ? <ProLock onUpgrade={(tier) => { setUpgradeTarget(tier || 'solo'); setShowUpgrade(true); }} /> : (() => {
-            const isOPT = active.taxRegime === 'opt';
-            // Form options depend on tax regime — 1601-EQ is always available
-            const formOptions = isOPT
-              ? ['2551M', '2551Q', '1601-EQ']
-              : ['2550M', '2550Q', '1601-EQ'];
-            // If current birType doesn't match regime, show correct default
-            const is1601EQ     = birType === '1601-EQ';
-            const effectiveBirType = is1601EQ ? '1601-EQ' : isOPT
-              ? (birType === '2551M' || birType === '2551Q' ? birType : '2551M')
-              : (birType === '2550M' || birType === '2550Q' ? birType : '2550M');
-            const isQuarterly = effectiveBirType === '2550Q' || effectiveBirType === '2551Q' || effectiveBirType === '1601-EQ';
-            const monthNames = ['','January','February','March','April','May','June','July','August','September','October','November','December'];
-            const qLabels    = { 1: 'Q1 (Jan–Mar)', 4: 'Q2 (Apr–Jun)', 7: 'Q3 (Jul–Sep)', 10: 'Q4 (Oct–Dec)' };
-            const periodLabel = isQuarterly ? qLabels[birMonth] : monthNames[birMonth];
+            const isOPT      = active.taxRegime === 'opt';
+            const isSoleProp = active.type === 'Sole Proprietor' || active.type === 'Individual';
+            const isCorp     = !isSoleProp;
+
+            // Form groups
+            const indvITForms = active.taxOption === '8percent'
+              ? ['1701A'] : ['1701'];
+            const corpITForms = ['1702', '1702Q'];
+
+            const vatForms    = isOPT ? ['2551M', '2551Q'] : ['2550M', '2550Q'];
+            const itForms     = isSoleProp ? indvITForms : corpITForms;
+            const formGroups  = [
+              { label: 'Income Tax', forms: itForms },
+              { label: isOPT ? 'Percentage Tax' : 'VAT Returns', forms: vatForms },
+              { label: 'Withholding Tax', forms: ['1601-EQ'] },
+            ];
+            const allForms    = [...itForms, ...vatForms, '1601-EQ'];
+
+            // Normalise the current selection
+            const is1601EQ    = birType === '1601-EQ';
+            const isITForm    = ['1701', '1701A', '1702', '1702Q'].includes(birType);
+            const isVATForm   = ['2550M', '2550Q', '2551M', '2551Q'].includes(birType);
+            const effectiveBirType = allForms.includes(birType) ? birType
+              : (isSoleProp ? (active.taxOption === '8percent' ? '1701A' : '1701') : '1702');
+
+            const isQuarterly = ['2550Q', '2551Q', '1601-EQ', '1702Q'].includes(effectiveBirType);
+            const isAnnual    = ['1701', '1701A', '1702'].includes(effectiveBirType);
+            const monthNames  = ['','January','February','March','April','May','June','July','August','September','October','November','December'];
+            const qLabels     = { 1: 'Q1 (Jan–Mar)', 4: 'Q2 (Apr–Jun)', 7: 'Q3 (Jul–Sep)', 10: 'Q4 (Oct–Dec)' };
+            // For income tax quarterly, quarter = 1-4 (not month index)
+            const itQuarter   = Math.ceil(birMonth / 3) || 1;
+            const periodLabel = isAnnual ? `Annual ${birYear}`
+              : isQuarterly ? qLabels[birMonth] || `Q${itQuarter}`
+              : monthNames[birMonth];
 
             return (
               <div>
@@ -2096,18 +2193,33 @@ export default function AccountantPortal({ onLogout }) {
                     BIR Returns — {active.tradeName}
                   </h2>
                   <Btn size="sm" variant="neutral" onClick={() => {
-                    const r = isOPT ? computeOPT(txns, active, birYear, birMonth, isQuarterly) : computeBIRVAT(txns, birYear, birMonth, isQuarterly);
+                    let r, bodyHtml;
+                    if (isITForm) {
+                      const qNum = ['1702Q'].includes(effectiveBirType) ? itQuarter : null;
+                      r = computeIncomeTax(txns, active, birYear, qNum);
+                      bodyHtml = buildBIRReturnHtml({ effectiveBirType, periodLabel, birYear, r, client: active });
+                    } else if (isOPT) {
+                      r = computeOPT(txns, active, birYear, birMonth, isQuarterly);
+                      bodyHtml = buildBIRReturnHtml({ isOPT, effectiveBirType, periodLabel, birYear, r, client: active });
+                    } else {
+                      r = computeBIRVAT(txns, birYear, birMonth, isQuarterly);
+                      bodyHtml = buildBIRReturnHtml({ isOPT, effectiveBirType, periodLabel, birYear, r, client: active });
+                    }
                     printReport({
                       title: `BIR Form ${effectiveBirType} — ${active.tradeName}`,
-                      subtitle: `${periodLabel} ${birYear}`,
-                      bodyHtml: buildBIRReturnHtml({ isOPT, effectiveBirType, periodLabel, birYear, r, client: active }),
+                      subtitle: periodLabel,
+                      bodyHtml,
                       firmLabel: firmName || 'MyLedger by Kaiman & Co.',
                       accentColor: brandAccent,
                     });
                   }}>⬇ Export PDF</Btn>
                 </div>
                 <div style={{ fontSize: 13, color: T.muted, marginBottom: 24 }}>
-                  {isOPT
+                  {isSoleProp
+                    ? `Individual taxpayer — Form 1701 / 1701A`
+                    : isCorp
+                    ? `Corporate taxpayer — Form 1702 / 1702Q`
+                    : isOPT
                     ? `OPT client (${((active.optRate ?? 0.03) * 100).toFixed(0)}% Percentage Tax) — Form 2551M / 2551Q`
                     : 'VAT-registered client — Form 2550M / 2550Q'}
                 </div>
@@ -2117,14 +2229,22 @@ export default function AccountantPortal({ onLogout }) {
                   <div style={{ display: 'flex', gap: 16, alignItems: 'flex-end', flexWrap: 'wrap' }}>
                     <div>
                       <label style={{ fontSize: 12, color: T.muted, display: 'block', marginBottom: 5 }}>Form</label>
-                      <div style={{ display: 'flex', borderRadius: 8, overflow: 'hidden', border: `1px solid ${T.border}` }}>
-                        {formOptions.map(f => (
-                          <button key={f} onClick={() => setBirType(f)} style={{
-                            padding: '8px 20px', border: 'none', fontSize: 13, fontWeight: 600,
-                            cursor: 'pointer', fontFamily: 'inherit',
-                            background: effectiveBirType === f ? T.accent : T.surface,
-                            color: effectiveBirType === f ? '#fff' : T.muted,
-                          }}>{f}</button>
+                      <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
+                        {formGroups.map(grp => (
+                          <div key={grp.label}>
+                            <div style={{ fontSize: 11, color: T.muted, marginBottom: 3, fontWeight: 600,
+                              textTransform: 'uppercase', letterSpacing: '0.5px' }}>{grp.label}</div>
+                            <div style={{ display: 'flex', borderRadius: 8, overflow: 'hidden', border: `1px solid ${T.border}` }}>
+                              {grp.forms.map(f => (
+                                <button key={f} onClick={() => setBirType(f)} style={{
+                                  padding: '7px 16px', border: 'none', fontSize: 13, fontWeight: 600,
+                                  cursor: 'pointer', fontFamily: 'inherit',
+                                  background: effectiveBirType === f ? T.accent : T.surface,
+                                  color: effectiveBirType === f ? '#fff' : T.muted,
+                                }}>{f}</button>
+                              ))}
+                            </div>
+                          </div>
                         ))}
                       </div>
                     </div>
@@ -2137,7 +2257,7 @@ export default function AccountantPortal({ onLogout }) {
                       </select>
                     </div>
 
-                    {!isQuarterly ? (
+                    {isAnnual ? null : !isQuarterly ? (
                       <div>
                         <label style={{ fontSize: 12, color: T.muted, display: 'block', marginBottom: 5 }}>Month</label>
                         <select style={{ ...inp, width: 140 }} value={birMonth}
@@ -2160,8 +2280,67 @@ export default function AccountantPortal({ onLogout }) {
                   </div>
                 </Card>
 
+                {/* ── Income Tax Forms: 1701 / 1701A / 1702 / 1702Q ── */}
+                {isITForm && (() => {
+                  const qNum = effectiveBirType === '1702Q' ? itQuarter : null;
+                  const r = computeIncomeTax(txns, active, birYear, qNum);
+                  const peso2 = v => `₱${(v || 0).toLocaleString('en-PH', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
+                  return (
+                    <div>
+                      <div style={{ display: 'flex', gap: 16, marginBottom: 20, flexWrap: 'wrap' }}>
+                        <div style={{ background: '#e3f7ed', borderRadius: T.radius, padding: '18px 22px',
+                          border: `1px solid ${T.green}30`, flex: 1, minWidth: 160 }}>
+                          <div style={{ fontSize: 12, color: T.muted, marginBottom: 5 }}>Gross Revenue</div>
+                          <div style={{ fontSize: 22, fontWeight: 700, color: T.green }}>{peso2(r.grossRevenue)}</div>
+                          <div style={{ fontSize: 11, color: T.muted, marginTop: 3 }}>{r.txCount} transactions</div>
+                        </div>
+                        <div style={{ background: '#f0f0ff', borderRadius: T.radius, padding: '18px 22px',
+                          border: `1px solid #8080c030`, flex: 1, minWidth: 160 }}>
+                          <div style={{ fontSize: 12, color: T.muted, marginBottom: 5 }}>Total Deductions / Expenses</div>
+                          <div style={{ fontSize: 22, fontWeight: 700, color: '#5050b0' }}>{peso2(r.totalExpenses)}</div>
+                          <div style={{ fontSize: 11, color: T.muted, marginTop: 3 }}>NET basis</div>
+                        </div>
+                        <div style={{ background: '#fff8ec', borderRadius: T.radius, padding: '18px 22px',
+                          border: `1px solid ${T.orange}30`, flex: 1, minWidth: 160 }}>
+                          <div style={{ fontSize: 12, color: T.muted, marginBottom: 5 }}>Taxable Income</div>
+                          <div style={{ fontSize: 22, fontWeight: 700, color: T.orange }}>{peso2(r.taxableIncome)}</div>
+                          <div style={{ fontSize: 11, color: T.muted, marginTop: 3 }}>{r.method}</div>
+                        </div>
+                        <div style={{ background: '#fff0f5', borderRadius: T.radius, padding: '18px 22px',
+                          border: `1px solid ${T.red}30`, flex: 1, minWidth: 160 }}>
+                          <div style={{ fontSize: 12, color: T.muted, marginBottom: 5 }}>Income Tax Due</div>
+                          <div style={{ fontSize: 22, fontWeight: 700, color: T.red }}>{peso2(r.taxDue)}</div>
+                          <div style={{ fontSize: 11, color: T.muted, marginTop: 3 }}>Before credits / penalties</div>
+                        </div>
+                      </div>
+
+                      {/* TRAIN Law rate table reference */}
+                      {r.isSoleProp && r.taxOption === 'graduated' && (
+                        <Card style={{ marginBottom: 20, fontSize: 13 }}>
+                          <SectionHead>TRAIN Law Graduated Tax Table (Effective 2023)</SectionHead>
+                          {[
+                            ['₱0 – ₱250,000',       '0%',  '₱0'],
+                            ['₱250,001 – ₱400,000',  '15%', '15% of excess over ₱250,000'],
+                            ['₱400,001 – ₱800,000',  '20%', '₱22,500 + 20% of excess over ₱400,000'],
+                            ['₱800,001 – ₱2,000,000','25%', '₱102,500 + 25% of excess over ₱800,000'],
+                            ['₱2M – ₱8M',            '30%', '₱402,500 + 30% of excess over ₱2,000,000'],
+                            ['Over ₱8M',             '35%', '₱2,202,500 + 35% of excess over ₱8,000,000'],
+                          ].map(([band, rate, tax]) => (
+                            <div key={band} style={{ display: 'grid', gridTemplateColumns: '2fr 0.5fr 3fr',
+                              padding: '6px 0', borderBottom: `1px solid ${T.border}`, gap: 8 }}>
+                              <span style={{ color: T.muted }}>{band}</span>
+                              <span style={{ fontWeight: 600, color: T.accent }}>{rate}</span>
+                              <span style={{ color: T.text }}>{tax}</span>
+                            </div>
+                          ))}
+                        </Card>
+                      )}
+                    </div>
+                  );
+                })()}
+
                 {/* ── OPT / 2551 ── */}
-                {isOPT && !is1601EQ && (() => {
+                {isOPT && !is1601EQ && !isITForm && (() => {
                   const r = computeOPT(txns, active, birYear, birMonth, isQuarterly);
                   return (
                     <div>
@@ -2335,7 +2514,7 @@ export default function AccountantPortal({ onLogout }) {
                 })()}
 
                 {/* ── VAT / 2550 ── */}
-                {!isOPT && !is1601EQ && (() => {
+                {!isOPT && !is1601EQ && !isITForm && (() => {
                   const r = computeBIRVAT(txns, birYear, birMonth, isQuarterly);
                   return (
                     <div>

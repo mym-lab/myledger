@@ -61,6 +61,10 @@ CREATE TABLE IF NOT EXISTS clients (
   opt_rate             REAL NOT NULL DEFAULT 0.03,
   birthday             TEXT,
   incorporation_date   TEXT,
+  civil_status         TEXT,
+  spouse_tin           TEXT,
+  tax_option           TEXT,
+  is_msme              INTEGER NOT NULL DEFAULT 0,
   subscription_tier    TEXT NOT NULL DEFAULT 'free',
   tax_types            TEXT NOT NULL DEFAULT '[]',
   created_at           TEXT NOT NULL
@@ -297,6 +301,15 @@ try { db.exec("ALTER TABLE clients ADD COLUMN rdo_code TEXT"); }
 catch (_) { /* column already exists */ }
 try { db.exec("ALTER TABLE clients ADD COLUMN incorporation_date TEXT"); }
 catch (_) { /* column already exists */ }
+// ── v10+ income tax profile fields ───────────────────────────────────────────
+try { db.exec("ALTER TABLE clients ADD COLUMN civil_status TEXT"); }
+catch (_) { /* column already exists */ }
+try { db.exec("ALTER TABLE clients ADD COLUMN spouse_tin TEXT"); }
+catch (_) { /* column already exists */ }
+try { db.exec("ALTER TABLE clients ADD COLUMN tax_option TEXT"); }
+catch (_) { /* column already exists */ }
+try { db.exec("ALTER TABLE clients ADD COLUMN is_msme INTEGER NOT NULL DEFAULT 0"); }
+catch (_) { /* column already exists */ }
 
 // ── Default settings bootstrap ────────────────────────────────────────────────
 const DEFAULT_SETTINGS = {
@@ -377,6 +390,10 @@ export function rowToClient(r) {
     tradeName: r.trade_name, tin: r.tin, address: r.address,
     zipCode: r.zip_code || '', telephone: r.telephone || '',
     rdoCode: r.rdo_code || '', incorporationDate: r.incorporation_date || '',
+    civilStatus: r.civil_status || 'Single',
+    spouseTin: r.spouse_tin || '',
+    taxOption: r.tax_option || 'graduated',
+    isMsme: !!r.is_msme,
     businessType: r.business_type, type: r.type,
     taxRegime: r.tax_regime, optRate: r.opt_rate,
     birthday: r.birthday, ownerBirthdate: r.birthday, subscriptionTier: r.subscription_tier,

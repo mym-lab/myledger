@@ -761,6 +761,7 @@ function BusinessModal({ initialValues, isEdit, onSave, onClose }) {
   const blank = { tradeName: '', tin: '', type: 'Corporation', address: '',
                   zipCode: '', telephone: '', rdoCode: '',
                   ownerBirthdate: '', incorporationDate: '',
+                  civilStatus: 'Single', spouseTin: '', taxOption: 'graduated', isMsme: false,
                   taxTypes: [], subscriptionTier: 'free',
                   taxRegime: 'vat', optRate: '0.03' };
   const [form,   setForm]   = useState(() => initialValues ? { ...blank, ...initialValues } : blank);
@@ -843,23 +844,58 @@ function BusinessModal({ initialValues, isEdit, onSave, onClose }) {
           </Fld>
         </div>
 
-        {/* ── Corporation incorporation date (1702 requirement) ── */}
-        {!isSoleProp && (
-          <Fld label="Date of Incorporation (for BIR Form 1702)">
-            <input style={inp} type="date" value={form.incorporationDate} onChange={set('incorporationDate')} />
-          </Fld>
-        )}
-
-        {/* ── Sole Proprietor birthday (1701 requirement) ── */}
+        {/* ── Sole Proprietor / Individual income tax fields (1701 / 1701A) ── */}
         {isSoleProp && (
           <div style={{ background: '#fffbec', border: `1px solid ${T.yellow}60`, borderRadius: 10,
             padding: '12px 16px', marginBottom: 14 }}>
             <div style={{ fontSize: 13, fontWeight: 600, color: '#a07000', marginBottom: 8 }}>
-              📋 Required for BIR Form 1701 (Annual IT — Individual)
+              📋 Required for BIR Form 1701 / 1701A (Annual Income Tax — Individual)
             </div>
-            <Fld label="Owner's Date of Birth *">
-              <input style={inp} type="date" value={form.ownerBirthdate} onChange={set('ownerBirthdate')} />
+            <div style={{ display: 'grid', gridTemplateColumns: isMobile ? '1fr' : '1fr 1fr', gap: '0 16px' }}>
+              <Fld label="Owner's Date of Birth *">
+                <input style={inp} type="date" value={form.ownerBirthdate} onChange={set('ownerBirthdate')} />
+              </Fld>
+              <Fld label="Civil Status">
+                <select style={inp} value={form.civilStatus} onChange={set('civilStatus')}>
+                  <option value="Single">Single</option>
+                  <option value="Married">Married</option>
+                  <option value="Head of Family">Head of Family</option>
+                  <option value="Legally Separated">Legally Separated</option>
+                  <option value="Widow/Widower">Widow/Widower</option>
+                </select>
+              </Fld>
+            </div>
+            {form.civilStatus === 'Married' && (
+              <Fld label="Spouse's TIN">
+                <input style={inp} value={form.spouseTin} onChange={set('spouseTin')} placeholder="000-000-000-000" />
+              </Fld>
+            )}
+            <Fld label="Income Tax Option (1701A: 8% Flat vs. Graduated Rates)">
+              <select style={inp} value={form.taxOption} onChange={set('taxOption')}>
+                <option value="graduated">Graduated Rates (TRAIN Law — 0% to 35%)</option>
+                <option value="8percent">8% Flat Tax on Gross Revenue − ₱250,000 (Form 1701A)</option>
+                <option value="osd">Optional Standard Deduction (40% of Gross Revenue)</option>
+              </select>
             </Fld>
+          </div>
+        )}
+
+        {/* ── Corporation income tax fields (1702 / 1702Q) ── */}
+        {!isSoleProp && (
+          <div style={{ background: '#f0f4ff', border: `1px solid #4a6cf760`, borderRadius: 10,
+            padding: '12px 16px', marginBottom: 14 }}>
+            <div style={{ fontSize: 13, fontWeight: 600, color: '#2a4a9f', marginBottom: 8 }}>
+              📋 Required for BIR Form 1702 / 1702Q (Annual / Quarterly Corporate Income Tax)
+            </div>
+            <Fld label="Date of Incorporation">
+              <input style={inp} type="date" value={form.incorporationDate} onChange={set('incorporationDate')} />
+            </Fld>
+            <label style={{ display: 'flex', alignItems: 'center', gap: 10, fontSize: 13,
+              cursor: 'pointer', marginTop: 4, marginBottom: 8 }}>
+              <input type="checkbox" checked={!!form.isMsme}
+                onChange={e => setForm(f => ({ ...f, isMsme: e.target.checked }))} />
+              <span>Qualifies as MSME (Micro, Small, Medium Enterprise) — 20% RCIT rate instead of 25%</span>
+            </label>
           </div>
         )}
 
@@ -2438,12 +2474,15 @@ export default function ClientInterface({ onLogout }) {
                   ['Telephone',    active.telephone || '—'],
                   ['RDO Code',     active.rdoCode || '—'],
                   ['Tax Regime',   active.taxRegime === 'opt' ? `OPT / Percentage Tax (${((Number(active.optRate)||0.03)*100).toFixed(1)}%)` : active.taxRegime === 'non_vat_exempt' ? 'Non-VAT Exempt' : 'VAT Registered (12%)'],
-                  ...(active.type === 'Sole Proprietor' && active.ownerBirthdate
-                    ? [['Date of Birth', new Date(active.ownerBirthdate).toLocaleDateString('en-PH', { month: 'long', day: 'numeric', year: 'numeric' })]]
-                    : []),
-                  ...(active.type !== 'Sole Proprietor' && active.incorporationDate
-                    ? [['Date of Incorporation', new Date(active.incorporationDate).toLocaleDateString('en-PH', { month: 'long', day: 'numeric', year: 'numeric' })]]
-                    : []),
+                  ...(active.type === 'Sole Proprietor' ? [
+                    ['Date of Birth', active.ownerBirthdate ? new Date(active.ownerBirthdate).toLocaleDateString('en-PH', { month: 'long', day: 'numeric', year: 'numeric' }) : '—'],
+                    ['Civil Status',  active.civilStatus || '—'],
+                    ...(active.civilStatus === 'Married' ? [['Spouse TIN', active.spouseTin || '—']] : []),
+                    ['IT Option',     active.taxOption === '8percent' ? '8% Flat Tax (Form 1701A)' : active.taxOption === 'osd' ? 'OSD (40%)' : 'Graduated Rates (Form 1701)'],
+                  ] : [
+                    ...(active.incorporationDate ? [['Date of Incorporation', new Date(active.incorporationDate).toLocaleDateString('en-PH', { month: 'long', day: 'numeric', year: 'numeric' })]] : []),
+                    ['MSME Rate',    active.isMsme ? '20% RCIT (MSME)' : '25% RCIT (Regular)'],
+                  ]),
                   ['Client Since', fmtDt(active.createdAt)],
                 ].map(([k, v]) => (
                   <div key={k} style={{ display: 'flex', justifyContent: 'space-between',
