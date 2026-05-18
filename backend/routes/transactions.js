@@ -83,6 +83,7 @@ router.post('/', (req, res, next) => {
       counterpartyName = '', counterpartyTin = '', counterpartyAddress = '',
       referenceNo = '', notes = '',
       ewtRate = 0,
+      date,           // user-specified transaction date (YYYY-MM-DD) — defaults to today
     } = req.body;
 
     if (!clientId)  return res.status(400).json({ error: 'clientId is required' });
@@ -98,8 +99,8 @@ router.post('/', (req, res, next) => {
     if (!client || !canAccess(client, req.userId))
       return res.status(404).json({ error: 'Client not found' });
 
-    // Period lock check
-    const txPeriod = new Date().toISOString().substring(0, 7);
+    // Period lock check — use the submitted date if provided
+    const txPeriod = (date || new Date().toISOString().substring(0, 10)).substring(0, 7);
     if (stmtLockCheck.get(clientId, txPeriod))
       return res.status(423).json({ error: `Period ${txPeriod} is locked. Unlock it first.` });
 
@@ -125,8 +126,12 @@ router.post('/', (req, res, next) => {
     const validEwtRate = [0, 0.01, 0.02, 0.05, 0.10, 0.15, 0.25].includes(Number(ewtRate)) ? Number(ewtRate) : 0;
     const ewtAmount    = type === 'expense' ? Math.round(vatResult.net * validEwtRate * 100) / 100 : 0;
 
-    const id        = uuid();
-    const createdAt = new Date().toISOString();
+    const id = uuid();
+    // Use user-specified date if provided (YYYY-MM-DD), otherwise now.
+    // Store as a full ISO timestamp at start-of-day so date filters keep working.
+    const createdAt = date
+      ? new Date(date + 'T00:00:00.000').toISOString()
+      : new Date().toISOString();
 
     stmtInsertTx.run({
       id,

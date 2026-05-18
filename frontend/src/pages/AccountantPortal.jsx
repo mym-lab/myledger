@@ -370,12 +370,14 @@ function TxModal({ clientId, client, onSaved, onClose }) {
   const isOPT   = client?.taxRegime === 'opt';
   const optRate = client?.optRate ?? 0.03;
 
+  const today = new Date().toISOString().substring(0, 10);
   const blank = {
     type: 'income', amount: '', description: '', category: '', customCat: '',
     vatType: 'vatable', supplierVatType: 'vat', settlement: 'cash', account: '',
     counterpartyName: '', counterpartyTin: '', counterpartyAddress: '',
     referenceNo: '', notes: '',
     ewtRate: '0',  // expense only — expanded withholding tax rate
+    date: today,
   };
   const [form,       setForm]       = useState(blank);
   const [saving,     setSaving]     = useState(false);
@@ -436,6 +438,7 @@ function TxModal({ clientId, client, onSaved, onClose }) {
         counterpartyAddress: form.counterpartyAddress,
         referenceNo: form.referenceNo, notes: form.notes,
         ewtRate: form.type === 'expense' ? parseFloat(form.ewtRate || 0) : 0,
+        date: form.date || undefined,
       });
       onSaved(); onClose();
     } catch (e) { alert(e.message); setSaving(false); }
@@ -470,7 +473,11 @@ function TxModal({ clientId, client, onSaved, onClose }) {
           )}
         </div>
 
-        <div style={{ display: 'grid', gridTemplateColumns: isMobile ? '1fr' : '1fr 1fr', gap: '0 16px' }}>
+        <div style={{ display: 'grid', gridTemplateColumns: isMobile ? '1fr' : '1fr 1fr 1fr', gap: '0 16px' }}>
+          <Fld label="Transaction Date">
+            <input style={inp} type="date" required
+              value={form.date} onChange={set('date')} max={today} />
+          </Fld>
           <Fld label="Type">
             <select style={inp} value={form.type}
               onChange={e => setForm(f => ({ ...f, type: e.target.value, category: '', customCat: '',
