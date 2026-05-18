@@ -1049,10 +1049,55 @@ function computeIncomeTax(transactions, client, year, quarter /* null = annual *
       method = 'Graduated Rates (Actual Deductions)';
     }
   } else {
-    // Corporate: RCIT 25% (regular) or 20% (MSME)
-    const rate = isMsme ? 0.20 : 0.25;
-    taxDue = round2(Math.max(taxableIncome, 0) * rate);
-    method = `${isMsme ? '20% RCIT (MSME)' : '25% RCIT'} on Net Income`;
+    // ── Corporate income tax: RCIT vs MCIT ───────────────────────────────────
+    // RCIT: 25% of net taxable income (20% for MSME qualifying under CREATE)
+    // MCIT: 2% of gross income (revenue − cost of sales), applies from 4th taxable year
+    //       Temporarily 1% under CREATE Act Jul 2020–Jun 2023; back to 2% from Jul 2023
+    // Rule: pay the HIGHER of RCIT or MCIT (MCIT only once in 4th year+)
+
+    const rcitRate = isMsme ? 0.20 : 0.25;
+    // MCIT rate: 1% if period is 2020–Jun 2023, else 2%
+    const mcitRate = (year < 2023 || (year === 2023 && (quarter || 4) <= 2)) ? 0.01 : 0.02;
+
+    // Gross income for MCIT = gross revenue − COGS (we use grossRevenue as proxy if no COGS split)
+    const cogsExpense = expense.filter(t => t.category === 'Cost of Goods Sold');
+    const cogs        = round2(cogsExpense.reduce((s, t) => s + (t.net || 0), 0));
+    const grossIncome = round2(Math.max(grossRevenue - cogs, 0)); // Gross Revenue − COGS
+
+    const rcit = round2(Math.max(taxableIncome, 0) * rcitRate);
+    const mcit = round2(grossIncome * mcitRate);
+
+    // MCIT applicability: only from the 4th taxable year after date of incorporation
+    // If incorporationDate not set, default conservative = MCIT applicable
+    let mcitApplicable = true;
+    if (client?.incorporationDate) {
+      const incDate   = new Date(client.incorporationDate);
+      const incYear   = incDate.getFullYear();
+      // 4th taxable year = incorporation year + 3
+      mcitApplicable  = year >= incYear + 3;
+    }
+
+    const applyMCIT = mcitApplicable && mcit > rcit;
+    taxDue = applyMCIT ? mcit : rcit;
+
+    const rcitLabel = `${(rcitRate * 100).toFixed(0)}% RCIT`;
+    const mcitLabel = `${(mcitRate * 100).toFixed(0)}% MCIT`;
+    method = applyMCIT
+      ? `${mcitLabel} applies (MCIT ₱${mcit.toLocaleString()} > RCIT ₱${rcit.toLocaleString()})`
+      : `${rcitLabel} applies (RCIT ₱${rcit.toLocaleString()} ≥ MCIT ₱${mcit.toLocaleString()})`;
+
+    // Attach MCIT details to return for use in form rendering
+    Object.assign({}, { rcit, mcit, mcitRate, rcitRate, grossIncome, cogs, applyMCIT, mcitApplicable });
+    // store on result object below
+    return {
+      year, quarter, periodLabel: isQuarterly ? `Q${quarter}` : 'Annual',
+      grossRevenue, netRevenue, totalExpenses, taxableIncome,
+      grossIncome, cogs,
+      rcit, mcit, rcitRate, mcitRate, applyMCIT, mcitApplicable,
+      taxDue, method,
+      isSoleProp: false, taxOption: 'rcit',
+      txCount: filtered.length,
+    };
   }
 
   const periodLabel = isQuarterly ? `Q${quarter}` : 'Annual';
@@ -2313,6 +2358,43 @@ export default function AccountantPortal({ onLogout }) {
                           <div style={{ fontSize: 11, color: T.muted, marginTop: 3 }}>Before credits / penalties</div>
                         </div>
                       </div>
+
+                      {/* MCIT vs RCIT breakdown for corporate clients */}
+                      {!r.isSoleProp && (
+                        <Card style={{ marginBottom: 20, fontSize: 13 }}>
+                          <SectionHead>MCIT vs RCIT Comparison</SectionHead>
+                          {[
+                            ['Gross Revenue', `₱${(r.grossRevenue||0).toLocaleString('en-PH',{minimumFractionDigits:2})}`],
+                            ['Less: Cost of Goods Sold (COGS)', `₱${(r.cogs||0).toLocaleString('en-PH',{minimumFractionDigits:2})}`],
+                            ['Gross Income (MCIT base)', `₱${(r.grossIncome||0).toLocaleString('en-PH',{minimumFractionDigits:2})}`],
+                            [`MCIT (${((r.mcitRate||0.02)*100).toFixed(0)}% × Gross Income)`, `₱${(r.mcit||0).toLocaleString('en-PH',{minimumFractionDigits:2})}`],
+                            ['─', '─'],
+                            ['Net Revenue (VAT-exclusive)', `₱${(r.netRevenue||0).toLocaleString('en-PH',{minimumFractionDigits:2})}`],
+                            ['Less: Total Deductible Expenses', `₱${(r.totalExpenses||0).toLocaleString('en-PH',{minimumFractionDigits:2})}`],
+                            ['Net Taxable Income (RCIT base)', `₱${(r.taxableIncome||0).toLocaleString('en-PH',{minimumFractionDigits:2})}`],
+                            [`RCIT (${((r.rcitRate||0.25)*100).toFixed(0)}% × Net Taxable Income)`, `₱${(r.rcit||0).toLocaleString('en-PH',{minimumFractionDigits:2})}`],
+                          ].map(([k, v]) => k === '─' ? (
+                            <div key={k} style={{ borderTop: `1px solid ${T.border}`, margin: '6px 0' }} />
+                          ) : (
+                            <div key={k} style={{ display: 'flex', justifyContent: 'space-between',
+                              padding: '5px 0', borderBottom: `1px solid ${T.border}` }}>
+                              <span style={{ color: T.muted }}>{k}</span>
+                              <span style={{ fontWeight: 500 }}>{v}</span>
+                            </div>
+                          ))}
+                          <div style={{ marginTop: 10, padding: '10px 12px', borderRadius: 8,
+                            background: r.applyMCIT ? '#fff0f5' : '#e3f7ed',
+                            border: `1px solid ${r.applyMCIT ? T.red : T.green}40`,
+                            fontSize: 13, fontWeight: 600,
+                            color: r.applyMCIT ? T.red : T.green }}>
+                            {r.mcitApplicable
+                              ? (r.applyMCIT
+                                  ? `⚠ MCIT applies — ₱${(r.mcit||0).toLocaleString('en-PH',{minimumFractionDigits:2})} (higher than RCIT)`
+                                  : `✓ RCIT applies — ₱${(r.rcit||0).toLocaleString('en-PH',{minimumFractionDigits:2})} (higher than MCIT)`)
+                              : '⚠ MCIT not yet applicable (company has not reached its 4th taxable year)'}
+                          </div>
+                        </Card>
+                      )}
 
                       {/* TRAIN Law rate table reference */}
                       {r.isSoleProp && r.taxOption === 'graduated' && (

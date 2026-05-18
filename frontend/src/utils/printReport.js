@@ -578,12 +578,11 @@ export function buildBIRReturnHtml({ isOPT, effectiveBirType, periodLabel, birYe
     </div>`;
   }
 
-  // ── 1702 — Annual Corporate Income Tax Return ────────────────────────────
-  if (effectiveBirType === '1702') {
-    const ti    = r.taxableIncome || 0;
-    const txDue = r.taxDue        || 0;
-    const rate  = c.isMsme ? 20 : 25;
-    const corpPartI = `
+  // ── Shared corporate Part I (1702 + 1702Q) ───────────────────────────────
+  function corpPartI_html(qLabel) {
+    const mcitPct = ((r.mcitRate || 0.02) * 100).toFixed(0);
+    const rcitPct = ((r.rcitRate || (c.isMsme ? 0.20 : 0.25)) * 100).toFixed(0);
+    return `
       <div class="bir-part">
         <div class="bir-part-title">Part I — Background Information</div>
         <div class="bir-row">
@@ -602,11 +601,31 @@ export function buildBIRReturnHtml({ isOPT, effectiveBirType, periodLabel, birYe
         </div>
         <div class="bir-row">
           ${birField('8 Amended Return?', 'No', 'flex:1')}
-          ${birField('9 MSME?', c.isMsme ? 'YES — 20% RCIT' : 'NO — 25% RCIT', 'flex:1')}
-          ${birField('10 Date of Incorporation', c.incorporationDate ? new Date(c.incorporationDate).toLocaleDateString('en-US') : '', 'flex:1.5')}
-          ${birField('11 Tax Year (YYYY)', String(r.year || birYear), 'flex:0.8')}
+          ${birField('9 RCIT Rate', `${rcitPct}%${c.isMsme ? ' (MSME — CREATE Act)' : ' (Regular)'}`, 'flex:1')}
+          ${birField('10 Date of Incorporation', c.incorporationDate ? new Date(c.incorporationDate).toLocaleDateString('en-US') : '—', 'flex:1.5')}
+          ${birField('11 Tax Year', String(r.year || birYear) + (qLabel ? ` · ${qLabel}` : ''), 'flex:1')}
         </div>
       </div>`;
+  }
+
+  // ── 1702 — Annual Corporate Income Tax Return ────────────────────────────
+  if (effectiveBirType === '1702') {
+    const ti       = r.taxableIncome || 0;
+    const txDue    = r.taxDue        || 0;
+    const rcit     = r.rcit          ?? txDue;
+    const mcit     = r.mcit          ?? 0;
+    const mcitPct  = ((r.mcitRate || 0.02) * 100).toFixed(0);
+    const rcitPct  = ((r.rcitRate || (c.isMsme ? 0.20 : 0.25)) * 100).toFixed(0);
+    const grossInc = r.grossIncome   ?? r.grossRevenue ?? 0;
+    const cogs     = r.cogs          ?? 0;
+    const applyMCIT   = !!r.applyMCIT;
+    const mcitAppl    = r.mcitApplicable !== false; // default true if not set
+    const taxBasisNote = !mcitAppl
+      ? `MCIT not yet applicable (before 4th taxable year) — RCIT ${rcitPct}% applies`
+      : applyMCIT
+        ? `MCIT applies — ₱${mcit.toLocaleString('en-PH', {minimumFractionDigits:2})} > RCIT ₱${rcit.toLocaleString('en-PH', {minimumFractionDigits:2})}`
+        : `RCIT applies — ₱${rcit.toLocaleString('en-PH', {minimumFractionDigits:2})} ≥ MCIT ₱${mcit.toLocaleString('en-PH', {minimumFractionDigits:2})}`;
+
     return `${birCss}
     <div class="bir-wrap">
       <div class="bir-header">
@@ -614,29 +633,39 @@ export function buildBIRReturnHtml({ isOPT, effectiveBirType, periodLabel, birYe
         <div class="form-title">Annual Income Tax Return — Corporations, Partnerships, and Other Non-Individual Taxpayers</div>
         <div class="form-sub">Republic of the Philippines · Department of Finance · Bureau of Internal Revenue</div>
       </div>
-      ${corpPartI}
+      ${corpPartI_html('')}
       <div class="bir-part">
-        <div class="bir-part-title">Part II — Computation of Income Tax</div>
+        <div class="bir-part-title">Part II — Computation of Normal Income Tax</div>
         ${birRow(1,  'Gross Sales / Revenues / Receipts / Fees', r.grossRevenue)}
-        ${birRow(2,  'Less: Cost of Sales / Services (COGS)', 0)}
-        ${birRow(3,  'Gross Income  (Line 1 − Line 2)', r.grossRevenue, 'bir-total')}
+        ${birRow(2,  'Less: Cost of Sales / Services (COGS)', cogs)}
+        ${birRow(3,  'Gross Income  (Line 1 − Line 2)', grossInc, 'bir-total')}
         ${birRow(4,  'Less: Allowable Deductions / Operating Expenses', r.totalExpenses)}
-        ${birRow(5,  'Taxable Income (Net Income)  (Line 3 − Line 4)', ti, 'bir-total')}
-        ${birRow(6,  `Regular Corporate Income Tax (RCIT) — ${rate}%`, txDue)}
-        ${birRow(7,  'Minimum Corporate Income Tax (MCIT) — 2% of Gross Income', Math.round(r.grossRevenue * 0.02 * 100) / 100)}
-        ${birRow(8,  `Income Tax Due (Higher of RCIT or MCIT = RCIT ${rate}%)`, txDue, 'bir-total')}
-        ${birRow(9,  'Less: Tax Credits / CWT / Payments', 0)}
+        ${birRow(5,  'Net Taxable Income  (Line 3 − Line 4)', ti, 'bir-total')}
+        ${birRow(6,  `Regular Corporate Income Tax (RCIT) — ${rcitPct}%  (Line 5 × ${rcitPct}%)`, rcit)}
+      </div>
+      <div class="bir-part">
+        <div class="bir-part-title">Part III — Minimum Corporate Income Tax (MCIT)</div>
+        ${birRow(7,  `MCIT — ${mcitPct}% of Gross Income  (Line 3 × ${mcitPct}%)`, mcit)}
+        ${birRow(8,  mcitAppl
+            ? `Income Tax Due — Higher of RCIT (Line 6) or MCIT (Line 7)`
+            : `Income Tax Due — RCIT only (MCIT not yet applicable — before 4th year)`,
+          txDue, 'bir-total')}
+        ${birRow(9,  'Less: Tax Credits / CWT / Prior Payments', 0)}
         ${birRow(10, 'Net Tax Due / (Overpayment)', txDue, 'bir-payable')}
       </div>
       <div class="bir-part">
-        <div class="bir-part-title">Part III — Penalties</div>
+        <div class="bir-part-title">Part IV — Penalties</div>
         ${birRow(11, 'Surcharge (25% / 50%)', 0)}
         ${birRow(12, 'Interest (12% per annum)', 0)}
         ${birRow(13, 'Compromise', 0)}
       </div>
       <div class="bir-part">
-        <div class="bir-part-title">Part IV — Summary</div>
+        <div class="bir-part-title">Part V — Summary</div>
         ${birRow('', 'Total Amount Payable / (Overpayment)  (Lines 10 + 11 + 12 + 13)', txDue, 'bir-payable')}
+      </div>
+      <div class="bir-part" style="background:#fffbea; padding:10px 16px; font-size:12px; color:#7a5f00;">
+        <strong>MCIT / RCIT Note:</strong> ${taxBasisNote}.
+        ${applyMCIT ? ' Excess MCIT over RCIT may be carried forward as credit for up to 3 succeeding taxable years.' : ''}
       </div>
       <div class="bir-sig">
         <div class="bir-sig-box">Signature over Printed Name of Authorized Officer</div>
@@ -644,17 +673,24 @@ export function buildBIRReturnHtml({ isOPT, effectiveBirType, periodLabel, birYe
         <div class="bir-sig-box">TIN of Signatory</div>
         <div class="bir-sig-box">Date Signed</div>
       </div>
-      <p class="bir-note">${r.txCount} transaction(s) included · Due: April 15 of the following year · Rate: ${rate}% RCIT · All amounts in Philippine Peso (₱).</p>
+      <p class="bir-note">${r.txCount} transaction(s) included · Due: April 15 of the following year · All amounts in Philippine Peso (₱).</p>
     </div>`;
   }
 
   // ── 1702Q — Quarterly Corporate Income Tax Return ────────────────────────
   if (effectiveBirType === '1702Q') {
-    const ti      = r.taxableIncome || 0;
-    const txDue   = r.taxDue        || 0;
-    const rate    = c.isMsme ? 20 : 25;
-    const qtr     = r.quarter || 1;
-    const qLabel  = `Q${qtr} (Cumulative Jan – ${['Mar','Jun','Sep','Dec'][qtr - 1]})`;
+    const ti       = r.taxableIncome || 0;
+    const txDue    = r.taxDue        || 0;
+    const rcit     = r.rcit          ?? txDue;
+    const mcit     = r.mcit          ?? 0;
+    const mcitPct  = ((r.mcitRate || 0.02) * 100).toFixed(0);
+    const rcitPct  = ((r.rcitRate || (c.isMsme ? 0.20 : 0.25)) * 100).toFixed(0);
+    const grossInc = r.grossIncome   ?? r.grossRevenue ?? 0;
+    const cogs     = r.cogs          ?? 0;
+    const applyMCIT   = !!r.applyMCIT;
+    const mcitAppl    = r.mcitApplicable !== false;
+    const qtr      = r.quarter || 1;
+    const qLabel   = `Q${qtr} (Cumulative Jan – ${['Mar','Jun','Sep','Dec'][qtr - 1]})`;
     return `${birCss}
     <div class="bir-wrap">
       <div class="bir-header">
@@ -662,43 +698,34 @@ export function buildBIRReturnHtml({ isOPT, effectiveBirType, periodLabel, birYe
         <div class="form-title">Quarterly Income Tax Return — Corporations, Partnerships, and Other Non-Individual Taxpayers</div>
         <div class="form-sub">Republic of the Philippines · Department of Finance · Bureau of Internal Revenue · Period: ${qLabel} ${r.year || birYear}</div>
       </div>
-      <div class="bir-part">
-        <div class="bir-part-title">Part I — Background Information</div>
-        <div class="bir-row">
-          ${birField('1 TIN', tinFormatted || '', 'flex:1.5')}
-          ${birField('2 RDO Code', c.rdoCode || '', 'width:80px')}
-          ${birField('3 Line of Business', c.businessType || '', 'flex:2')}
-        </div>
-        <div class="bir-row">
-          ${birField('4 Corporate Name', c.tradeName || '', 'flex:3')}
-          ${birField('5 Taxpayer Type', c.type || 'Corporation', 'flex:1')}
-        </div>
-        <div class="bir-row">
-          ${birField('6 Registered Address', c.address || '', 'flex:3')}
-          ${birField('ZIP', c.zipCode || '', 'width:60px')}
-          ${birField('7 Quarter', qLabel, 'flex:1.5')}
-        </div>
-      </div>
+      ${corpPartI_html(qLabel)}
       <div class="bir-part">
         <div class="bir-part-title">Part II — Computation of Cumulative Income Tax (Quarter ${qtr})</div>
         ${birRow(1,  `Gross Sales / Revenues (Cumulative Jan – ${['Mar','Jun','Sep','Dec'][qtr-1]})`, r.grossRevenue)}
-        ${birRow(2,  'Less: Deductions / Operating Expenses (Cumulative)', r.totalExpenses)}
-        ${birRow(3,  'Cumulative Taxable Income  (Line 1 − Line 2)', ti, 'bir-total')}
-        ${birRow(4,  `Income Tax — ${rate}% RCIT (Cumulative)`, txDue)}
-        ${birRow(5,  'Less: Income Tax Paid in Previous Quarter(s)', 0)}
-        ${birRow(6,  'Income Tax Due for this Quarter  (Line 4 − Line 5)', txDue, 'bir-payable')}
-        ${birRow(7,  'Less: Creditable Withholding Tax', 0)}
-        ${birRow(8,  'Net Tax Due / (Overpayment)', txDue, 'bir-payable')}
+        ${birRow(2,  'Less: Cost of Sales / Services (COGS, Cumulative)', cogs)}
+        ${birRow(3,  'Gross Income  (Line 1 − Line 2)', grossInc, 'bir-total')}
+        ${birRow(4,  'Less: Total Allowable Deductions (Cumulative)', r.totalExpenses)}
+        ${birRow(5,  'Cumulative Net Taxable Income  (Line 3 − Line 4)', ti, 'bir-total')}
+        ${birRow(6,  `Cumulative RCIT — ${rcitPct}%  (Line 5 × ${rcitPct}%)`, rcit)}
+        ${birRow(7,  `Cumulative MCIT — ${mcitPct}% of Gross Income  (Line 3 × ${mcitPct}%)`, mcit)}
+        ${birRow(8,  mcitAppl
+            ? 'Cumulative Income Tax Due — Higher of RCIT (Line 6) or MCIT (Line 7)'
+            : 'Cumulative Income Tax Due — RCIT only (MCIT not yet applicable)',
+          txDue, 'bir-total')}
+        ${birRow(9,  'Less: Income Tax Paid in Previous Quarter(s)', 0)}
+        ${birRow(10, 'Income Tax Due this Quarter  (Line 8 − Line 9)', txDue, 'bir-payable')}
+        ${birRow(11, 'Less: Creditable Withholding Tax (CWT)', 0)}
+        ${birRow(12, 'Net Tax Due / (Overpayment)', txDue, 'bir-payable')}
       </div>
       <div class="bir-part">
         <div class="bir-part-title">Part III — Penalties</div>
-        ${birRow(9,  'Surcharge', 0)}
-        ${birRow(10, 'Interest', 0)}
-        ${birRow(11, 'Compromise', 0)}
+        ${birRow(13, 'Surcharge', 0)}
+        ${birRow(14, 'Interest', 0)}
+        ${birRow(15, 'Compromise', 0)}
       </div>
       <div class="bir-part">
         <div class="bir-part-title">Part IV — Summary</div>
-        ${birRow('', 'Total Amount Payable / (Overpayment)  (Lines 8 + 9 + 10 + 11)', txDue, 'bir-payable')}
+        ${birRow('', 'Total Amount Payable / (Overpayment)  (Lines 12 + 13 + 14 + 15)', txDue, 'bir-payable')}
       </div>
       <div class="bir-sig">
         <div class="bir-sig-box">Signature over Printed Name of Authorized Officer</div>
@@ -706,7 +733,7 @@ export function buildBIRReturnHtml({ isOPT, effectiveBirType, periodLabel, birYe
         <div class="bir-sig-box">TIN of Signatory</div>
         <div class="bir-sig-box">Date Signed</div>
       </div>
-      <p class="bir-note">${r.txCount} transaction(s) included in cumulative figures · Due: 60 days after end of each quarter · Rate: ${rate}% RCIT · All amounts in Philippine Peso (₱).</p>
+      <p class="bir-note">${r.txCount} transaction(s) in cumulative figures · Due: 60 days after end of quarter · ${applyMCIT ? `MCIT ${mcitPct}% applies` : `RCIT ${rcitPct}% applies`} · All amounts in Philippine Peso (₱).</p>
     </div>`;
   }
 
