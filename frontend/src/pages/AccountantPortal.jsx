@@ -971,8 +971,9 @@ function computeBIRVAT(transactions, year, month, isQuarterly) {
   const inputVAT        = expense.reduce((s, t) => s + (t.vat   || 0), 0);
   const netVATDue       = Math.max(outputVAT - inputVAT, 0);
   const excessInputVAT  = Math.max(inputVAT - outputVAT, 0);
+  const endMonth = isQuarterly ? q * 3 + 3 : month;
   return { grossSales, outputVAT, grossPurchases, inputVAT, netVATDue, excessInputVAT,
-    txCount: filtered.length };
+    month: endMonth, txCount: filtered.length };
 }
 
 // ─── BIR 2551M/2551Q helper (OPT / Percentage Tax) ───────────────────────────
@@ -989,7 +990,8 @@ function computeOPT(transactions, client, year, month, isQuarterly) {
   });
   const grossSales     = filtered.reduce((s, t) => s + (t.gross || 0), 0);
   const percentageTax  = Math.round(grossSales * optRate * 100) / 100;
-  return { grossSales, optRate, percentageTax, txCount: filtered.length };
+  const endMonth = isQuarterly ? q * 3 + 3 : month;
+  return { grossSales, optRate, percentageTax, month: endMonth, txCount: filtered.length };
 }
 
 // ─── TRAIN Law income tax helpers ────────────────────────────────────────────
@@ -2242,10 +2244,13 @@ export default function AccountantPortal({ onLogout }) {
             const isAnnual    = ['1701', '1701A', '1702'].includes(effectiveBirType);
             const monthNames  = ['','January','February','March','April','May','June','July','August','September','October','November','December'];
             const qLabels     = { 1: 'Q1 (Jan–Mar)', 4: 'Q2 (Apr–Jun)', 7: 'Q3 (Jul–Sep)', 10: 'Q4 (Oct–Dec)' };
-            // For income tax quarterly, quarter = 1-4 (not month index)
-            const itQuarter   = Math.ceil(birMonth / 3) || 1;
+            // Normalize birMonth to the start of its quarter (1, 4, 7, or 10)
+            // This prevents a bug where birMonth=5 (May, the default) makes quarterly forms
+            // visually show Q1 but compute Q2 (Math.ceil(5/3)=2).
+            const qStart    = birMonth <= 3 ? 1 : birMonth <= 6 ? 4 : birMonth <= 9 ? 7 : 10;
+            const itQuarter = qStart === 1 ? 1 : qStart === 4 ? 2 : qStart === 7 ? 3 : 4;
             const periodLabel = isAnnual ? `Annual ${birYear}`
-              : isQuarterly ? qLabels[birMonth] || `Q${itQuarter}`
+              : isQuarterly ? qLabels[qStart]
               : monthNames[birMonth];
 
             return (
@@ -2261,10 +2266,10 @@ export default function AccountantPortal({ onLogout }) {
                       r = computeIncomeTax(txns, active, birYear, qNum);
                       bodyHtml = buildBIRReturnHtml({ effectiveBirType, periodLabel, birYear, r, client: active });
                     } else if (isOPT) {
-                      r = computeOPT(txns, active, birYear, birMonth, isQuarterly);
+                      r = computeOPT(txns, active, birYear, isQuarterly ? qStart : birMonth, isQuarterly);
                       bodyHtml = buildBIRReturnHtml({ isOPT, effectiveBirType, periodLabel, birYear, r, client: active });
                     } else {
-                      r = computeBIRVAT(txns, birYear, birMonth, isQuarterly);
+                      r = computeBIRVAT(txns, birYear, isQuarterly ? qStart : birMonth, isQuarterly);
                       bodyHtml = buildBIRReturnHtml({ isOPT, effectiveBirType, periodLabel, birYear, r, client: active });
                     }
                     printReport({
@@ -2330,7 +2335,7 @@ export default function AccountantPortal({ onLogout }) {
                     ) : (
                       <div>
                         <label style={{ fontSize: 12, color: T.muted, display: 'block', marginBottom: 5 }}>Quarter</label>
-                        <select style={{ ...inp, width: 140 }} value={birMonth}
+                        <select style={{ ...inp, width: 140 }} value={qStart}
                           onChange={e => setBirMonth(Number(e.target.value))}>
                           <option value={1}>Q1 (Jan–Mar)</option>
                           <option value={4}>Q2 (Apr–Jun)</option>
@@ -2465,7 +2470,7 @@ export default function AccountantPortal({ onLogout }) {
 
                 {/* ── OPT / 2551 ── */}
                 {isOPT && !is1601EQ && !isITForm && (() => {
-                  const r = computeOPT(txns, active, birYear, birMonth, isQuarterly);
+                  const r = computeOPT(txns, active, birYear, isQuarterly ? qStart : birMonth, isQuarterly);
                   return (
                     <div>
                       <div style={{ display: 'flex', gap: 16, marginBottom: 20, flexWrap: 'wrap' }}>
@@ -2639,7 +2644,7 @@ export default function AccountantPortal({ onLogout }) {
 
                 {/* ── VAT / 2550 ── */}
                 {!isOPT && !is1601EQ && !isITForm && (() => {
-                  const r = computeBIRVAT(txns, birYear, birMonth, isQuarterly);
+                  const r = computeBIRVAT(txns, birYear, isQuarterly ? qStart : birMonth, isQuarterly);
                   return (
                     <div>
                       <div style={{ display: 'flex', gap: 16, marginBottom: 20, flexWrap: 'wrap' }}>
