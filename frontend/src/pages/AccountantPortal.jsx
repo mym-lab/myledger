@@ -1176,6 +1176,11 @@ export default function AccountantPortal({ onLogout }) {
   const [booksTo,   setBooksTo]   = useState('');
   const [booksData, setBooksData] = useState(null);
   const [booksLoad, setBooksLoad] = useState(false);
+  // Income Statement date range
+  const [incFrom,   setIncFrom]   = useState('');
+  const [incTo,     setIncTo]     = useState('');
+  // Balance Sheet as-of date
+  const [balAsOf,   setBalAsOf]   = useState('');
   // Cash Flow
   const [cfFrom,    setCfFrom]    = useState('');
   const [cfTo,      setCfTo]      = useState('');
@@ -1302,8 +1307,8 @@ export default function AccountantPortal({ onLogout }) {
     if (tab === 'BIR Reminders')    loadBIR();
     // Pro-only tabs
     if (!isPro) return;
-    if (tab === 'Income Statement') loadIncome();
-    if (tab === 'Balance Sheet')    loadBalance();
+    if (tab === 'Income Statement') { setIncome(null); }
+    if (tab === 'Balance Sheet')    { setBalance(null); }
     if (tab === 'Cash Flow')        loadCashFlow();
     if (tab === 'Journal Entries')  loadJournals();
     if (tab === 'Trial Balance')    { loadTxns(); loadJournals(); }
@@ -1361,13 +1366,13 @@ export default function AccountantPortal({ onLogout }) {
     finally { setTxLoad(false); }
   }
 
-  async function loadIncome() {
-    try { setIncome(await getIncomeReport(active.id)); }
+  async function loadIncome(from, to) {
+    try { setIncome(await getIncomeReport(active.id, from || undefined, to || undefined)); }
     catch (e) { console.error(e); }
   }
 
-  async function loadBalance() {
-    try { setBalance(await getBalanceReport(active.id)); }
+  async function loadBalance(asOf) {
+    try { setBalance(await getBalanceReport(active.id, asOf || undefined)); }
     catch (e) { console.error(e); }
   }
 
@@ -1662,7 +1667,7 @@ export default function AccountantPortal({ onLogout }) {
                   <select value={active?.id || ''} onChange={e => {
                     const c = clients.find(x => x.id === e.target.value);
                     setActive(c); setTxns([]); setIncome(null); setBalance(null); setVatBal(null); setDL([]);
-                    setBooksData(null); setCfReport(null);
+                    setBooksData(null); setCfReport(null); setIncFrom(''); setIncTo(''); setBalAsOf('');
                   }} style={{ border: 'none', background: 'transparent', fontSize: 14, fontWeight: 600,
                     color: T.text, cursor: 'pointer', outline: 'none', fontFamily: 'inherit' }}>
                     {clients.map(c => <option key={c.id} value={c.id}>{c.tradeName}</option>)}
@@ -3148,7 +3153,22 @@ export default function AccountantPortal({ onLogout }) {
               All amounts are NET (VAT-exclusive) — correct P&amp;L basis under PFRS.
             </div>
 
-            {!income ? <div style={{ color: T.muted }}>Loading…</div> : (() => {
+            <Card style={{ marginBottom: 20 }}>
+              <SectionHead>Date Range</SectionHead>
+              <div style={{ display: 'flex', gap: 12, alignItems: 'flex-end', flexWrap: 'wrap' }}>
+                <Fld label="From"><input style={{ ...inp, width: 160 }} type="date" value={incFrom} onChange={e => setIncFrom(e.target.value)} /></Fld>
+                <Fld label="To"><input style={{ ...inp, width: 160 }} type="date" value={incTo} onChange={e => setIncTo(e.target.value)} /></Fld>
+                <Btn onClick={() => loadIncome(incFrom, incTo)} style={{ marginBottom: 14 }}>Run Report</Btn>
+                {(incFrom || incTo) && <Btn variant="ghost" onClick={() => { setIncFrom(''); setIncTo(''); loadIncome('', ''); }} style={{ marginBottom: 14 }}>All Periods</Btn>}
+              </div>
+            </Card>
+
+            {!income ? (
+              <div style={{ color: T.muted, textAlign: 'center', padding: 48 }}>
+                Select a date range above and click <strong>Run Report</strong>.<br />
+                <span style={{ fontSize: 12 }}>Leave dates blank to include all periods.</span>
+              </div>
+            ) : (() => {
               const eb       = income.expenseBreakdown || {};
               const cogsMap  = eb.cogs || {};
               const opexMap  = eb.opex || {};
@@ -3239,7 +3259,21 @@ export default function AccountantPortal({ onLogout }) {
               Derived from transaction settlements and VAT accounts. All amounts VAT-exclusive.
             </div>
 
-            {!balance ? <div style={{ color: T.muted }}>Loading…</div> : (() => {
+            <Card style={{ marginBottom: 20 }}>
+              <SectionHead>As-of Date</SectionHead>
+              <div style={{ display: 'flex', gap: 12, alignItems: 'flex-end', flexWrap: 'wrap' }}>
+                <Fld label="As Of"><input style={{ ...inp, width: 160 }} type="date" value={balAsOf} onChange={e => setBalAsOf(e.target.value)} /></Fld>
+                <Btn onClick={() => loadBalance(balAsOf)} style={{ marginBottom: 14 }}>Run Report</Btn>
+                {balAsOf && <Btn variant="ghost" onClick={() => { setBalAsOf(''); loadBalance(''); }} style={{ marginBottom: 14 }}>Today</Btn>}
+              </div>
+            </Card>
+
+            {!balance ? (
+              <div style={{ color: T.muted, textAlign: 'center', padding: 48 }}>
+                Select a date above and click <strong>Run Report</strong>.<br />
+                <span style={{ fontSize: 12 }}>Leave blank to see the current balance.</span>
+              </div>
+            ) : (() => {
               const a = balance.assets || {};
               const l = balance.liabilities || {};
               const totalCurrentAssets = (a.input_vat || 0) + (a.accounts_receivable || 0) + (a.cash_net > 0 ? a.cash_net : 0);
