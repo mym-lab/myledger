@@ -845,6 +845,276 @@ export function buildBIRReturnHtml({ isOPT, effectiveBirType, periodLabel, birYe
   </div>`;
 }
 
+// ─────────────────────────────────────────────────────────────────────────────
+// BIR Form 1601-EQ — Quarterly Remittance Return of Creditable Income Taxes Withheld (Expanded)
+// ─────────────────────────────────────────────────────────────────────────────
+export function build1601EQHtml({ txns, client, birYear, qStart, periodLabel }) {
+  const c = client || {};
+  const tinFormatted = (c.tin || '').replace(/[^0-9]/g, '').replace(/(\d{3})(\d{3})(\d{3})(\d*)/, '$1-$2-$3-$4').replace(/-$/, '');
+  const qMths = [qStart, qStart + 1, qStart + 2];
+  const qNum  = qStart === 1 ? 1 : qStart === 4 ? 2 : qStart === 7 ? 3 : 4;
+  const endMonthLabel = ['March', 'June', 'September', 'December'][qNum - 1];
+
+  const ATC_MAP = {
+    0.01: { atc: 'WC010', description: 'Supplier of Goods — Top 20,000 Corporations' },
+    0.02: { atc: 'WC020', description: 'Supplier of Services / Contractors' },
+    0.05: { atc: 'WF010', description: 'Professional / Talent Fees (5%)' },
+    0.10: { atc: 'WF020', description: 'Professional / Talent Fees (10%)' },
+    0.15: { atc: 'WR010', description: 'Rental — Real / Personal Property (15%)' },
+    0.25: { atc: 'WF000', description: 'Non-Resident Payees (25%)' },
+  };
+
+  const filtered = (txns || []).filter(t => {
+    const d = new Date(t.createdAt);
+    return d.getFullYear() === birYear && qMths.includes(d.getMonth() + 1)
+      && t.type === 'expense' && parseFloat(t.ewtRate) > 0 && t.ewtAmount > 0;
+  });
+
+  const byAtc = {};
+  filtered.forEach(t => {
+    const rate = parseFloat(t.ewtRate);
+    const info = ATC_MAP[rate] || { atc: `WC${String(Math.round(rate * 100)).padStart(3, '0')}`, description: `EWT ${(rate * 100).toFixed(0)}%` };
+    const key = info.atc;
+    byAtc[key] = byAtc[key] || { ...info, rate, base: 0, ewt: 0 };
+    byAtc[key].base = Math.round((byAtc[key].base + (t.amount_net || 0)) * 100) / 100;
+    byAtc[key].ewt  = Math.round((byAtc[key].ewt  + (t.ewtAmount  || 0)) * 100) / 100;
+  });
+  const atcList  = Object.values(byAtc);
+  const totalEWT  = Math.round(atcList.reduce((s, a) => s + a.ewt,  0) * 100) / 100;
+  const totalBase = Math.round(atcList.reduce((s, a) => s + a.base, 0) * 100) / 100;
+
+  const atcRows = atcList.length === 0
+    ? `<tr><td colspan="5" style="text-align:center;color:#999;font-style:italic;padding:14px">No EWT transactions for this quarter</td></tr>`
+    : atcList.map(a => `
+        <tr>
+          <td style="font-family:monospace;font-weight:700;color:#003087;padding:6px 8px;border:1px solid #ddd">${a.atc}</td>
+          <td style="padding:6px 8px;border:1px solid #ddd">${a.description}</td>
+          <td style="text-align:right;padding:6px 8px;border:1px solid #ddd">${peso(a.base)}</td>
+          <td style="text-align:right;padding:6px 8px;border:1px solid #ddd">${(a.rate * 100).toFixed(0)}%</td>
+          <td style="text-align:right;font-weight:700;padding:6px 8px;border:1px solid #ddd">${peso(a.ewt)}</td>
+        </tr>`).join('');
+
+  const payeeRows = filtered.map(t => {
+    const d    = new Date(t.createdAt);
+    const rate = parseFloat(t.ewtRate);
+    const info = ATC_MAP[rate] || { atc: `WC${String(Math.round(rate * 100)).padStart(3, '0')}` };
+    return `
+      <tr>
+        <td style="padding:5px 8px;border:1px solid #ddd">${d.toLocaleDateString('en-PH', { month: 'short', day: 'numeric' })}</td>
+        <td style="padding:5px 8px;border:1px solid #ddd">${t.counterpartyName || '—'}</td>
+        <td style="font-family:monospace;font-weight:700;color:#003087;padding:5px 8px;border:1px solid #ddd">${info.atc}</td>
+        <td style="padding:5px 8px;border:1px solid #ddd;color:#555">${t.description || '—'}</td>
+        <td style="text-align:right;padding:5px 8px;border:1px solid #ddd">${peso(t.amount_net || 0)}</td>
+        <td style="text-align:right;padding:5px 8px;border:1px solid #ddd">${(rate * 100).toFixed(0)}%</td>
+        <td style="text-align:right;font-weight:700;padding:5px 8px;border:1px solid #ddd">${peso(t.ewtAmount || 0)}</td>
+      </tr>`;
+  }).join('');
+
+  return `${birCss}
+  <div class="bir-wrap">
+    <div class="bir-header">
+      <div class="form-no">BIR Form No. 1601-EQ</div>
+      <div class="form-title">Quarterly Remittance Return of Creditable Income Taxes Withheld (Expanded)</div>
+      <div class="form-sub">Republic of the Philippines · Department of Finance · Bureau of Internal Revenue</div>
+    </div>
+
+    <div class="bir-part">
+      <div class="bir-part-title">Part I — Background Information</div>
+      <div class="bir-row">
+        ${birField('1 Taxpayer Identification Number (TIN)', tinFormatted || c.tin || '', 'flex:1.5')}
+        ${birField('2 RDO Code', c.rdoCode || '', 'width:80px')}
+        ${birField('3 Line of Business / Occupation', c.businessType || c.type || '', 'flex:2')}
+      </div>
+      <div class="bir-row">
+        ${birField("4 Taxpayer's Name", c.tradeName || '', 'flex:3')}
+        ${birField('5 Tax Type', 'EWT (Expanded Withholding Tax)', 'flex:1.5')}
+      </div>
+      <div class="bir-row">
+        ${birField('6 Registered Address', c.address || '', 'flex:3')}
+        ${birField('ZIP Code', c.zipCode || '', 'width:70px')}
+        ${birField('7 Telephone', c.telephone || '', 'flex:1')}
+      </div>
+      <div class="bir-row">
+        ${birField('8 Amended Return?', 'No', 'flex:1')}
+        ${birField('9 Return Period', `Q${qNum} — Jan–${endMonthLabel} ${birYear}`, 'flex:2')}
+        ${birField('10 No. of Sheets Attached', String(filtered.length), 'flex:1')}
+      </div>
+    </div>
+
+    <div class="bir-part">
+      <div class="bir-part-title">Part II — Computation of Tax (Schedule of EWT by ATC)</div>
+      <table style="width:100%;border-collapse:collapse;font-size:8.5pt;margin:0">
+        <thead>
+          <tr style="background:#f0f0f0">
+            <th style="padding:6px 8px;text-align:left;border:1px solid #ccc;width:90px">ATC</th>
+            <th style="padding:6px 8px;text-align:left;border:1px solid #ccc">Nature of Income Payment</th>
+            <th style="padding:6px 8px;text-align:right;border:1px solid #ccc;width:120px">Income Payment</th>
+            <th style="padding:6px 8px;text-align:right;border:1px solid #ccc;width:70px">Tax Rate</th>
+            <th style="padding:6px 8px;text-align:right;border:1px solid #ccc;width:120px">Tax Withheld</th>
+          </tr>
+        </thead>
+        <tbody>${atcRows}</tbody>
+        <tfoot>
+          <tr style="background:#f8f8f8;font-weight:700">
+            <td colspan="4" style="padding:8px;border:1px solid #ccc">TOTAL EWT Withheld for the Quarter (Line 1)</td>
+            <td style="padding:8px;text-align:right;border:1px solid #ccc">${peso(totalEWT)}</td>
+          </tr>
+        </tfoot>
+      </table>
+    </div>
+
+    <div class="bir-part">
+      <div class="bir-part-title">Part III — Tax Due / Penalties</div>
+      ${birRow(1, 'Total EWT Withheld for the Quarter', totalEWT)}
+      ${birRow(2, 'Less: Tax Remitted in Previous Month(s) of the Quarter (if applicable)', 0)}
+      ${birRow(3, 'Tax Still Due / (Overpayment) (Line 1 − Line 2)', totalEWT, 'bir-total')}
+      <div class="bir-row"><div class="bir-lineno"></div><div class="bir-cell" style="flex:1;font-weight:700;font-size:8pt;padding:4px 6px">ADD PENALTIES:</div></div>
+      ${birRow(4, 'Surcharge (25% / 50%)', 0)}
+      ${birRow(5, 'Interest (12% per annum)', 0)}
+      ${birRow(6, 'Compromise', 0)}
+      ${birRow('', 'TOTAL AMOUNT PAYABLE / (OVERPAYMENT) (Lines 3 + 4 + 5 + 6)', totalEWT, 'bir-payable')}
+    </div>
+
+    ${filtered.length > 0 ? `
+    <div class="bir-part" style="margin-top:14px">
+      <div class="bir-part-title">Annex — Schedule of Individual EWT Transactions (${filtered.length} transaction${filtered.length !== 1 ? 's' : ''})</div>
+      <table style="width:100%;border-collapse:collapse;font-size:8pt;margin:0">
+        <thead>
+          <tr style="background:#f0f0f0">
+            <th style="padding:5px 8px;text-align:left;border:1px solid #ccc">Date</th>
+            <th style="padding:5px 8px;text-align:left;border:1px solid #ccc">Payee</th>
+            <th style="padding:5px 8px;text-align:left;border:1px solid #ccc">ATC</th>
+            <th style="padding:5px 8px;text-align:left;border:1px solid #ccc">Description</th>
+            <th style="padding:5px 8px;text-align:right;border:1px solid #ccc">NET Amount</th>
+            <th style="padding:5px 8px;text-align:right;border:1px solid #ccc">Rate</th>
+            <th style="padding:5px 8px;text-align:right;border:1px solid #ccc">EWT Withheld</th>
+          </tr>
+        </thead>
+        <tbody>${payeeRows}</tbody>
+        <tfoot>
+          <tr style="background:#f8f8f8;font-weight:700">
+            <td colspan="4" style="padding:6px 8px;border:1px solid #ccc">TOTAL</td>
+            <td style="padding:6px 8px;text-align:right;border:1px solid #ccc">${peso(totalBase)}</td>
+            <td style="border:1px solid #ccc"></td>
+            <td style="padding:6px 8px;text-align:right;border:1px solid #ccc">${peso(totalEWT)}</td>
+          </tr>
+        </tfoot>
+      </table>
+    </div>` : ''}
+
+    <div style="margin-top:16px;display:flex;gap:16px">
+      <div class="bir-sig-box">Signature over Printed Name of Authorized Representative</div>
+      <div class="bir-sig-box">Title / Position</div>
+      <div class="bir-sig-box">TIN of Signatory</div>
+      <div class="bir-sig-box">Date</div>
+    </div>
+    <p class="bir-note">${filtered.length} EWT transaction(s) included · Due: Last day of the month after quarter end · All amounts in Philippine Peso (₱).</p>
+  </div>`;
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// BIR Form 1601-C — Monthly Remittance Return of Income Taxes Withheld on Compensation
+// ─────────────────────────────────────────────────────────────────────────────
+export function build1601CHtml({ payrollResult, client, monthLabel }) {
+  const c = client || {};
+  const tinFormatted = (c.tin || '').replace(/[^0-9]/g, '').replace(/(\d{3})(\d{3})(\d{3})(\d*)/, '$1-$2-$3-$4').replace(/-$/, '');
+  const result    = payrollResult || { employees: [], totals: {} };
+  const employees = result.employees || [];
+  const totals    = result.totals    || {};
+  const totalWHT  = totals.total_monthly_wht     || 0;
+  const totalBasic = totals.total_monthly_basic   || 0;
+
+  const empRows = employees.length === 0
+    ? `<tr><td colspan="6" style="text-align:center;color:#999;font-style:italic;padding:14px">No employees on record</td></tr>`
+    : employees.map(e => `
+        <tr>
+          <td style="padding:5px 8px;border:1px solid #ddd">${e.name}</td>
+          <td style="padding:5px 8px;border:1px solid #ddd;color:#555">${e.tin || '—'}</td>
+          <td style="text-align:right;padding:5px 8px;border:1px solid #ddd">${peso(e.monthly_basic_salary)}</td>
+          <td style="text-align:right;padding:5px 8px;border:1px solid #ddd">${peso(e.monthly_deductions)}</td>
+          <td style="text-align:right;padding:5px 8px;border:1px solid #ddd">${peso(e.monthly_taxable)}</td>
+          <td style="text-align:right;font-weight:700;padding:5px 8px;border:1px solid #ddd">${peso(e.monthly_wht)}</td>
+        </tr>`).join('');
+
+  return `${birCss}
+  <div class="bir-wrap">
+    <div class="bir-header">
+      <div class="form-no">BIR Form No. 1601-C</div>
+      <div class="form-title">Monthly Remittance Return of Income Taxes Withheld on Compensation</div>
+      <div class="form-sub">Republic of the Philippines · Department of Finance · Bureau of Internal Revenue</div>
+    </div>
+
+    <div class="bir-part">
+      <div class="bir-part-title">Part I — Background Information</div>
+      <div class="bir-row">
+        ${birField('1 Taxpayer Identification Number (TIN)', tinFormatted || c.tin || '', 'flex:1.5')}
+        ${birField('2 RDO Code', c.rdoCode || '', 'width:80px')}
+        ${birField('3 Line of Business / Occupation', c.businessType || c.type || '', 'flex:2')}
+      </div>
+      <div class="bir-row">
+        ${birField("4 Taxpayer's Name", c.tradeName || '', 'flex:3')}
+        ${birField('5 Tax Type', 'WC (Withholding Tax on Compensation)', 'flex:1.5')}
+      </div>
+      <div class="bir-row">
+        ${birField('6 Registered Address', c.address || '', 'flex:3')}
+        ${birField('ZIP Code', c.zipCode || '', 'width:70px')}
+        ${birField('7 Telephone', c.telephone || '', 'flex:1')}
+      </div>
+      <div class="bir-row">
+        ${birField('8 Amended Return?', 'No', 'flex:1')}
+        ${birField('9 Return Period', monthLabel || '', 'flex:2')}
+        ${birField('10 No. of Employees', String(employees.length), 'flex:1')}
+      </div>
+    </div>
+
+    <div class="bir-part">
+      <div class="bir-part-title">Part II — Computation of Tax (Schedule of Employees)</div>
+      <table style="width:100%;border-collapse:collapse;font-size:8.5pt;margin:0">
+        <thead>
+          <tr style="background:#f0f0f0">
+            <th style="padding:6px 8px;text-align:left;border:1px solid #ccc">Employee Name</th>
+            <th style="padding:6px 8px;text-align:left;border:1px solid #ccc;width:100px">TIN</th>
+            <th style="padding:6px 8px;text-align:right;border:1px solid #ccc;width:110px">Monthly Basic</th>
+            <th style="padding:6px 8px;text-align:right;border:1px solid #ccc;width:110px">Deductions</th>
+            <th style="padding:6px 8px;text-align:right;border:1px solid #ccc;width:110px">Taxable</th>
+            <th style="padding:6px 8px;text-align:right;border:1px solid #ccc;width:110px">WHT</th>
+          </tr>
+        </thead>
+        <tbody>${empRows}</tbody>
+        <tfoot>
+          <tr style="background:#f8f8f8;font-weight:700">
+            <td colspan="2" style="padding:8px;border:1px solid #ccc">TOTAL (${employees.length} employee${employees.length !== 1 ? 's' : ''})</td>
+            <td style="padding:8px;text-align:right;border:1px solid #ccc">${peso(totalBasic)}</td>
+            <td style="padding:8px;border:1px solid #ccc"></td>
+            <td style="padding:8px;border:1px solid #ccc"></td>
+            <td style="padding:8px;text-align:right;border:1px solid #ccc">${peso(totalWHT)}</td>
+          </tr>
+        </tfoot>
+      </table>
+    </div>
+
+    <div class="bir-part">
+      <div class="bir-part-title">Part III — Tax Due / Penalties</div>
+      ${birRow(1, 'Total Taxes Withheld on Compensation for the Month', totalWHT)}
+      ${birRow(2, 'Less: Tax Remitted in Previous Return (if amended)', 0)}
+      ${birRow(3, 'Tax Still Due / (Overpayment) (Line 1 − Line 2)', totalWHT, 'bir-total')}
+      <div class="bir-row"><div class="bir-lineno"></div><div class="bir-cell" style="flex:1;font-weight:700;font-size:8pt;padding:4px 6px">ADD PENALTIES:</div></div>
+      ${birRow(4, 'Surcharge (25% / 50%)', 0)}
+      ${birRow(5, 'Interest (12% per annum)', 0)}
+      ${birRow(6, 'Compromise', 0)}
+      ${birRow('', 'TOTAL AMOUNT PAYABLE / (OVERPAYMENT) (Lines 3 + 4 + 5 + 6)', totalWHT, 'bir-payable')}
+    </div>
+
+    <div style="margin-top:16px;display:flex;gap:16px">
+      <div class="bir-sig-box">Signature over Printed Name of Authorized Representative</div>
+      <div class="bir-sig-box">Title / Position</div>
+      <div class="bir-sig-box">TIN of Signatory</div>
+      <div class="bir-sig-box">Date</div>
+    </div>
+    <p class="bir-note">${employees.length} employee(s) · Due: On or before the 10th of the following month · All amounts in Philippine Peso (₱).</p>
+  </div>`;
+}
+
 export function buildBooksHtml({ booksType, booksData, clientName }) {
   if (!booksData) return '<p style="color:#6e6e73">No data available.</p>';
   const rows   = booksData.rows   || [];

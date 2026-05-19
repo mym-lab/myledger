@@ -224,6 +224,13 @@ export const markInvoicePaid   = (id, settlement, payment_date) =>
 export const voidInvoice       = (id, void_reason) => post(`/invoices/${id}/void`, { void_reason }, true);
 export const deleteInvoice     = (id)              => del(`/invoices/${id}`, true);
 
+// ─── Payroll / 1601-C ────────────────────────────────────────
+export const getEmployees      = (clientId)   => get(`/payroll/employees?clientId=${clientId}`, true);
+export const createEmployee    = (data)       => post('/payroll/employees', data, true);
+export const updateEmployee    = (id, data)   => put(`/payroll/employees/${id}`, data, true);
+export const deleteEmployee    = (id)         => del(`/payroll/employees/${id}`, true);
+export const computePayroll    = (clientId, year, month) => get(`/payroll/compute/${clientId}/${year}/${month}`, true);
+
 // ─── Health ───────────────────────────────────────────────────
 export const healthCheck       = ()           => get('/health');
 

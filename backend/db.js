@@ -311,6 +311,24 @@ catch (_) { /* column already exists */ }
 try { db.exec("ALTER TABLE clients ADD COLUMN is_msme INTEGER NOT NULL DEFAULT 0"); }
 catch (_) { /* column already exists */ }
 
+// ── v10+ Payroll / 1601-C ─────────────────────────────────────────────────────
+try { db.exec(`
+  CREATE TABLE IF NOT EXISTS employees (
+    id                    TEXT PRIMARY KEY,
+    client_id             TEXT NOT NULL,
+    name                  TEXT NOT NULL,
+    tin                   TEXT,
+    employment_type       TEXT NOT NULL DEFAULT 'regular',
+    monthly_basic_salary  REAL NOT NULL DEFAULT 0,
+    sss_contribution      REAL NOT NULL DEFAULT 0,
+    philhealth_contribution REAL NOT NULL DEFAULT 0,
+    pagibig_contribution  REAL NOT NULL DEFAULT 0,
+    hire_date             TEXT,
+    created_at            TEXT NOT NULL DEFAULT (datetime('now')),
+    FOREIGN KEY (client_id) REFERENCES clients(id)
+  )
+`); } catch (_) { /* already exists */ }
+
 // ── Default settings bootstrap ────────────────────────────────────────────────
 const DEFAULT_SETTINGS = {
   pricing: { starter: 399, professional: 699, enterprise: 999 },

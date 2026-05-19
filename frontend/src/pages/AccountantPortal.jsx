@@ -21,6 +21,7 @@ import {
   getAssets, createAsset, deleteAsset, getLapsing,
   getContacts, createContact, updateContact, deleteContact,
   getSLSP,
+  getEmployees, createEmployee, updateEmployee, deleteEmployee, computePayroll,
   backupClient,
   scanReceipt,
   getMyReferrals,
@@ -36,6 +37,8 @@ import {
   buildBalanceSheetHtml,
   buildCashFlowHtml,
   buildBIRReturnHtml,
+  build1601EQHtml,
+  build1601CHtml,
   buildBooksHtml,
 } from '../utils/printReport.js';
 
@@ -163,7 +166,7 @@ function SectionHead({ children }) {
 // Paid-only tabs — free tier is locked out
 const PRO_TABS = new Set([
   'Journal Entries', 'Trial Balance', 'Books', 'General Journal', 'General Ledger', 'COA', 'Period Lock', 'Audit Log',
-  'BIR Returns', 'Alphalist',
+  'BIR Returns', 'Payroll', 'Alphalist',
   'Income Statement', 'Balance Sheet', 'Cash Flow', 'Assets', 'Contacts', 'SLSP',
 ]);
 
@@ -1126,7 +1129,7 @@ function computeIncomeTax(transactions, client, year, quarter /* null = annual *
   };
 }
 
-const TABS = ['Dashboard', 'Transactions', 'Invoices', 'Journal Entries', 'Trial Balance', 'Books', 'General Journal', 'General Ledger', 'COA', 'Period Lock', 'Audit Log', 'BIR Returns', 'Alphalist', 'SLSP', 'Income Statement', 'Balance Sheet', 'Cash Flow', 'Assets', 'Contacts', 'BIR Reminders', 'Referral'];
+const TABS = ['Dashboard', 'Transactions', 'Invoices', 'Journal Entries', 'Trial Balance', 'Books', 'General Journal', 'General Ledger', 'COA', 'Period Lock', 'Audit Log', 'BIR Returns', 'Payroll', 'Alphalist', 'SLSP', 'Income Statement', 'Balance Sheet', 'Cash Flow', 'Assets', 'Contacts', 'BIR Reminders', 'Referral'];
 
 const BOOKS_COLUMNS = {
   sales: ['Date','Ref / OR No.','Customer','Description','Gross Sales','Output VAT','Net Sales'],
@@ -1211,6 +1214,19 @@ export default function AccountantPortal({ onLogout }) {
   const [slspLoad,    setSlspLoad]    = useState(false);
   const [slspYear,    setSlspYear]    = useState(new Date().getFullYear());
   const [slspQ,       setSlspQ]       = useState(Math.ceil((new Date().getMonth() + 1) / 3));
+  // Payroll / 1601-C
+  const [employees,     setEmployees]    = useState([]);
+  const [payrollResult, setPayrollResult]= useState(null);
+  const [payrollLoad,   setPayrollLoad]  = useState(false);
+  const [showEmpModal,  setShowEmpModal] = useState(false);
+  const [editEmp,       setEditEmp]      = useState(null);
+  const [payrollYear,   setPayrollYear]  = useState(new Date().getFullYear());
+  const [payrollMonth,  setPayrollMonth] = useState(new Date().getMonth() + 1);
+  const [empForm,       setEmpForm]      = useState({
+    name: '', tin: '', employmentType: 'regular',
+    monthlyBasicSalary: '', sssContribution: '',
+    philhealthContribution: '', pagibigContribution: '', hireDate: '',
+  });
   // General Journal
   const [gjData,      setGjData]      = useState(null);
   const [gjLoad,      setGjLoad]      = useState(false);
@@ -1327,6 +1343,7 @@ export default function AccountantPortal({ onLogout }) {
     if (tab === 'Assets')           loadAssets();
     if (tab === 'Contacts')         loadContacts();
     if (tab === 'SLSP')             loadSLSP();
+    if (tab === 'Payroll')          loadEmployees();
   }, [active?.id, tab]);
 
   async function loadClients() {
@@ -1551,6 +1568,19 @@ export default function AccountantPortal({ onLogout }) {
     finally { setSlspLoad(false); }
   }
 
+  async function loadEmployees() {
+    if (!active) return;
+    try { const rows = await getEmployees(active.id); setEmployees(rows); }
+    catch (e) { console.error(e); }
+  }
+  async function runPayroll(y = payrollYear, m = payrollMonth) {
+    if (!active) return;
+    setPayrollLoad(true);
+    try { const r = await computePayroll(active.id, y, m); setPayrollResult(r); }
+    catch (e) { console.error(e); }
+    finally { setPayrollLoad(false); }
+  }
+
   async function loadReferrals() {
     setRefLoad(true); setRefErr('');
     try { const r = await getMyReferrals(); setRefData(r); }
@@ -1672,6 +1702,7 @@ export default function AccountantPortal({ onLogout }) {
                     const c = clients.find(x => x.id === e.target.value);
                     setActive(c); setTxns([]); setIncome(null); setBalance(null); setVatBal(null); setDL([]);
                     setBooksData(null); setCfReport(null); setIncFrom(''); setIncTo(''); setBalAsOf('');
+                    setEmployees([]); setPayrollResult(null);
                   }} style={{ border: 'none', background: 'transparent', fontSize: 14, fontWeight: 600,
                     color: T.text, cursor: 'pointer', outline: 'none', fontFamily: 'inherit' }}>
                     {clients.map(c => <option key={c.id} value={c.id}>{c.tradeName}</option>)}
@@ -1712,7 +1743,7 @@ export default function AccountantPortal({ onLogout }) {
             <select value={active?.id || ''} onChange={e => {
               const c = clients.find(x => x.id === e.target.value);
               setActive(c); setTxns([]); setIncome(null); setBalance(null); setVatBal(null); setDL([]);
-              setBooksData(null); setCfReport(null);
+              setBooksData(null); setCfReport(null); setEmployees([]); setPayrollResult(null);
             }} style={{ ...inp, fontWeight: 600 }}>
               {clients.map(c => <option key={c.id} value={c.id}>{c.tradeName}</option>)}
             </select>
@@ -2263,7 +2294,9 @@ export default function AccountantPortal({ onLogout }) {
                   </h2>
                   <Btn size="sm" variant="neutral" onClick={() => {
                     let r, bodyHtml;
-                    if (isITForm) {
+                    if (is1601EQ) {
+                      bodyHtml = build1601EQHtml({ txns, client: active, birYear, qStart, periodLabel });
+                    } else if (isITForm) {
                       const qNum = ['1702Q'].includes(effectiveBirType) ? itQuarter : null;
                       r = computeIncomeTax(txns, active, birYear, qNum);
                       bodyHtml = buildBIRReturnHtml({ effectiveBirType, periodLabel, birYear, r, client: active });
@@ -2526,35 +2559,46 @@ export default function AccountantPortal({ onLogout }) {
                   );
                 })()}
 
-                {/* ── 1601-EQ (Expanded Withholding Tax) ── */}
+                {/* ── 1601-EQ (Expanded Withholding Tax) — BIR Form Replica ── */}
                 {is1601EQ && (() => {
-                  const q     = Math.floor((birMonth - 1) / 3);
-                  const qMths = [q*3+1, q*3+2, q*3+3];
+                  const qMths = [qStart, qStart + 1, qStart + 2];
                   const filtered = txns.filter(t => {
                     const d = new Date(t.createdAt);
                     return d.getFullYear() === birYear && qMths.includes(d.getMonth() + 1)
-                      && t.type === 'expense' && t.ewtRate > 0 && t.ewtAmount > 0;
+                      && t.type === 'expense' && parseFloat(t.ewtRate) > 0 && t.ewtAmount > 0;
                   });
-                  const totalEWT = Math.round(filtered.reduce((s, t) => s + (t.ewtAmount || 0), 0) * 100) / 100;
+                  const totalEWT  = Math.round(filtered.reduce((s, t) => s + (t.ewtAmount || 0), 0) * 100) / 100;
                   const totalBase = Math.round(filtered.reduce((s, t) => s + (t.amount_net || 0), 0) * 100) / 100;
 
-                  // Group by rate
-                  const byRate = {};
+                  const ATC_MAP = {
+                    0.01: { atc: 'WC010', description: 'Supplier of Goods — Top 20,000 Corporations' },
+                    0.02: { atc: 'WC020', description: 'Supplier of Services / Contractors' },
+                    0.05: { atc: 'WF010', description: 'Professional / Talent Fees (5%)' },
+                    0.10: { atc: 'WF020', description: 'Professional / Talent Fees (10%)' },
+                    0.15: { atc: 'WR010', description: 'Rental — Real / Personal Property (15%)' },
+                    0.25: { atc: 'WF000', description: 'Non-Resident Payees (25%)' },
+                  };
+
+                  const byAtc = {};
                   filtered.forEach(t => {
-                    const key = t.ewtRate;
-                    byRate[key] = byRate[key] || { rate: key, count: 0, base: 0, ewt: 0 };
-                    byRate[key].count++;
-                    byRate[key].base = Math.round((byRate[key].base + t.amount_net) * 100) / 100;
-                    byRate[key].ewt  = Math.round((byRate[key].ewt  + t.ewtAmount)  * 100) / 100;
+                    const rate = parseFloat(t.ewtRate);
+                    const info = ATC_MAP[rate] || { atc: `WC${String(Math.round(rate * 100)).padStart(3, '0')}`, description: `EWT ${(rate * 100).toFixed(0)}%` };
+                    const key = info.atc;
+                    byAtc[key] = byAtc[key] || { ...info, rate, base: 0, ewt: 0 };
+                    byAtc[key].base = Math.round((byAtc[key].base + (t.amount_net || 0)) * 100) / 100;
+                    byAtc[key].ewt  = Math.round((byAtc[key].ewt  + (t.ewtAmount  || 0)) * 100) / 100;
                   });
+                  const atcList = Object.values(byAtc);
+                  const endMonthLabel = ['March', 'June', 'September', 'December'][itQuarter - 1];
 
                   return (
                     <div>
+                      {/* Summary cards */}
                       <div style={{ display: 'flex', gap: 16, marginBottom: 20, flexWrap: 'wrap' }}>
                         {[
-                          { label: 'Taxable Amount (NET)', value: totalBase, color: T.text,   bg: T.accentL },
-                          { label: 'Total EWT Withheld',   value: totalEWT,  color: T.orange, bg: '#fff8ec' },
-                          { label: 'Transactions with EWT', value: filtered.length, color: T.accent, bg: T.accentL, count: true },
+                          { label: 'Total Income Payments (NET)', value: totalBase,       color: T.text,   bg: T.accentL },
+                          { label: 'Total EWT Withheld',          value: totalEWT,        color: T.orange, bg: '#fff8ec' },
+                          { label: 'EWT Transactions',            value: filtered.length, color: T.accent, bg: T.accentL, count: true },
                         ].map(m => (
                           <div key={m.label} style={{ background: m.bg, borderRadius: T.radius, padding: '18px 22px',
                             border: `1px solid ${m.color}30`, flex: 1, minWidth: 160 }}>
@@ -2566,73 +2610,177 @@ export default function AccountantPortal({ onLogout }) {
                         ))}
                       </div>
 
-                      <Card style={{ maxWidth: 580, marginBottom: 20 }}>
-                        <SectionHead>BIR Form 1601-EQ — {periodLabel} {birYear}</SectionHead>
-                        {filtered.length === 0 && (
-                          <div style={{ color: T.muted, fontSize: 13, fontStyle: 'italic', marginBottom: 16 }}>
-                            No expense transactions with EWT found for this quarter.
+                      {/* BIR Form 1601-EQ replica */}
+                      <Card style={{ marginBottom: 20 }}>
+                        {/* Header */}
+                        <div style={{ textAlign: 'center', paddingBottom: 16, borderBottom: `2px solid ${T.accent}`, marginBottom: 16 }}>
+                          <div style={{ fontSize: 10, color: T.muted, letterSpacing: 1, textTransform: 'uppercase' }}>BIR Form No.</div>
+                          <div style={{ fontSize: 28, fontWeight: 900, color: T.accent, letterSpacing: 2 }}>1601-EQ</div>
+                          <div style={{ fontSize: 13, fontWeight: 700, color: T.text, marginTop: 4 }}>
+                            Quarterly Remittance Return of Creditable Income Taxes Withheld (Expanded)
+                          </div>
+                          <div style={{ fontSize: 11, color: T.muted, marginTop: 2 }}>
+                            {periodLabel} {birYear} · Due: Last day of month following quarter end
+                          </div>
+                        </div>
+
+                        {/* Part I */}
+                        <SectionHead>Part I — Background Information</SectionHead>
+                        <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr', gap: '8px 16px',
+                          padding: '12px', background: T.bg, borderRadius: T.radius, marginBottom: 20 }}>
+                          {[
+                            ['Taxpayer Name', active.tradeName],
+                            ['TIN', active.tin || '—'],
+                            ['RDO Code', active.rdoCode || '—'],
+                            ['Line of Business', active.businessType || active.type || '—'],
+                            ['Tax Type', 'EWT — Expanded Withholding Tax'],
+                            ['Return Period', `Q${itQuarter} Jan–${endMonthLabel} ${birYear}`],
+                          ].map(([lbl, val]) => (
+                            <div key={lbl} style={{ fontSize: 12 }}>
+                              <div style={{ fontSize: 10, color: T.muted, marginBottom: 2 }}>{lbl}</div>
+                              <div style={{ fontWeight: 600 }}>{val}</div>
+                            </div>
+                          ))}
+                        </div>
+
+                        {/* Part II: ATC Schedule */}
+                        <SectionHead>Part II — Schedule of EWT by ATC</SectionHead>
+                        {atcList.length === 0 ? (
+                          <div style={{ color: T.muted, fontSize: 13, fontStyle: 'italic', marginBottom: 16,
+                            padding: '16px', background: T.bg, borderRadius: T.radius, textAlign: 'center' }}>
+                            No expense transactions with EWT found for {periodLabel} {birYear}.<br/>
                             Add EWT rates when recording eligible expense payments.
                           </div>
-                        )}
-                        {Object.values(byRate).map(r => (
-                          <div key={r.rate} style={{ display: 'flex', justifyContent: 'space-between',
-                            padding: '8px 0', borderBottom: `1px solid ${T.border}` }}>
-                            <span style={{ fontSize: 13, color: T.muted }}>
-                              {(r.rate * 100).toFixed(0)}% EWT — {r.count} payment{r.count !== 1 ? 's' : ''} · Base: {peso(r.base)}
-                            </span>
-                            <span style={{ fontSize: 13, fontWeight: 600, color: T.orange }}>{peso(r.ewt)}</span>
-                          </div>
-                        ))}
-                        <div style={{ display: 'flex', justifyContent: 'space-between',
-                          padding: '12px 0 4px', fontWeight: 700 }}>
-                          <span style={{ color: T.text }}>Total EWT Payable to BIR</span>
-                          <span style={{ fontSize: 18, color: T.orange }}>{peso(totalEWT)}</span>
-                        </div>
-                        <div style={{ marginTop: 16, fontSize: 12, color: T.muted, lineHeight: 1.6,
-                          background: T.bg, borderRadius: 8, padding: '10px 12px' }}>
-                          Due: Last day of the month after the quarter end ·
-                          Always verify with actual BIR-prescribed forms before filing.
-                        </div>
-                      </Card>
-
-                      {filtered.length > 0 && (
-                        <Card style={{ padding: 0, overflow: 'hidden' }}>
-                          <div style={{ padding: '12px 18px', borderBottom: `1px solid ${T.border}`,
-                            fontWeight: 700, fontSize: 14 }}>
-                            EWT Transaction Detail — {filtered.length} payments
-                          </div>
-                          <div style={{ overflowX: 'auto' }}>
+                        ) : (
+                          <div style={{ border: `1px solid ${T.border}`, borderRadius: T.radius,
+                            overflow: 'hidden', marginBottom: 16 }}>
                             <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 12 }}>
                               <thead>
                                 <tr style={{ background: T.bg }}>
-                                  {['Date','Payee','Description','NET Amount','EWT Rate','EWT Withheld'].map((h, i) => (
-                                    <th key={h} style={{ padding: '9px 12px', textAlign: i >= 3 ? 'right' : 'left',
+                                  {['ATC', 'Nature of Income Payment', 'Income Payment', 'Tax Rate', 'Tax Withheld'].map((h, i) => (
+                                    <th key={h} style={{ padding: '8px 12px', textAlign: i >= 2 ? 'right' : 'left',
                                       fontWeight: 600, color: T.muted, fontSize: 10, textTransform: 'uppercase',
                                       borderBottom: `1px solid ${T.border}`, whiteSpace: 'nowrap' }}>{h}</th>
                                   ))}
                                 </tr>
                               </thead>
                               <tbody>
-                                {filtered.map((t, i) => (
-                                  <tr key={t.id} style={{ borderBottom: i < filtered.length - 1 ? `1px solid ${T.border}` : 'none' }}>
-                                    <td style={{ padding: '9px 12px', color: T.muted, whiteSpace: 'nowrap' }}>
-                                      {new Date(t.createdAt).toLocaleDateString('en-PH', { month: 'short', day: 'numeric' })}
-                                    </td>
-                                    <td style={{ padding: '9px 12px' }}>{t.counterpartyName || <span style={{ color: T.muted }}>—</span>}</td>
-                                    <td style={{ padding: '9px 12px', color: T.muted }}>{t.description}</td>
-                                    <td style={{ padding: '9px 12px', textAlign: 'right', fontWeight: 600 }}>{peso(t.amount_net)}</td>
-                                    <td style={{ padding: '9px 12px', textAlign: 'right', color: T.muted }}>
-                                      {(t.ewtRate * 100).toFixed(0)}%
-                                    </td>
-                                    <td style={{ padding: '9px 12px', textAlign: 'right', fontWeight: 700, color: T.orange }}>
-                                      {peso(t.ewtAmount)}
-                                    </td>
+                                {atcList.map((a, i) => (
+                                  <tr key={a.atc} style={{ borderBottom: i < atcList.length - 1 ? `1px solid ${T.border}` : 'none' }}>
+                                    <td style={{ padding: '9px 12px', fontWeight: 700, color: T.accent,
+                                      fontFamily: 'monospace', letterSpacing: 1 }}>{a.atc}</td>
+                                    <td style={{ padding: '9px 12px' }}>{a.description}</td>
+                                    <td style={{ padding: '9px 12px', textAlign: 'right',
+                                      fontVariantNumeric: 'tabular-nums' }}>{peso(a.base)}</td>
+                                    <td style={{ padding: '9px 12px', textAlign: 'right',
+                                      color: T.muted }}>{(a.rate * 100).toFixed(0)}%</td>
+                                    <td style={{ padding: '9px 12px', textAlign: 'right',
+                                      fontWeight: 700, color: T.orange }}>{peso(a.ewt)}</td>
                                   </tr>
                                 ))}
                               </tbody>
                               <tfoot>
                                 <tr style={{ background: T.bg, borderTop: `2px solid ${T.border}` }}>
-                                  <td colSpan={5} style={{ padding: '9px 12px', fontWeight: 700, fontSize: 12, color: T.muted }}>TOTAL EWT</td>
+                                  <td colSpan={4} style={{ padding: '10px 12px', fontWeight: 700 }}>
+                                    Total EWT Withheld for the Quarter (Line 1)
+                                  </td>
+                                  <td style={{ padding: '10px 12px', textAlign: 'right', fontWeight: 900,
+                                    color: T.orange, fontSize: 15 }}>{peso(totalEWT)}</td>
+                                </tr>
+                              </tfoot>
+                            </table>
+                          </div>
+                        )}
+
+                        {/* Part III: Tax Due */}
+                        <SectionHead>Part III — Tax Due / Penalties</SectionHead>
+                        <div style={{ border: `1px solid ${T.border}`, borderRadius: T.radius,
+                          overflow: 'hidden', marginBottom: 16 }}>
+                          {[
+                            { no: 1, label: 'Total EWT Withheld for the Quarter', value: totalEWT, bold: false },
+                            { no: 2, label: 'Less: Tax Remitted in Previous Month(s) of the Quarter', value: 0, bold: false },
+                            { no: 3, label: 'Tax Still Due / (Overpayment)  (Line 1 − Line 2)', value: totalEWT, bold: true, highlight: true },
+                            { no: 4, label: 'Add Penalties — Surcharge (25% / 50%)', value: 0, bold: false },
+                            { no: 5, label: 'Add Penalties — Interest (12% per annum)', value: 0, bold: false },
+                            { no: 6, label: 'Add Penalties — Compromise', value: 0, bold: false },
+                          ].map((row, i, arr) => (
+                            <div key={row.no} style={{
+                              display: 'flex', alignItems: 'center', padding: '9px 14px',
+                              borderBottom: i < arr.length - 1 ? `1px solid ${T.border}` : 'none',
+                              background: row.highlight ? `${T.orange}12` : 'transparent',
+                            }}>
+                              <span style={{ width: 24, fontSize: 11, color: T.muted, fontWeight: 600, flexShrink: 0 }}>{row.no}.</span>
+                              <span style={{ flex: 1, fontSize: 12, fontWeight: row.bold ? 700 : 400 }}>{row.label}</span>
+                              <span style={{ fontSize: row.bold ? 15 : 13, fontWeight: row.bold ? 700 : 400,
+                                color: row.bold ? T.orange : (row.value === 0 ? T.muted : T.text),
+                                fontVariantNumeric: 'tabular-nums' }}>
+                                {row.value === 0 && !row.bold ? '—' : peso(row.value)}
+                              </span>
+                            </div>
+                          ))}
+                          <div style={{ display: 'flex', alignItems: 'center', padding: '12px 14px',
+                            background: `${T.orange}15`, borderTop: `2px solid ${T.orange}40` }}>
+                            <span style={{ flex: 1, fontWeight: 700, fontSize: 13 }}>
+                              TOTAL AMOUNT PAYABLE  (Lines 3 + 4 + 5 + 6)
+                            </span>
+                            <span style={{ fontWeight: 900, fontSize: 18, color: T.orange }}>{peso(totalEWT)}</span>
+                          </div>
+                        </div>
+
+                        <div style={{ fontSize: 11, color: T.muted, lineHeight: 1.6,
+                          background: T.bg, borderRadius: 8, padding: '10px 12px' }}>
+                          ⚠️ Generated by MyLedger — Always verify with actual BIR-prescribed forms before filing.
+                          Penalties apply for late remittance (25% surcharge + 12% interest per annum).
+                        </div>
+                      </Card>
+
+                      {/* Annex: Transaction Detail */}
+                      {filtered.length > 0 && (
+                        <Card style={{ padding: 0, overflow: 'hidden' }}>
+                          <div style={{ padding: '12px 18px', borderBottom: `1px solid ${T.border}`,
+                            fontWeight: 700, fontSize: 14 }}>
+                            Annex — EWT Transaction Detail ({filtered.length} payment{filtered.length !== 1 ? 's' : ''})
+                          </div>
+                          <div style={{ overflowX: 'auto' }}>
+                            <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 12 }}>
+                              <thead>
+                                <tr style={{ background: T.bg }}>
+                                  {['Date','Payee','ATC','Description','NET Amount','EWT Rate','EWT Withheld'].map((h, i) => (
+                                    <th key={h} style={{ padding: '9px 12px', textAlign: i >= 4 ? 'right' : 'left',
+                                      fontWeight: 600, color: T.muted, fontSize: 10, textTransform: 'uppercase',
+                                      borderBottom: `1px solid ${T.border}`, whiteSpace: 'nowrap' }}>{h}</th>
+                                  ))}
+                                </tr>
+                              </thead>
+                              <tbody>
+                                {filtered.map((t, i) => {
+                                  const rate    = parseFloat(t.ewtRate);
+                                  const atcInfo = ATC_MAP[rate] || { atc: `WC${String(Math.round(rate * 100)).padStart(3, '0')}` };
+                                  return (
+                                    <tr key={t.id} style={{ borderBottom: i < filtered.length - 1 ? `1px solid ${T.border}` : 'none' }}>
+                                      <td style={{ padding: '9px 12px', color: T.muted, whiteSpace: 'nowrap' }}>
+                                        {new Date(t.createdAt).toLocaleDateString('en-PH', { month: 'short', day: 'numeric' })}
+                                      </td>
+                                      <td style={{ padding: '9px 12px' }}>{t.counterpartyName || <span style={{ color: T.muted }}>—</span>}</td>
+                                      <td style={{ padding: '9px 12px', fontFamily: 'monospace', fontWeight: 700,
+                                        color: T.accent, fontSize: 11, whiteSpace: 'nowrap' }}>{atcInfo.atc}</td>
+                                      <td style={{ padding: '9px 12px', color: T.muted }}>{t.description}</td>
+                                      <td style={{ padding: '9px 12px', textAlign: 'right', fontWeight: 600 }}>{peso(t.amount_net)}</td>
+                                      <td style={{ padding: '9px 12px', textAlign: 'right', color: T.muted }}>
+                                        {(rate * 100).toFixed(0)}%
+                                      </td>
+                                      <td style={{ padding: '9px 12px', textAlign: 'right', fontWeight: 700, color: T.orange }}>
+                                        {peso(t.ewtAmount)}
+                                      </td>
+                                    </tr>
+                                  );
+                                })}
+                              </tbody>
+                              <tfoot>
+                                <tr style={{ background: T.bg, borderTop: `2px solid ${T.border}` }}>
+                                  <td colSpan={4} style={{ padding: '9px 12px', fontWeight: 700, fontSize: 12, color: T.muted }}>TOTAL EWT WITHHELD</td>
+                                  <td style={{ padding: '9px 12px', textAlign: 'right', fontWeight: 700 }}>{peso(totalBase)}</td>
+                                  <td></td>
                                   <td style={{ padding: '9px 12px', textAlign: 'right', fontWeight: 700, color: T.orange }}>{peso(totalEWT)}</td>
                                 </tr>
                               </tfoot>
@@ -3975,6 +4123,402 @@ export default function AccountantPortal({ onLogout }) {
             )}
           </div>
         )}
+
+        {/* ════════════ PAYROLL / 1601-C ════════════ */}
+        {tab === 'Payroll' && active && (() => {
+          const monthNames = ['','January','February','March','April','May','June','July','August','September','October','November','December'];
+          const monthLabel = `${monthNames[payrollMonth]} ${payrollYear}`;
+
+          // TRAIN Law annual WHT (same as backend, for preview)
+          function annualWHT(t) {
+            if (t <= 250000)  return 0;
+            if (t <= 400000)  return (t - 250000) * 0.20;
+            if (t <= 800000)  return 30000  + (t - 400000) * 0.25;
+            if (t <= 2000000) return 130000 + (t - 800000) * 0.30;
+            if (t <= 8000000) return 490000 + (t - 2000000) * 0.32;
+            return 2410000 + (t - 8000000) * 0.35;
+          }
+
+          const empSetEmpForm = (k) => (e) => setEmpForm(f => ({ ...f, [k]: e.target.value }));
+
+          async function handleSaveEmp(e) {
+            e.preventDefault();
+            try {
+              if (editEmp) {
+                await updateEmployee(editEmp.id, { ...empForm, clientId: active.id });
+              } else {
+                await createEmployee({ ...empForm, clientId: active.id });
+              }
+              setShowEmpModal(false); setEditEmp(null);
+              setEmpForm({ name:'', tin:'', employmentType:'regular', monthlyBasicSalary:'', sssContribution:'', philhealthContribution:'', pagibigContribution:'', hireDate:'' });
+              loadEmployees();
+            } catch(err) { alert(err.message); }
+          }
+
+          async function handleDeleteEmp(id, name) {
+            if (!confirm(`Remove ${name} from payroll?`)) return;
+            try { await deleteEmployee(id); loadEmployees(); }
+            catch(err) { alert(err.message); }
+          }
+
+          return (
+            <div>
+              <div style={{ display:'flex', justifyContent:'space-between', alignItems:'flex-start', marginBottom:4 }}>
+                <h2 style={{ margin:0, fontSize:22, fontWeight:600 }}>Payroll & 1601-C — {active.tradeName}</h2>
+                <Btn size="sm" variant="neutral" disabled={!payrollResult} onClick={() => {
+                  if (!payrollResult) return;
+                  const bodyHtml = build1601CHtml({ payrollResult, client: active, monthLabel });
+                  printReport({
+                    title: `BIR Form 1601-C — ${active.tradeName}`,
+                    subtitle: monthLabel,
+                    bodyHtml,
+                    firmLabel: firmName || 'MyLedger by Kaiman & Co.',
+                    accentColor: brandAccent,
+                  });
+                }}>⬇ Export 1601-C PDF</Btn>
+              </div>
+              <div style={{ fontSize:13, color:T.muted, marginBottom:24 }}>
+                Withholding Tax on Compensation (TRAIN Law) · BIR Form 1601-C
+              </div>
+
+              {/* Period picker */}
+              <Card style={{ marginBottom:20 }}>
+                <div style={{ display:'flex', gap:16, alignItems:'flex-end', flexWrap:'wrap' }}>
+                  <Fld label="Month">
+                    <select style={{ ...inp, width:160 }} value={payrollMonth}
+                      onChange={e => setPayrollMonth(Number(e.target.value))}>
+                      {monthNames.slice(1).map((n,i) => <option key={i+1} value={i+1}>{n}</option>)}
+                    </select>
+                  </Fld>
+                  <Fld label="Year">
+                    <input style={{ ...inp, width:90 }} type="number" value={payrollYear}
+                      onChange={e => setPayrollYear(Number(e.target.value))} min={2020} max={2099} />
+                  </Fld>
+                  <Btn onClick={() => runPayroll(payrollYear, payrollMonth)} style={{ marginBottom:14 }}>
+                    {payrollLoad ? 'Computing…' : 'Compute WHT'}
+                  </Btn>
+                </div>
+              </Card>
+
+              {/* Employee roster */}
+              <Card style={{ marginBottom:20 }}>
+                <div style={{ display:'flex', justifyContent:'space-between', alignItems:'center', marginBottom:14 }}>
+                  <SectionHead style={{ margin:0 }}>Employee Roster ({employees.length})</SectionHead>
+                  <Btn size="sm" onClick={() => {
+                    setEditEmp(null);
+                    setEmpForm({ name:'', tin:'', employmentType:'regular', monthlyBasicSalary:'', sssContribution:'', philhealthContribution:'', pagibigContribution:'', hireDate:'' });
+                    setShowEmpModal(true);
+                  }}>+ Add Employee</Btn>
+                </div>
+                {employees.length === 0 ? (
+                  <div style={{ color:T.muted, fontSize:13, fontStyle:'italic', textAlign:'center', padding:24 }}>
+                    No employees yet. Click "+ Add Employee" to get started.
+                  </div>
+                ) : (
+                  <div style={{ overflowX:'auto' }}>
+                    <table style={{ width:'100%', borderCollapse:'collapse', fontSize:12 }}>
+                      <thead>
+                        <tr style={{ background:T.bg }}>
+                          {['Name','TIN','Type','Monthly Basic','Deductions','Monthly Taxable','Monthly WHT',''].map((h,i) => (
+                            <th key={h||i} style={{ padding:'8px 10px', textAlign: i>=3&&i<=6 ? 'right':'left',
+                              fontWeight:600, color:T.muted, fontSize:10, textTransform:'uppercase',
+                              borderBottom:`1px solid ${T.border}`, whiteSpace:'nowrap' }}>{h}</th>
+                          ))}
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {employees.map((emp, idx) => {
+                          const basic   = parseFloat(emp.monthly_basic_salary) || 0;
+                          const sss     = parseFloat(emp.sss_contribution) || 0;
+                          const ph      = parseFloat(emp.philhealth_contribution) || 0;
+                          const pag     = parseFloat(emp.pagibig_contribution) || 0;
+                          const ded     = sss + ph + pag;
+                          const taxable = Math.max(0, basic - ded);
+                          const annual  = taxable * 12;
+                          const mWHT    = Math.round(annualWHT(annual) / 12 * 100) / 100;
+                          return (
+                            <tr key={emp.id} style={{ borderBottom: idx < employees.length-1 ? `1px solid ${T.border}` : 'none' }}>
+                              <td style={{ padding:'9px 10px', fontWeight:600 }}>{emp.name}</td>
+                              <td style={{ padding:'9px 10px', color:T.muted, fontFamily:'monospace' }}>{emp.tin || '—'}</td>
+                              <td style={{ padding:'9px 10px', color:T.muted, fontSize:11 }}>{emp.employment_type}</td>
+                              <td style={{ padding:'9px 10px', textAlign:'right' }}>{peso(basic)}</td>
+                              <td style={{ padding:'9px 10px', textAlign:'right', color:T.muted }}>{peso(ded)}</td>
+                              <td style={{ padding:'9px 10px', textAlign:'right' }}>{peso(taxable)}</td>
+                              <td style={{ padding:'9px 10px', textAlign:'right', fontWeight:700, color:T.orange }}>{peso(mWHT)}</td>
+                              <td style={{ padding:'9px 10px', textAlign:'right', whiteSpace:'nowrap' }}>
+                                <button onClick={() => { setEditEmp(emp);
+                                  setEmpForm({ name:emp.name, tin:emp.tin||'', employmentType:emp.employment_type,
+                                    monthlyBasicSalary:String(emp.monthly_basic_salary),
+                                    sssContribution:String(emp.sss_contribution),
+                                    philhealthContribution:String(emp.philhealth_contribution),
+                                    pagibigContribution:String(emp.pagibig_contribution),
+                                    hireDate:emp.hire_date||'' });
+                                  setShowEmpModal(true);
+                                }} style={{ background:'none', border:'none', cursor:'pointer',
+                                  color:T.accent, fontSize:12, padding:'2px 6px' }}>Edit</button>
+                                <button onClick={() => handleDeleteEmp(emp.id, emp.name)}
+                                  style={{ background:'none', border:'none', cursor:'pointer',
+                                    color:T.red, fontSize:12, padding:'2px 6px' }}>Remove</button>
+                              </td>
+                            </tr>
+                          );
+                        })}
+                      </tbody>
+                    </table>
+                  </div>
+                )}
+              </Card>
+
+              {/* BIR Form 1601-C replica */}
+              {payrollResult && (() => {
+                const pr = payrollResult;
+                const rows = pr.employees || [];
+                const tot  = pr.totals    || {};
+                return (
+                  <Card style={{ marginBottom:20 }}>
+                    {/* Header */}
+                    <div style={{ textAlign:'center', paddingBottom:16, borderBottom:`2px solid ${T.accent}`, marginBottom:16 }}>
+                      <div style={{ fontSize:10, color:T.muted, letterSpacing:1, textTransform:'uppercase' }}>BIR Form No.</div>
+                      <div style={{ fontSize:28, fontWeight:900, color:T.accent, letterSpacing:2 }}>1601-C</div>
+                      <div style={{ fontSize:13, fontWeight:700, color:T.text, marginTop:4 }}>
+                        Monthly Remittance Return of Income Taxes Withheld on Compensation
+                      </div>
+                      <div style={{ fontSize:11, color:T.muted, marginTop:2 }}>
+                        {monthLabel} · Due: On or before the 10th of the following month
+                      </div>
+                    </div>
+
+                    {/* Part I */}
+                    <SectionHead>Part I — Background Information</SectionHead>
+                    <div style={{ display:'grid', gridTemplateColumns:'1fr 1fr 1fr', gap:'8px 16px',
+                      padding:'12px', background:T.bg, borderRadius:T.radius, marginBottom:20 }}>
+                      {[
+                        ['Taxpayer Name', active.tradeName],
+                        ['TIN', active.tin || '—'],
+                        ['RDO Code', active.rdoCode || '—'],
+                        ['Tax Type', 'WC — WHT on Compensation'],
+                        ['Return Period', monthLabel],
+                        ['No. of Employees', String(rows.length)],
+                      ].map(([lbl, val]) => (
+                        <div key={lbl} style={{ fontSize:12 }}>
+                          <div style={{ fontSize:10, color:T.muted, marginBottom:2 }}>{lbl}</div>
+                          <div style={{ fontWeight:600 }}>{val}</div>
+                        </div>
+                      ))}
+                    </div>
+
+                    {/* Part II: Employee schedule */}
+                    <SectionHead>Part II — Schedule of Employees</SectionHead>
+                    <div style={{ border:`1px solid ${T.border}`, borderRadius:T.radius, overflow:'hidden', marginBottom:16 }}>
+                      <table style={{ width:'100%', borderCollapse:'collapse', fontSize:12 }}>
+                        <thead>
+                          <tr style={{ background:T.bg }}>
+                            {['Employee Name','TIN','Monthly Basic','Deductions','Monthly Taxable','Annual Taxable','Monthly WHT'].map((h,i) => (
+                              <th key={h} style={{ padding:'8px 10px', textAlign:i>=2?'right':'left',
+                                fontWeight:600, color:T.muted, fontSize:10, textTransform:'uppercase',
+                                borderBottom:`1px solid ${T.border}`, whiteSpace:'nowrap' }}>{h}</th>
+                            ))}
+                          </tr>
+                        </thead>
+                        <tbody>
+                          {rows.length === 0 ? (
+                            <tr><td colSpan={7} style={{ padding:16, textAlign:'center', color:T.muted, fontStyle:'italic' }}>No employees</td></tr>
+                          ) : rows.map((e, i) => (
+                            <tr key={e.id} style={{ borderBottom: i < rows.length-1 ? `1px solid ${T.border}` : 'none' }}>
+                              <td style={{ padding:'9px 10px', fontWeight:600 }}>{e.name}</td>
+                              <td style={{ padding:'9px 10px', color:T.muted, fontFamily:'monospace' }}>{e.tin || '—'}</td>
+                              <td style={{ padding:'9px 10px', textAlign:'right' }}>{peso(e.monthly_basic_salary)}</td>
+                              <td style={{ padding:'9px 10px', textAlign:'right', color:T.muted }}>{peso(e.monthly_deductions)}</td>
+                              <td style={{ padding:'9px 10px', textAlign:'right' }}>{peso(e.monthly_taxable)}</td>
+                              <td style={{ padding:'9px 10px', textAlign:'right', color:T.muted }}>{peso(e.annual_taxable)}</td>
+                              <td style={{ padding:'9px 10px', textAlign:'right', fontWeight:700, color:T.orange }}>{peso(e.monthly_wht)}</td>
+                            </tr>
+                          ))}
+                        </tbody>
+                        <tfoot>
+                          <tr style={{ background:T.bg, borderTop:`2px solid ${T.border}` }}>
+                            <td colSpan={5} style={{ padding:'10px', fontWeight:700 }}>
+                              TOTAL ({rows.length} employee{rows.length!==1?'s':''})
+                            </td>
+                            <td style={{ padding:'10px', textAlign:'right', fontWeight:600 }}>{peso(tot.total_monthly_basic)}</td>
+                            <td style={{ padding:'10px', textAlign:'right', fontWeight:900, color:T.orange, fontSize:15 }}>{peso(tot.total_monthly_wht)}</td>
+                          </tr>
+                        </tfoot>
+                      </table>
+                    </div>
+
+                    {/* Part III: Tax Due */}
+                    <SectionHead>Part III — Tax Due / Penalties</SectionHead>
+                    <div style={{ border:`1px solid ${T.border}`, borderRadius:T.radius, overflow:'hidden', marginBottom:16 }}>
+                      {[
+                        { no:1, label:'Total Taxes Withheld on Compensation for the Month', value:tot.total_monthly_wht, bold:false },
+                        { no:2, label:'Less: Tax Remitted in Previous Return (if amended)', value:0, bold:false },
+                        { no:3, label:'Tax Still Due / (Overpayment) (Line 1 − Line 2)', value:tot.total_monthly_wht, bold:true, highlight:true },
+                        { no:4, label:'Add Penalties — Surcharge (25% / 50%)', value:0, bold:false },
+                        { no:5, label:'Add Penalties — Interest (12% per annum)', value:0, bold:false },
+                        { no:6, label:'Add Penalties — Compromise', value:0, bold:false },
+                      ].map((row, i, arr) => (
+                        <div key={row.no} style={{
+                          display:'flex', alignItems:'center', padding:'9px 14px',
+                          borderBottom: i < arr.length-1 ? `1px solid ${T.border}` : 'none',
+                          background: row.highlight ? `${T.orange}12` : 'transparent',
+                        }}>
+                          <span style={{ width:24, fontSize:11, color:T.muted, fontWeight:600, flexShrink:0 }}>{row.no}.</span>
+                          <span style={{ flex:1, fontSize:12, fontWeight:row.bold?700:400 }}>{row.label}</span>
+                          <span style={{ fontSize:row.bold?15:13, fontWeight:row.bold?700:400,
+                            color:row.bold?T.orange:(row.value===0?T.muted:T.text),
+                            fontVariantNumeric:'tabular-nums' }}>
+                            {row.value===0&&!row.bold ? '—' : peso(row.value)}
+                          </span>
+                        </div>
+                      ))}
+                      <div style={{ display:'flex', alignItems:'center', padding:'12px 14px',
+                        background:`${T.orange}15`, borderTop:`2px solid ${T.orange}40` }}>
+                        <span style={{ flex:1, fontWeight:700, fontSize:13 }}>TOTAL AMOUNT PAYABLE  (Lines 3 + 4 + 5 + 6)</span>
+                        <span style={{ fontWeight:900, fontSize:18, color:T.orange }}>{peso(tot.total_monthly_wht)}</span>
+                      </div>
+                    </div>
+
+                    <div style={{ fontSize:11, color:T.muted, lineHeight:1.6, background:T.bg, borderRadius:8, padding:'10px 12px' }}>
+                      ⚠️ Generated by MyLedger — Always verify with actual BIR-prescribed forms before filing.
+                      WHT computed using TRAIN Law (RA 10963) graduated rates.
+                      Due: On or before the 10th day of the following month.
+                    </div>
+                  </Card>
+                );
+              })()}
+
+              {/* TRAIN Law Reference Card */}
+              <Card style={{ marginBottom:20 }}>
+                <SectionHead>TRAIN Law Graduated Rates — Annual Taxable Compensation</SectionHead>
+                <div style={{ overflowX:'auto' }}>
+                  <table style={{ width:'100%', borderCollapse:'collapse', fontSize:12 }}>
+                    <thead>
+                      <tr style={{ background:T.bg }}>
+                        {['Annual Taxable Income','Tax Rate','Fixed Amount','On Excess Over'].map((h,i) => (
+                          <th key={h} style={{ padding:'8px 12px', textAlign:i===0?'left':'right',
+                            fontWeight:600, color:T.muted, fontSize:10, textTransform:'uppercase',
+                            borderBottom:`1px solid ${T.border}` }}>{h}</th>
+                        ))}
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {[
+                        ['Up to ₱250,000',                 '0%',   '—',          '—'],
+                        ['₱250,001 – ₱400,000',            '20%',  '—',          '₱250,000'],
+                        ['₱400,001 – ₱800,000',            '25%',  '₱30,000',    '₱400,000'],
+                        ['₱800,001 – ₱2,000,000',          '30%',  '₱130,000',   '₱800,000'],
+                        ['₱2,000,001 – ₱8,000,000',        '32%',  '₱490,000',   '₱2,000,000'],
+                        ['Over ₱8,000,000',                '35%',  '₱2,410,000', '₱8,000,000'],
+                      ].map(([range, rate, fixed, excess], i) => (
+                        <tr key={range} style={{ borderBottom:`1px solid ${T.border}`, background: i%2===0 ? 'transparent' : T.bg }}>
+                          <td style={{ padding:'8px 12px', fontWeight:600 }}>{range}</td>
+                          <td style={{ padding:'8px 12px', textAlign:'right', fontWeight:700, color:T.accent }}>{rate}</td>
+                          <td style={{ padding:'8px 12px', textAlign:'right', color:T.muted }}>{fixed}</td>
+                          <td style={{ padding:'8px 12px', textAlign:'right', color:T.muted }}>{excess}</td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+                <div style={{ fontSize:11, color:T.muted, marginTop:10 }}>
+                  Monthly WHT = Annual tax on (Monthly Basic − SSS − PhilHealth − Pagibig) × 12, divided by 12.
+                  RA 10963 (TRAIN Law) · Effective January 1, 2023.
+                </div>
+              </Card>
+
+              {/* Employee Modal */}
+              {showEmpModal && (
+                <div style={{ position:'fixed', inset:0, background:'rgba(0,0,0,0.45)', zIndex:1000,
+                  display:'flex', alignItems:'center', justifyContent:'center' }}>
+                  <div style={{ background:T.surface, borderRadius:T.radius, padding:28, width:520,
+                    maxWidth:'95vw', maxHeight:'90vh', overflowY:'auto', boxShadow:'0 20px 60px rgba(0,0,0,0.25)' }}>
+                    <h3 style={{ margin:'0 0 20px', fontSize:17 }}>{editEmp ? 'Edit Employee' : 'Add Employee'}</h3>
+                    <form onSubmit={handleSaveEmp}>
+                      <div style={{ display:'grid', gridTemplateColumns:'1fr 1fr', gap:14, marginBottom:14 }}>
+                        <Fld label="Full Name *" style={{ gridColumn:'1/-1' }}>
+                          <input style={{ ...inp, width:'100%' }} value={empForm.name}
+                            onChange={empSetEmpForm('name')} required placeholder="Juan dela Cruz" />
+                        </Fld>
+                        <Fld label="TIN">
+                          <input style={{ ...inp }} value={empForm.tin}
+                            onChange={empSetEmpForm('tin')} placeholder="000-000-000" />
+                        </Fld>
+                        <Fld label="Employment Type">
+                          <select style={{ ...inp }} value={empForm.employmentType}
+                            onChange={empSetEmpForm('employmentType')}>
+                            <option value="regular">Regular</option>
+                            <option value="probationary">Probationary</option>
+                            <option value="project-based">Project-Based</option>
+                            <option value="part-time">Part-Time</option>
+                          </select>
+                        </Fld>
+                        <Fld label="Monthly Basic Salary (₱) *">
+                          <input style={{ ...inp }} type="number" min="0" step="0.01"
+                            value={empForm.monthlyBasicSalary}
+                            onChange={empSetEmpForm('monthlyBasicSalary')} required placeholder="20000" />
+                        </Fld>
+                        <Fld label="Hire Date">
+                          <input style={{ ...inp }} type="date" value={empForm.hireDate}
+                            onChange={empSetEmpForm('hireDate')} />
+                        </Fld>
+                      </div>
+
+                      <div style={{ fontSize:12, fontWeight:700, color:T.muted, textTransform:'uppercase',
+                        letterSpacing:'0.5px', marginBottom:10 }}>
+                        Monthly Deductions (SSS / PhilHealth / Pagibig)
+                      </div>
+                      <div style={{ display:'grid', gridTemplateColumns:'1fr 1fr 1fr', gap:12, marginBottom:20 }}>
+                        <Fld label="SSS Contribution (₱)">
+                          <input style={{ ...inp }} type="number" min="0" step="0.01"
+                            value={empForm.sssContribution}
+                            onChange={empSetEmpForm('sssContribution')} placeholder="1125" />
+                        </Fld>
+                        <Fld label="PhilHealth (₱)">
+                          <input style={{ ...inp }} type="number" min="0" step="0.01"
+                            value={empForm.philhealthContribution}
+                            onChange={empSetEmpForm('philhealthContribution')} placeholder="500" />
+                        </Fld>
+                        <Fld label="Pag-IBIG (₱)">
+                          <input style={{ ...inp }} type="number" min="0" step="0.01"
+                            value={empForm.pagibigContribution}
+                            onChange={empSetEmpForm('pagibigContribution')} placeholder="200" />
+                        </Fld>
+                      </div>
+
+                      {/* Live WHT preview */}
+                      {parseFloat(empForm.monthlyBasicSalary) > 0 && (() => {
+                        const basic  = parseFloat(empForm.monthlyBasicSalary) || 0;
+                        const sss    = parseFloat(empForm.sssContribution) || 0;
+                        const ph     = parseFloat(empForm.philhealthContribution) || 0;
+                        const pag    = parseFloat(empForm.pagibigContribution) || 0;
+                        const taxable= Math.max(0, basic - sss - ph - pag);
+                        const annual = taxable * 12;
+                        const mWHT   = Math.round(annualWHT(annual) / 12 * 100) / 100;
+                        return (
+                          <div style={{ background:`${T.orange}12`, borderRadius:T.radius, padding:'12px 16px',
+                            marginBottom:20, fontSize:12 }}>
+                            <div style={{ fontWeight:700, color:T.orange, marginBottom:6 }}>WHT Preview (TRAIN Law)</div>
+                            <div style={{ display:'flex', gap:24, flexWrap:'wrap' }}>
+                              <span style={{ color:T.muted }}>Monthly Taxable: <strong style={{ color:T.text }}>{peso(taxable)}</strong></span>
+                              <span style={{ color:T.muted }}>Annual Taxable: <strong style={{ color:T.text }}>{peso(annual)}</strong></span>
+                              <span style={{ color:T.muted }}>Monthly WHT: <strong style={{ color:T.orange }}>{peso(mWHT)}</strong></span>
+                            </div>
+                          </div>
+                        );
+                      })()}
+
+                      <div style={{ display:'flex', gap:10, justifyContent:'flex-end' }}>
+                        <Btn variant="ghost" type="button" onClick={() => { setShowEmpModal(false); setEditEmp(null); }}>Cancel</Btn>
+                        <Btn type="submit">{editEmp ? 'Save Changes' : 'Add Employee'}</Btn>
+                      </div>
+                    </form>
+                  </div>
+                </div>
+              )}
+            </div>
+          );
+        })()}
 
         {/* ════════════ BIR REMINDERS ════════════ */}
         {tab === 'BIR Reminders' && active && (

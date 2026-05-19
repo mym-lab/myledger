@@ -29,6 +29,7 @@ import ocrRoutes             from './routes/ocr.js';
 import invitationRoutes      from './routes/invitations.js';
 import referralRoutes        from './routes/referrals.js';
 import invoiceRoutes         from './routes/invoices.js';
+import payrollRoutes         from './routes/payroll.js';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname  = dirname(__filename);
@@ -65,6 +66,7 @@ app.use('/api/ocr',              ocrRoutes);
 app.use('/api/invitations',      invitationRoutes);
 app.use('/api/referrals',        referralRoutes);
 app.use('/api/invoices',         invoiceRoutes);
+app.use('/api/payroll',          payrollRoutes);
 
 // ─── Health Check ─────────────────────────────────────────────
 app.get('/api/health', (req, res) => {
