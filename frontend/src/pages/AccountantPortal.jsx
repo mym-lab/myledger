@@ -1028,11 +1028,13 @@ function computeIncomeTax(transactions, client, year, quarter /* null = annual *
   const nonTaxIncome = allIncome.filter(t => NON_TAXABLE_INCOME_CATS.includes(t.category));
   const income       = allIncome.filter(t => !NON_TAXABLE_INCOME_CATS.includes(t.category));
 
-  const grossRevenue    = round2(income.reduce((s, t)  => s + (t.gross || 0), 0));
-  const netRevenue      = round2(income.reduce((s, t)  => s + (t.net   || 0), 0));
+  // Use NET (VAT-exclusive) for all income tax computations.
+  // Output VAT collected is a liability (remitted to BIR), not revenue.
+  const grossRevenue    = round2(income.reduce((s, t)  => s + (t.net || 0), 0));
+  const netRevenue      = grossRevenue;  // same — both VAT-exclusive
   const totalExpenses   = round2(expense.reduce((s, t) => s + (t.net   || 0), 0));
-  const nonTaxableTotal = round2(nonTaxIncome.reduce((s, t) => s + (t.gross || 0), 0));
-  const totalGrossAll   = round2(allIncome.reduce((s, t) => s + (t.gross || 0), 0));
+  const nonTaxableTotal = round2(nonTaxIncome.reduce((s, t) => s + (t.net || 0), 0));
+  const totalGrossAll   = round2(allIncome.reduce((s, t) => s + (t.net || 0), 0));
   const taxableIncome = round2(netRevenue - totalExpenses);
 
   const type      = client?.type || 'Corporation';
@@ -2357,7 +2359,7 @@ export default function AccountantPortal({ onLogout }) {
                       <div style={{ display: 'flex', gap: 16, marginBottom: 20, flexWrap: 'wrap' }}>
                         <div style={{ background: '#e3f7ed', borderRadius: T.radius, padding: '18px 22px',
                           border: `1px solid ${T.green}30`, flex: 1, minWidth: 160 }}>
-                          <div style={{ fontSize: 12, color: T.muted, marginBottom: 5 }}>Gross Revenue</div>
+                          <div style={{ fontSize: 12, color: T.muted, marginBottom: 5 }}>Net Revenue (VAT-exclusive)</div>
                           <div style={{ fontSize: 22, fontWeight: 700, color: T.green }}>{peso2(r.grossRevenue)}</div>
                           <div style={{ fontSize: 11, color: T.muted, marginTop: 3 }}>{r.txCount} transactions</div>
                         </div>

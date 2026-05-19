@@ -637,9 +637,9 @@ export function buildBIRReturnHtml({ isOPT, effectiveBirType, periodLabel, birYe
       <div class="bir-part">
         <div class="bir-part-title">Part II — Computation of Normal Income Tax</div>
         ${r.nonTaxableTotal > 0 ? `
-        ${birRow('',  'Total Gross Collections (all income types)', r.totalGrossAll || r.grossRevenue)}
+        ${birRow('',  'Total Collections (all income types, VAT-exclusive)', r.totalGrossAll || r.grossRevenue)}
         ${birRow('',  'Less: Non-Taxable Items (Reimbursements / Capital Contributions / Loan Proceeds)', r.nonTaxableTotal || 0)}` : ''}
-        ${birRow(1,  'Gross Sales / Revenues / Receipts (Taxable Only)', r.grossRevenue)}
+        ${birRow(1,  'Gross Sales / Revenues / Receipts — VAT-exclusive, Taxable Only', r.grossRevenue)}
         ${birRow(2,  'Less: Cost of Sales / Services (COGS)', cogs)}
         ${birRow(3,  'Gross Income  (Line 1 − Line 2)', grossInc, 'bir-total')}
         ${birRow(4,  'Less: Allowable Deductions / Operating Expenses', r.totalExpenses)}
@@ -705,9 +705,9 @@ export function buildBIRReturnHtml({ isOPT, effectiveBirType, periodLabel, birYe
       <div class="bir-part">
         <div class="bir-part-title">Part II — Computation of Cumulative Income Tax (Quarter ${qtr})</div>
         ${r.nonTaxableTotal > 0 ? `
-        ${birRow('',  'Total Gross Collections (all income types)', r.totalGrossAll || r.grossRevenue)}
+        ${birRow('',  'Total Collections (all income types, VAT-exclusive)', r.totalGrossAll || r.grossRevenue)}
         ${birRow('',  'Less: Non-Taxable Items (Reimbursements / Capital Contributions / Loan Proceeds)', r.nonTaxableTotal || 0)}` : ''}
-        ${birRow(1,  `Gross Sales / Revenues (Cumulative Jan – ${['Mar','Jun','Sep','Dec'][qtr-1]}) — Taxable Only`, r.grossRevenue)}
+        ${birRow(1,  `Gross Sales / Revenues (Cumulative Jan – ${['Mar','Jun','Sep','Dec'][qtr-1]}) — VAT-exclusive, Taxable Only`, r.grossRevenue)}
         ${birRow(2,  'Less: Cost of Sales / Services (COGS, Cumulative)', cogs)}
         ${birRow(3,  'Gross Income  (Line 1 − Line 2)', grossInc, 'bir-total')}
         ${birRow(4,  'Less: Total Allowable Deductions (Cumulative)', r.totalExpenses)}
