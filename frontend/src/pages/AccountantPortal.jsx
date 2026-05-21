@@ -40,6 +40,8 @@ import {
   build1601EQHtml,
   build1601CHtml,
   buildBooksHtml,
+  buildAlphalistHtml,
+  build2307Html,
 } from '../utils/printReport.js';
 
 // ─── Design tokens ────────────────────────────────────────────────────────────
@@ -938,18 +940,29 @@ function computeTrialBalance(transactions, journals) {
 }
 
 // ─── Alphalist helper ─────────────────────────────────────────────────────────
-function computeAlphalist(transactions) {
+function computeAlphalist(transactions, year = 0, quarter = 0) {
+  let filtered = transactions.filter(t => t.type === 'expense' && !t.isVoid);
+  if (year) {
+    filtered = filtered.filter(t => new Date(t.createdAt).getFullYear() === year);
+    if (quarter) {
+      filtered = filtered.filter(t => {
+        const m = new Date(t.createdAt).getMonth() + 1;
+        return Math.ceil(m / 3) === quarter;
+      });
+    }
+  }
   const map = {};
-  transactions.filter(t => t.type === 'expense').forEach(t => {
+  filtered.forEach(t => {
     const key = t.counterpartyTin || '__NO_TIN__' + (t.counterpartyName || '');
     if (!map[key]) map[key] = {
       tin: t.counterpartyTin || '—', name: t.counterpartyName || 'Unknown Vendor',
       address: t.counterpartyAddress || '—',
-      gross: 0, net: 0, vat: 0, txCount: 0,
+      gross: 0, net: 0, vat: 0, ewt: 0, txCount: 0,
     };
-    map[key].gross   += t.gross || 0;
-    map[key].net     += t.net   || 0;
-    map[key].vat     += t.vat   || 0;
+    map[key].gross   = Math.round((map[key].gross   + (t.gross       || 0)) * 100) / 100;
+    map[key].net     = Math.round((map[key].net     + (t.net         || 0)) * 100) / 100;
+    map[key].vat     = Math.round((map[key].vat     + (t.vat         || 0)) * 100) / 100;
+    map[key].ewt     = Math.round((map[key].ewt     + (t.ewtAmount   || 0)) * 100) / 100;
     map[key].txCount++;
   });
   return Object.values(map).sort((a, b) => b.gross - a.gross);
@@ -1214,6 +1227,9 @@ export default function AccountantPortal({ onLogout }) {
   const [slspLoad,    setSlspLoad]    = useState(false);
   const [slspYear,    setSlspYear]    = useState(new Date().getFullYear());
   const [slspQ,       setSlspQ]       = useState(Math.ceil((new Date().getMonth() + 1) / 3));
+  // Alphalist
+  const [alphaYear, setAlphaYear] = useState(new Date().getFullYear());
+  const [alphaQ,    setAlphaQ]    = useState(0); // 0 = all quarters
   // Payroll / 1601-C
   const [employees,     setEmployees]    = useState([]);
   const [payrollResult, setPayrollResult]= useState(null);
@@ -2858,76 +2874,196 @@ export default function AccountantPortal({ onLogout }) {
 
         {/* ════════════ ALPHALIST ════════════ */}
         {tab === 'Alphalist' && active && (
-          !isPro ? <ProLock onUpgrade={(tier) => { setUpgradeTarget(tier || 'solo'); setShowUpgrade(true); }} /> : <div>
-            <h2 style={{ margin: '0 0 8px', fontSize: 22, fontWeight: 600 }}>Alphalist / SLSP — {active.tradeName}</h2>
-            <div style={{ fontSize: 13, color: T.muted, marginBottom: 20 }}>
-              Expense transactions grouped by vendor/counterparty for BIR Alphalist reporting.
-              TIN-less vendors are grouped separately.
+  !isPro ? <ProLock onUpgrade={(tier) => { setUpgradeTarget(tier || 'solo'); setShowUpgrade(true); }} /> : <div>
+    <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: 4 }}>
+      <h2 style={{ margin: 0, fontSize: 22, fontWeight: 600 }}>Alphalist of Payees — {active.tradeName}</h2>
+      <div style={{ display: 'flex', gap: 8 }}>
+        <Btn size="sm" variant="neutral" onClick={() => {
+          const rows = computeAlphalist(txns, alphaYear, alphaQ);
+          const periodLbl = alphaQ === 0 ? `Full Year ${alphaYear}` : `Q${alphaQ} ${alphaYear}`;
+          const bodyHtml = buildAlphalistHtml({ rows, clientName: active.tradeName, period: periodLbl });
+          printReport({
+            title: `Alphalist of Payees — ${active.tradeName}`,
+            subtitle: periodLbl,
+            bodyHtml,
+            firmLabel: firmName || 'MyLedger by Kaiman & Co.',
+            accentColor: brandAccent,
+          });
+        }}>⬇ Export PDF</Btn>
+        <Btn size="sm" variant="neutral" onClick={() => {
+          const rows = computeAlphalist(txns, alphaYear, alphaQ);
+          const periodLbl = alphaQ === 0 ? `Full_Year_${alphaYear}` : `Q${alphaQ}_${alphaYear}`;
+          const headers = ['TIN','Vendor/Payee','Address','Tx Count','Net Purchases','Input VAT','Gross Purchases','EWT Withheld'];
+          const csvRows = rows.map(r => [r.tin, r.name, r.address, r.txCount, r.net, r.vat, r.gross, r.ewt]);
+          const csv = [headers, ...csvRows].map(row => row.map(v => `"${String(v).replace(/"/g,'""')}"`).join(',')).join('\n');
+          const blob = new Blob([csv], { type: 'text/csv' });
+          const url = URL.createObjectURL(blob);
+          const a = document.createElement('a'); a.href = url;
+          a.download = `Alphalist_${active.tradeName.replace(/\s+/g,'_')}_${periodLbl}.csv`;
+          document.body.appendChild(a); a.click(); document.body.removeChild(a);
+          URL.revokeObjectURL(url);
+        }}>⬇ CSV</Btn>
+      </div>
+    </div>
+    <div style={{ fontSize: 13, color: T.muted, marginBottom: 20 }}>
+      Expense transactions grouped by vendor for BIR Alphalist of Payees (1604-EQ Annex).
+    </div>
+
+    {/* Period picker */}
+    <Card style={{ marginBottom: 20 }}>
+      <div style={{ display: 'flex', gap: 16, alignItems: 'flex-end', flexWrap: 'wrap' }}>
+        <Fld label="Year">
+          <input style={{ ...inp, width: 90 }} type="number" value={alphaYear}
+            onChange={e => setAlphaYear(Number(e.target.value))} min={2020} max={2099} />
+        </Fld>
+        <Fld label="Quarter">
+          <select style={{ ...inp, width: 160 }} value={alphaQ}
+            onChange={e => setAlphaQ(Number(e.target.value))}>
+            <option value={0}>All Quarters</option>
+            <option value={1}>Q1 (Jan–Mar)</option>
+            <option value={2}>Q2 (Apr–Jun)</option>
+            <option value={3}>Q3 (Jul–Sep)</option>
+            <option value={4}>Q4 (Oct–Dec)</option>
+          </select>
+        </Fld>
+      </div>
+    </Card>
+
+    {(() => {
+      const rows = computeAlphalist(txns, alphaYear, alphaQ);
+      const withTin    = rows.filter(r => r.tin !== '—');
+      const withoutTin = rows.filter(r => r.tin === '—');
+      const ewtRows    = withTin.filter(r => r.ewt > 0);
+      const periodLbl  = alphaQ === 0 ? `Full Year ${alphaYear}` : `Q${alphaQ} ${alphaYear}`;
+
+      if (rows.length === 0) return (
+        <div style={{ textAlign: 'center', padding: '60px 20px', color: T.muted }}>
+          <div style={{ fontSize: 40, marginBottom: 12 }}>📋</div>
+          <div>No expense transactions found for {periodLbl}.</div>
+        </div>
+      );
+
+      const AlphaTable = ({ data, title, showEWT = false }) => (
+        <div style={{ marginBottom: 24 }}>
+          <div style={{ fontSize: 13, fontWeight: 600, color: T.text, marginBottom: 10 }}>{title}</div>
+          <Card style={{ padding: 0, overflow: 'hidden' }}>
+            <div style={{ overflowX: 'auto' }}>
+              <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 12 }}>
+                <thead>
+                  <tr style={{ background: T.bg }}>
+                    {['TIN','Vendor / Payee','Address','Tx','Net Purchases','Input VAT','Gross Purchases', ...(showEWT ? ['EWT Withheld'] : [])].map((h, i) => (
+                      <th key={h} style={{ padding: '9px 12px', textAlign: i >= 3 ? 'right' : 'left',
+                        fontWeight: 600, color: T.muted, fontSize: 10, borderBottom: `1px solid ${T.border}`,
+                        whiteSpace: 'nowrap' }}>{h}</th>
+                    ))}
+                  </tr>
+                </thead>
+                <tbody>
+                  {data.map((r, i) => (
+                    <tr key={i} style={{ borderBottom: i < data.length - 1 ? `1px solid ${T.border}` : 'none' }}>
+                      <td style={{ padding: '9px 12px', fontFamily: 'monospace', fontSize: 11,
+                        color: r.tin !== '—' ? T.text : T.muted }}>{r.tin}</td>
+                      <td style={{ padding: '9px 12px', fontWeight: 500 }}>{r.name}</td>
+                      <td style={{ padding: '9px 12px', color: T.muted, fontSize: 11, maxWidth: 160 }}>{r.address}</td>
+                      <td style={{ padding: '9px 12px', textAlign: 'right', color: T.muted }}>{r.txCount}</td>
+                      <td style={{ padding: '9px 12px', textAlign: 'right' }}>{peso(r.net)}</td>
+                      <td style={{ padding: '9px 12px', textAlign: 'right', color: T.orange }}>{peso(r.vat)}</td>
+                      <td style={{ padding: '9px 12px', textAlign: 'right', fontWeight: 600 }}>{peso(r.gross)}</td>
+                      {showEWT && <td style={{ padding: '9px 12px', textAlign: 'right', fontWeight: 700, color: T.red }}>{r.ewt > 0 ? peso(r.ewt) : <span style={{ color: T.muted }}>—</span>}</td>}
+                    </tr>
+                  ))}
+                  <tr style={{ background: T.bg, borderTop: `2px solid ${T.border}` }}>
+                    <td colSpan={3} style={{ padding: '9px 12px', fontWeight: 700, fontSize: 12, color: T.muted }}>TOTAL</td>
+                    <td style={{ padding: '9px 12px', textAlign: 'right', fontWeight: 700 }}>{data.reduce((s, r) => s + r.txCount, 0)}</td>
+                    <td style={{ padding: '9px 12px', textAlign: 'right', fontWeight: 700 }}>{peso(data.reduce((s, r) => s + r.net, 0))}</td>
+                    <td style={{ padding: '9px 12px', textAlign: 'right', fontWeight: 700, color: T.orange }}>{peso(data.reduce((s, r) => s + r.vat, 0))}</td>
+                    <td style={{ padding: '9px 12px', textAlign: 'right', fontWeight: 700 }}>{peso(data.reduce((s, r) => s + r.gross, 0))}</td>
+                    {showEWT && <td style={{ padding: '9px 12px', textAlign: 'right', fontWeight: 700, color: T.red }}>{peso(data.reduce((s, r) => s + r.ewt, 0))}</td>}
+                  </tr>
+                </tbody>
+              </table>
             </div>
+          </Card>
+        </div>
+      );
 
-            {(() => {
-              const rows = computeAlphalist(txns);
-              const withTin    = rows.filter(r => r.tin !== '—');
-              const withoutTin = rows.filter(r => r.tin === '—');
+      return (
+        <div>
+          {withTin.length > 0    && <AlphaTable data={withTin}    title={`${withTin.length} vendors with TIN — Alphalist reportable (${periodLbl})`} showEWT={true} />}
+          {withoutTin.length > 0 && <AlphaTable data={withoutTin} title={`${withoutTin.length} vendors without TIN — needs follow-up`} showEWT={false} />}
 
-              if (rows.length === 0) return (
-                <div style={{ textAlign: 'center', padding: '60px 20px', color: T.muted }}>
-                  <div style={{ fontSize: 40, marginBottom: 12 }}>📋</div>
-                  <div>No expense transactions yet. Add expenses with vendor details to populate this report.</div>
-                </div>
-              );
+          {/* 2307 Generator — only show if there are EWT transactions */}
+          {ewtRows.length > 0 && (
+            <Card style={{ marginBottom: 20, borderLeft: `4px solid ${T.orange}` }}>
+              <SectionHead>BIR Form 2307 — Certificates of Creditable Tax Withheld</SectionHead>
+              <div style={{ fontSize: 13, color: T.muted, marginBottom: 14 }}>
+                Generate a Certificate of Creditable Tax Withheld at Source (BIR Form 2307) for each payee
+                from whom EWT was withheld during {periodLbl}. Issue these to your vendors — they use it to claim tax credits.
+              </div>
+              <div style={{ display: 'flex', gap: 10, flexWrap: 'wrap' }}>
+                <Btn onClick={() => {
+                  // Build all 2307s in one print window
+                  const ATC_MAP = {
+                    0.01: { atc: 'WC010', description: 'Supplier of Goods — Top 20,000 Corporations' },
+                    0.02: { atc: 'WC020', description: 'Supplier of Services / Contractors' },
+                    0.05: { atc: 'WF010', description: 'Professional / Talent Fees (5%)' },
+                    0.10: { atc: 'WF020', description: 'Professional / Talent Fees (10%)' },
+                    0.15: { atc: 'WR010', description: 'Rental — Real / Personal Property (15%)' },
+                    0.25: { atc: 'WF000', description: 'Non-Resident Payees (25%)' },
+                  };
+                  const qNum = alphaQ || Math.ceil((new Date().getMonth() + 1) / 3);
+                  const qEnd = ['March','June','September','December'][qNum - 1];
+                  const qLabel = `Q${qNum} (Jan–${qEnd}) ${alphaYear}`;
+                  const qMths = alphaQ === 0
+                    ? [1,2,3,4,5,6,7,8,9,10,11,12]
+                    : [(alphaQ-1)*3+1, (alphaQ-1)*3+2, (alphaQ-1)*3+3];
 
-              const AlphaTable = ({ data, title }) => (
-                <div style={{ marginBottom: 24 }}>
-                  <div style={{ fontSize: 13, fontWeight: 600, color: T.text, marginBottom: 10 }}>{title}</div>
-                  <Card style={{ padding: 0, overflow: 'hidden' }}>
-                    <div style={{ overflowX: 'auto' }}>
-                      <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 13 }}>
-                        <thead>
-                          <tr style={{ background: T.bg }}>
-                            {['TIN','Vendor / Payee','Address','Tx Count','Net Purchases','Input VAT','Gross Purchases'].map((h, i) => (
-                              <th key={h} style={{ padding: '10px 14px', textAlign: i >= 3 ? 'right' : 'left',
-                                fontWeight: 600, color: T.muted, fontSize: 11, borderBottom: `1px solid ${T.border}`,
-                                whiteSpace: 'nowrap' }}>{h}</th>
-                            ))}
-                          </tr>
-                        </thead>
-                        <tbody>
-                          {data.map((r, i) => (
-                            <tr key={i} style={{ borderBottom: i < data.length - 1 ? `1px solid ${T.border}` : 'none' }}>
-                              <td style={{ padding: '10px 14px', fontFamily: 'monospace', fontSize: 12,
-                                color: r.tin !== '—' ? T.text : T.muted }}>{r.tin}</td>
-                              <td style={{ padding: '10px 14px', fontWeight: 500 }}>{r.name}</td>
-                              <td style={{ padding: '10px 14px', color: T.muted, fontSize: 12, maxWidth: 160 }}>{r.address}</td>
-                              <td style={{ padding: '10px 14px', textAlign: 'right', color: T.muted }}>{r.txCount}</td>
-                              <td style={{ padding: '10px 14px', textAlign: 'right', fontWeight: 500 }}>{peso(r.net)}</td>
-                              <td style={{ padding: '10px 14px', textAlign: 'right', color: T.orange }}>{peso(r.vat)}</td>
-                              <td style={{ padding: '10px 14px', textAlign: 'right', fontWeight: 600, color: T.red }}>{peso(r.gross)}</td>
-                            </tr>
-                          ))}
-                          <tr style={{ background: T.bg, borderTop: `2px solid ${T.border}` }}>
-                            <td colSpan={3} style={{ padding: '10px 14px', fontWeight: 700, fontSize: 12, color: T.muted }}>TOTAL</td>
-                            <td style={{ padding: '10px 14px', textAlign: 'right', fontWeight: 700 }}>{data.reduce((s, r) => s + r.txCount, 0)}</td>
-                            <td style={{ padding: '10px 14px', textAlign: 'right', fontWeight: 700 }}>{peso(data.reduce((s, r) => s + r.net, 0))}</td>
-                            <td style={{ padding: '10px 14px', textAlign: 'right', fontWeight: 700, color: T.orange }}>{peso(data.reduce((s, r) => s + r.vat, 0))}</td>
-                            <td style={{ padding: '10px 14px', textAlign: 'right', fontWeight: 700, color: T.red }}>{peso(data.reduce((s, r) => s + r.gross, 0))}</td>
-                          </tr>
-                        </tbody>
-                      </table>
-                    </div>
-                  </Card>
-                </div>
-              );
+                  // Filter EWT txns for this period
+                  const ewtTxns = txns.filter(t => {
+                    const d = new Date(t.createdAt);
+                    return d.getFullYear() === alphaYear && qMths.includes(d.getMonth()+1)
+                      && t.type === 'expense' && parseFloat(t.ewtRate) > 0 && t.ewtAmount > 0;
+                  });
 
-              return (
-                <div>
-                  {withTin.length > 0    && <AlphaTable data={withTin}    title={`${withTin.length} vendors with TIN (Alphalist reportable)`} />}
-                  {withoutTin.length > 0 && <AlphaTable data={withoutTin} title={`${withoutTin.length} vendors without TIN (needs follow-up)`} />}
-                </div>
-              );
-            })()}
-          </div>
-        )}
+                  // Group by payee
+                  const byPayee = {};
+                  ewtTxns.forEach(t => {
+                    const key = t.counterpartyTin || ('__'+t.counterpartyName);
+                    if (!byPayee[key]) byPayee[key] = {
+                      tin: t.counterpartyTin || '',
+                      name: t.counterpartyName || 'Unknown Vendor',
+                      address: t.counterpartyAddress || '',
+                      atcs: {}
+                    };
+                    const rate = parseFloat(t.ewtRate);
+                    const info = ATC_MAP[rate] || { atc: `WC${String(Math.round(rate*100)).padStart(3,'0')}`, description: `EWT ${(rate*100).toFixed(0)}%` };
+                    const atcKey = info.atc;
+                    byPayee[key].atcs[atcKey] = byPayee[key].atcs[atcKey] || { ...info, rate, base: 0, ewt: 0 };
+                    byPayee[key].atcs[atcKey].base = Math.round((byPayee[key].atcs[atcKey].base + (t.amount_net||0)) * 100) / 100;
+                    byPayee[key].atcs[atcKey].ewt  = Math.round((byPayee[key].atcs[atcKey].ewt  + (t.ewtAmount||0))  * 100) / 100;
+                  });
+
+                  const payees = Object.values(byPayee);
+                  const allHtml = payees.map(p =>
+                    build2307Html({ payee: p, client: active, period: qLabel, atcList: Object.values(p.atcs) })
+                  ).join('<div style="page-break-after:always"></div>');
+
+                  printReport({
+                    title: `BIR Form 2307 — ${active.tradeName} — ${qLabel}`,
+                    subtitle: `${payees.length} certificate${payees.length!==1?'s':''}`,
+                    bodyHtml: allHtml,
+                    firmLabel: firmName || 'MyLedger by Kaiman & Co.',
+                    accentColor: brandAccent,
+                  });
+                }}>⬇ Print All 2307s ({ewtRows.length} payee{ewtRows.length!==1?'s':''})</Btn>
+              </div>
+            </Card>
+          )}
+        </div>
+      );
+    })()}
+  </div>
+)}
 
         {/* ════════════ AUDIT LOG ════════════ */}
         {tab === 'Audit Log' && active && (

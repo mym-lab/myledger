@@ -1115,6 +1115,175 @@ export function build1601CHtml({ payrollResult, client, monthLabel }) {
   </div>`;
 }
 
+export function buildAlphalistHtml({ rows, clientName, period }) {
+  const withTin    = rows.filter(r => r.tin !== '—');
+  const withoutTin = rows.filter(r => r.tin === '—');
+  const totalNet   = rows.reduce((s, r) => s + r.net, 0);
+  const totalVat   = rows.reduce((s, r) => s + r.vat, 0);
+  const totalGross = rows.reduce((s, r) => s + r.gross, 0);
+  const totalEWT   = rows.reduce((s, r) => s + r.ewt, 0);
+
+  const tableRows = (data, showEWT) => data.length === 0
+    ? `<tr><td colspan="${showEWT ? 8 : 7}" style="text-align:center;color:#999;font-style:italic;padding:12px">No records</td></tr>`
+    : data.map(r => `
+      <tr>
+        <td style="padding:5px 8px;border:1px solid #ddd;font-family:monospace;font-size:8pt">${r.tin}</td>
+        <td style="padding:5px 8px;border:1px solid #ddd">${r.name}</td>
+        <td style="padding:5px 8px;border:1px solid #ddd;color:#555;font-size:8pt">${r.address}</td>
+        <td style="padding:5px 8px;border:1px solid #ddd;text-align:right">${r.txCount}</td>
+        <td style="padding:5px 8px;border:1px solid #ddd;text-align:right">${peso(r.net)}</td>
+        <td style="padding:5px 8px;border:1px solid #ddd;text-align:right">${peso(r.vat)}</td>
+        <td style="padding:5px 8px;border:1px solid #ddd;text-align:right;font-weight:600">${peso(r.gross)}</td>
+        ${showEWT ? `<td style="padding:5px 8px;border:1px solid #ddd;text-align:right;font-weight:700;color:#c84b00">${r.ewt > 0 ? peso(r.ewt) : '—'}</td>` : ''}
+      </tr>`).join('');
+
+  const tableFooter = (data, showEWT) => `
+    <tr style="background:#f8f8f8;font-weight:700">
+      <td colspan="3" style="padding:7px 8px;border:1px solid #ddd">TOTAL (${data.length} vendors)</td>
+      <td style="padding:7px 8px;border:1px solid #ddd;text-align:right">${data.reduce((s,r)=>s+r.txCount,0)}</td>
+      <td style="padding:7px 8px;border:1px solid #ddd;text-align:right">${peso(data.reduce((s,r)=>s+r.net,0))}</td>
+      <td style="padding:7px 8px;border:1px solid #ddd;text-align:right">${peso(data.reduce((s,r)=>s+r.vat,0))}</td>
+      <td style="padding:7px 8px;border:1px solid #ddd;text-align:right">${peso(data.reduce((s,r)=>s+r.gross,0))}</td>
+      ${showEWT ? `<td style="padding:7px 8px;border:1px solid #ddd;text-align:right;color:#c84b00">${peso(data.reduce((s,r)=>s+r.ewt,0))}</td>` : ''}
+    </tr>`;
+
+  const thead = (showEWT) => `
+    <tr style="background:#f0f0f0">
+      <th style="padding:6px 8px;text-align:left;border:1px solid #ccc;width:100px">TIN</th>
+      <th style="padding:6px 8px;text-align:left;border:1px solid #ccc">Vendor / Payee Name</th>
+      <th style="padding:6px 8px;text-align:left;border:1px solid #ccc">Address</th>
+      <th style="padding:6px 8px;text-align:right;border:1px solid #ccc;width:40px">Tx</th>
+      <th style="padding:6px 8px;text-align:right;border:1px solid #ccc;width:110px">Net Purchases</th>
+      <th style="padding:6px 8px;text-align:right;border:1px solid #ccc;width:110px">Input VAT</th>
+      <th style="padding:6px 8px;text-align:right;border:1px solid #ccc;width:110px">Gross Purchases</th>
+      ${showEWT ? '<th style="padding:6px 8px;text-align:right;border:1px solid #ccc;width:110px">EWT Withheld</th>' : ''}
+    </tr>`;
+
+  return `
+  <div style="font-family:Arial,sans-serif;font-size:9pt;color:#000;max-width:760px">
+    <div style="text-align:center;border:2px solid #000;padding:8px;margin-bottom:0">
+      <div style="font-size:13pt;font-weight:700">Alphalist of Payees</div>
+      <div style="font-size:9pt;font-weight:600">Annex to BIR Form 1604-EQ — Expanded Withholding Tax</div>
+      <div style="font-size:8pt">Taxpayer: ${clientName} · Period: ${period}</div>
+    </div>
+
+    ${withTin.length > 0 ? `
+    <div style="background:#000;color:#fff;font-weight:700;font-size:8pt;padding:3px 6px;text-transform:uppercase;letter-spacing:.05em">
+      Part I — Payees with TIN (${withTin.length} records) — Alphalist Reportable
+    </div>
+    <table style="width:100%;border-collapse:collapse;font-size:8.5pt;margin-bottom:0">
+      <thead>${thead(true)}</thead>
+      <tbody>${tableRows(withTin, true)}${tableFooter(withTin, true)}</tbody>
+    </table>` : ''}
+
+    ${withoutTin.length > 0 ? `
+    <div style="background:#555;color:#fff;font-weight:700;font-size:8pt;padding:3px 6px;text-transform:uppercase;letter-spacing:.05em;margin-top:12px">
+      Part II — Payees without TIN (${withoutTin.length} records) — Needs Follow-up
+    </div>
+    <table style="width:100%;border-collapse:collapse;font-size:8.5pt;margin-bottom:0">
+      <thead>${thead(false)}</thead>
+      <tbody>${tableRows(withoutTin, false)}${tableFooter(withoutTin, false)}</tbody>
+    </table>` : ''}
+
+    <div style="margin-top:16px;border:1px solid #ccc;padding:8px;display:flex;gap:32px;font-size:9pt">
+      <span><strong>Total Vendors:</strong> ${rows.length}</span>
+      <span><strong>Total Net Purchases:</strong> ${peso(totalNet)}</span>
+      <span><strong>Total Input VAT:</strong> ${peso(totalVat)}</span>
+      <span><strong>Total Gross:</strong> ${peso(totalGross)}</span>
+      <span><strong>Total EWT Withheld:</strong> ${peso(totalEWT)}</span>
+    </div>
+  </div>`;
+}
+
+export function build2307Html({ payee, client, period, atcList }) {
+  const c = client || {};
+  const p = payee  || {};
+  const tinFmt = tin => (tin || '').replace(/[^0-9]/g, '').replace(/(\d{3})(\d{3})(\d{3})(\d*)/, '$1-$2-$3-$4').replace(/-$/, '');
+  const totalEWT  = Math.round(atcList.reduce((s, a) => s + (a.ewt || 0), 0) * 100) / 100;
+  const totalBase = Math.round(atcList.reduce((s, a) => s + (a.base || 0), 0) * 100) / 100;
+
+  const atcRows = atcList.length === 0
+    ? `<tr><td colspan="5" style="text-align:center;color:#999;font-style:italic;padding:10px">No EWT transactions</td></tr>`
+    : atcList.map(a => `
+      <tr>
+        <td style="padding:5px 8px;border:1px solid #ddd;font-family:monospace;font-weight:700;color:#003087">${a.atc}</td>
+        <td style="padding:5px 8px;border:1px solid #ddd">${a.description}</td>
+        <td style="padding:5px 8px;border:1px solid #ddd;text-align:right">${peso(a.base)}</td>
+        <td style="padding:5px 8px;border:1px solid #ddd;text-align:right">${(a.rate * 100).toFixed(0)}%</td>
+        <td style="padding:5px 8px;border:1px solid #ddd;text-align:right;font-weight:700">${peso(a.ewt)}</td>
+      </tr>`).join('');
+
+  return `${birCss}
+  <div class="bir-wrap">
+    <div class="bir-header">
+      <div class="form-no">BIR Form No. 2307</div>
+      <div class="form-title">Certificate of Creditable Tax Withheld at Source</div>
+      <div class="form-sub">Republic of the Philippines · Department of Finance · Bureau of Internal Revenue</div>
+    </div>
+
+    <div class="bir-part">
+      <div class="bir-part-title">Part I — Payee Information (Supplier / Vendor)</div>
+      <div class="bir-row">
+        ${birField('1 Payee TIN', tinFmt(p.tin) || p.tin || '—', 'flex:1.5')}
+        ${birField('2 Payee Name', p.name || '—', 'flex:3')}
+      </div>
+      <div class="bir-row">
+        ${birField('3 Payee Registered Address', p.address || '—', 'flex:4')}
+      </div>
+    </div>
+
+    <div class="bir-part">
+      <div class="bir-part-title">Part II — Withholding Agent Information (Your Business)</div>
+      <div class="bir-row">
+        ${birField('4 Withholding Agent TIN', tinFmt(c.tin) || c.tin || '—', 'flex:1.5')}
+        ${birField('5 Withholding Agent Name', c.tradeName || '—', 'flex:3')}
+      </div>
+      <div class="bir-row">
+        ${birField('6 Registered Address', c.address || '—', 'flex:3')}
+        ${birField('ZIP', c.zipCode || '—', 'width:70px')}
+        ${birField('7 Telephone', c.telephone || '—', 'flex:1')}
+      </div>
+      <div class="bir-row">
+        ${birField('8 Return Period', period || '—', 'flex:2')}
+        ${birField('9 Date of Remittance', '—', 'flex:1.5')}
+        ${birField('10 Amended?', 'No', 'flex:0.8')}
+      </div>
+    </div>
+
+    <div class="bir-part">
+      <div class="bir-part-title">Part III — Schedule of Income Payments and Taxes Withheld</div>
+      <table style="width:100%;border-collapse:collapse;font-size:8.5pt;margin:0">
+        <thead>
+          <tr style="background:#f0f0f0">
+            <th style="padding:6px 8px;text-align:left;border:1px solid #ccc;width:90px">ATC</th>
+            <th style="padding:6px 8px;text-align:left;border:1px solid #ccc">Nature of Income Payment</th>
+            <th style="padding:6px 8px;text-align:right;border:1px solid #ccc;width:120px">Income Payment</th>
+            <th style="padding:6px 8px;text-align:right;border:1px solid #ccc;width:70px">Rate</th>
+            <th style="padding:6px 8px;text-align:right;border:1px solid #ccc;width:120px">Tax Withheld</th>
+          </tr>
+        </thead>
+        <tbody>${atcRows}</tbody>
+        <tfoot>
+          <tr style="background:#f8f8f8;font-weight:700">
+            <td colspan="2" style="padding:7px 8px;border:1px solid #ccc">TOTAL</td>
+            <td style="padding:7px 8px;border:1px solid #ccc;text-align:right">${peso(totalBase)}</td>
+            <td style="border:1px solid #ccc"></td>
+            <td style="padding:7px 8px;border:1px solid #ccc;text-align:right">${peso(totalEWT)}</td>
+          </tr>
+        </tfoot>
+      </table>
+    </div>
+
+    <div style="margin-top:14px;display:flex;gap:16px">
+      <div class="bir-sig-box" style="flex:2">Signature of Withholding Agent / Authorized Representative over Printed Name</div>
+      <div class="bir-sig-box">TIN</div>
+      <div class="bir-sig-box">Title / Position</div>
+      <div class="bir-sig-box">Date</div>
+    </div>
+    <p class="bir-note">This certificate is issued by the withholding agent to the payee. Keep this for your records — use it to claim tax credits on your income tax return.</p>
+  </div>`;
+}
+
 export function buildBooksHtml({ booksType, booksData, clientName }) {
   if (!booksData) return '<p style="color:#6e6e73">No data available.</p>';
   const rows   = booksData.rows   || [];
