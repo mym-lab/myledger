@@ -38,6 +38,7 @@ import {
   buildCashFlowHtml,
   buildBIRReturnHtml,
   build1601EQHtml,
+  build1604EQHtml,
   build1601CHtml,
   buildBooksHtml,
   buildAlphalistHtml,
@@ -2278,19 +2279,20 @@ export default function AccountantPortal({ onLogout }) {
             const formGroups  = [
               { label: 'Income Tax', forms: itForms },
               { label: isOPT ? 'Percentage Tax' : 'VAT Returns', forms: vatForms },
-              { label: 'Withholding Tax', forms: ['1601-EQ'] },
+              { label: 'Withholding Tax', forms: ['1601-EQ', '1604-EQ'] },
             ];
-            const allForms    = [...itForms, ...vatForms, '1601-EQ'];
+            const allForms    = [...itForms, ...vatForms, '1601-EQ', '1604-EQ'];
 
             // Normalise the current selection
             const is1601EQ    = birType === '1601-EQ';
+            const is1604EQ    = birType === '1604-EQ';
             const isITForm    = ['1701', '1701A', '1702', '1702Q'].includes(birType);
             const isVATForm   = ['2550M', '2550Q', '2551M', '2551Q'].includes(birType);
             const effectiveBirType = allForms.includes(birType) ? birType
               : (isSoleProp ? (active.taxOption === '8percent' ? '1701A' : '1701') : '1702');
 
             const isQuarterly = ['2550Q', '2551Q', '1601-EQ', '1702Q'].includes(effectiveBirType);
-            const isAnnual    = ['1701', '1701A', '1702'].includes(effectiveBirType);
+            const isAnnual    = ['1701', '1701A', '1702', '1604-EQ'].includes(effectiveBirType);
             const monthNames  = ['','January','February','March','April','May','June','July','August','September','October','November','December'];
             const qLabels     = { 1: 'Q1 (Jan–Mar)', 4: 'Q2 (Apr–Jun)', 7: 'Q3 (Jul–Sep)', 10: 'Q4 (Oct–Dec)' };
             // Normalize birMonth to the start of its quarter (1, 4, 7, or 10)
@@ -2310,7 +2312,9 @@ export default function AccountantPortal({ onLogout }) {
                   </h2>
                   <Btn size="sm" variant="neutral" onClick={() => {
                     let r, bodyHtml;
-                    if (is1601EQ) {
+                    if (is1604EQ) {
+                      bodyHtml = build1604EQHtml({ txns, client: active, birYear });
+                    } else if (is1601EQ) {
                       bodyHtml = build1601EQHtml({ txns, client: active, birYear, qStart, periodLabel });
                     } else if (isITForm) {
                       const qNum = ['1702Q'].includes(effectiveBirType) ? itQuarter : null;
@@ -2520,7 +2524,7 @@ export default function AccountantPortal({ onLogout }) {
                 })()}
 
                 {/* ── OPT / 2551 ── */}
-                {isOPT && !is1601EQ && !isITForm && (() => {
+                {isOPT && !is1601EQ && !is1604EQ && !isITForm && (() => {
                   const r = computeOPT(txns, active, birYear, isQuarterly ? qStart : birMonth, isQuarterly);
                   return (
                     <div>
@@ -2808,8 +2812,165 @@ export default function AccountantPortal({ onLogout }) {
                   );
                 })()}
 
+                {/* ── 1604-EQ (Annual EWT Return) ── */}
+                {is1604EQ && (() => {
+                  const ATC_MAP = {
+                    0.01: { atc: 'WC010', description: 'Supplier of Goods — Top 20,000 Corps' },
+                    0.02: { atc: 'WC020', description: 'Supplier of Services / Contractors' },
+                    0.05: { atc: 'WF010', description: 'Professional / Talent Fees (5%)' },
+                    0.10: { atc: 'WF020', description: 'Professional / Talent Fees (10%)' },
+                    0.15: { atc: 'WR010', description: 'Rental (15%)' },
+                    0.25: { atc: 'WF000', description: 'Non-Resident Payees (25%)' },
+                  };
+                  const filtered = txns.filter(t =>
+                    new Date(t.createdAt).getFullYear() === birYear
+                    && t.type === 'expense' && parseFloat(t.ewtRate) > 0 && t.ewtAmount > 0
+                  );
+                  const qRanges = [[1,3],[4,6],[7,9],[10,12]];
+                  const qTotals = qRanges.map(([m1,m2]) => {
+                    const qt = filtered.filter(t => { const m = new Date(t.createdAt).getMonth()+1; return m>=m1&&m<=m2; });
+                    return Math.round(qt.reduce((s,t) => s+(t.ewtAmount||0),0)*100)/100;
+                  });
+                  const byAtc = {};
+                  filtered.forEach(t => {
+                    const rate = parseFloat(t.ewtRate);
+                    const info = ATC_MAP[rate] || { atc: `WC${String(Math.round(rate*100)).padStart(3,'0')}`, description: `EWT ${(rate*100).toFixed(0)}%` };
+                    byAtc[info.atc] = byAtc[info.atc] || { ...info, rate, base:0, ewt:0, q:[0,0,0,0] };
+                    byAtc[info.atc].base = Math.round((byAtc[info.atc].base+(t.amount_net||0))*100)/100;
+                    byAtc[info.atc].ewt  = Math.round((byAtc[info.atc].ewt+(t.ewtAmount||0))*100)/100;
+                    const m = new Date(t.createdAt).getMonth()+1;
+                    const qi = m<=3?0:m<=6?1:m<=9?2:3;
+                    byAtc[info.atc].q[qi] = Math.round((byAtc[info.atc].q[qi]+(t.ewtAmount||0))*100)/100;
+                  });
+                  const atcList  = Object.values(byAtc);
+                  const totalEWT  = Math.round(atcList.reduce((s,a)=>s+a.ewt,0)*100)/100;
+                  const totalBase = Math.round(atcList.reduce((s,a)=>s+a.base,0)*100)/100;
+                  return (
+                    <div>
+                      <div style={{ display:'flex', gap:16, marginBottom:20, flexWrap:'wrap' }}>
+                        {[
+                          { label:'Annual EWT Withheld', value:totalEWT,  sub:'Total for '+birYear,  color:'#3b82f6', bg:'#eff6ff' },
+                          { label:'Total Income Payments', value:totalBase, sub:'Base for EWT',       color:T.green,   bg:'#e3f7ed' },
+                          { label:'Q1 EWT (Jan–Mar)',     value:qTotals[0], sub:'1st quarter',        color:T.muted,   bg:T.bg },
+                          { label:'Q2 EWT (Apr–Jun)',     value:qTotals[1], sub:'2nd quarter',        color:T.muted,   bg:T.bg },
+                          { label:'Q3 EWT (Jul–Sep)',     value:qTotals[2], sub:'3rd quarter',        color:T.muted,   bg:T.bg },
+                          { label:'Q4 EWT (Oct–Dec)',     value:qTotals[3], sub:'4th quarter',        color:T.muted,   bg:T.bg },
+                        ].map(m => (
+                          <div key={m.label} style={{ background:m.bg, borderRadius:T.radius, padding:'14px 18px',
+                            border:`1px solid ${m.color}30`, flex:1, minWidth:140 }}>
+                            <div style={{ fontSize:12, color:T.muted, marginBottom:4 }}>{m.label}</div>
+                            <div style={{ fontSize:20, fontWeight:700, color:m.color }}>{peso(m.value)}</div>
+                            <div style={{ fontSize:11, color:T.muted, marginTop:2 }}>{m.sub}</div>
+                          </div>
+                        ))}
+                      </div>
+
+                      {/* ATC summary table */}
+                      <Card style={{ marginBottom:16, padding:0, overflow:'hidden' }}>
+                        <div style={{ padding:'12px 18px', borderBottom:`1px solid ${T.border}`, fontWeight:700, fontSize:14 }}>
+                          BIR Form 1604-EQ — Annual Summary by ATC with Quarterly Breakdown ({birYear})
+                        </div>
+                        <div style={{ overflowX:'auto' }}>
+                          <table style={{ width:'100%', borderCollapse:'collapse', fontSize:12 }}>
+                            <thead>
+                              <tr style={{ background:T.bg }}>
+                                {['ATC','Nature of Income Payment','Total Base','Q1 EWT','Q2 EWT','Q3 EWT','Q4 EWT','Annual EWT'].map((h,i) => (
+                                  <th key={h} style={{ padding:'8px 10px', textAlign: i>=2?'right':'left',
+                                    fontWeight:600, color:T.muted, fontSize:11, borderBottom:`1px solid ${T.border}`, whiteSpace:'nowrap' }}>{h}</th>
+                                ))}
+                              </tr>
+                            </thead>
+                            <tbody>
+                              {atcList.length === 0
+                                ? <tr><td colSpan={8} style={{ padding:20, textAlign:'center', color:T.muted }}>No EWT transactions for {birYear}</td></tr>
+                                : atcList.map(a => (
+                                  <tr key={a.atc} style={{ borderBottom:`1px solid ${T.border}` }}>
+                                    <td style={{ padding:'8px 10px', fontFamily:'monospace', fontWeight:700, color:'#003087' }}>{a.atc}</td>
+                                    <td style={{ padding:'8px 10px', color:T.text }}>{a.description}</td>
+                                    <td style={{ padding:'8px 10px', textAlign:'right', color:T.muted }}>{peso(a.base)}</td>
+                                    <td style={{ padding:'8px 10px', textAlign:'right', color:T.text }}>{peso(a.q[0])}</td>
+                                    <td style={{ padding:'8px 10px', textAlign:'right', color:T.text }}>{peso(a.q[1])}</td>
+                                    <td style={{ padding:'8px 10px', textAlign:'right', color:T.text }}>{peso(a.q[2])}</td>
+                                    <td style={{ padding:'8px 10px', textAlign:'right', color:T.text }}>{peso(a.q[3])}</td>
+                                    <td style={{ padding:'8px 10px', textAlign:'right', fontWeight:700, color:'#003087' }}>{peso(a.ewt)}</td>
+                                  </tr>
+                                ))
+                              }
+                            </tbody>
+                            {atcList.length > 0 && (
+                              <tfoot>
+                                <tr style={{ background:T.bg, fontWeight:700 }}>
+                                  <td colSpan={2} style={{ padding:'8px 10px', borderTop:`1px solid ${T.border}` }}>ANNUAL TOTAL</td>
+                                  <td style={{ padding:'8px 10px', textAlign:'right', borderTop:`1px solid ${T.border}` }}>{peso(totalBase)}</td>
+                                  <td style={{ padding:'8px 10px', textAlign:'right', borderTop:`1px solid ${T.border}` }}>{peso(qTotals[0])}</td>
+                                  <td style={{ padding:'8px 10px', textAlign:'right', borderTop:`1px solid ${T.border}` }}>{peso(qTotals[1])}</td>
+                                  <td style={{ padding:'8px 10px', textAlign:'right', borderTop:`1px solid ${T.border}` }}>{peso(qTotals[2])}</td>
+                                  <td style={{ padding:'8px 10px', textAlign:'right', borderTop:`1px solid ${T.border}` }}>{peso(qTotals[3])}</td>
+                                  <td style={{ padding:'8px 10px', textAlign:'right', color:'#003087', borderTop:`1px solid ${T.border}` }}>{peso(totalEWT)}</td>
+                                </tr>
+                              </tfoot>
+                            )}
+                          </table>
+                        </div>
+                      </Card>
+
+                      {/* Payee detail */}
+                      {filtered.length > 0 && (
+                        <Card style={{ padding:0, overflow:'hidden' }}>
+                          <div style={{ padding:'12px 18px', borderBottom:`1px solid ${T.border}`, fontWeight:700, fontSize:14 }}>
+                            EWT Transaction Detail — {filtered.length} transaction{filtered.length!==1?'s':''} for {birYear}
+                          </div>
+                          <div style={{ overflowX:'auto' }}>
+                            <table style={{ width:'100%', borderCollapse:'collapse', fontSize:12 }}>
+                              <thead>
+                                <tr style={{ background:T.bg }}>
+                                  {['Date','Payee','ATC','Description','NET Amount','Rate','EWT'].map((h,i) => (
+                                    <th key={h} style={{ padding:'8px 10px', textAlign:i>=4?'right':'left',
+                                      fontWeight:600, color:T.muted, fontSize:11, borderBottom:`1px solid ${T.border}` }}>{h}</th>
+                                  ))}
+                                </tr>
+                              </thead>
+                              <tbody>
+                                {filtered.map((t,i) => {
+                                  const rate = parseFloat(t.ewtRate);
+                                  const info = ATC_MAP[rate] || { atc:`WC${String(Math.round(rate*100)).padStart(3,'0')}` };
+                                  const d = new Date(t.createdAt);
+                                  return (
+                                    <tr key={t.id||i} style={{ borderBottom:`1px solid ${T.border}` }}>
+                                      <td style={{ padding:'7px 10px', color:T.muted, whiteSpace:'nowrap' }}>{d.toLocaleDateString('en-PH',{month:'short',day:'numeric'})}</td>
+                                      <td style={{ padding:'7px 10px', color:T.text }}>{t.counterpartyName||'—'}</td>
+                                      <td style={{ padding:'7px 10px', fontFamily:'monospace', fontWeight:700, color:'#003087' }}>{info.atc}</td>
+                                      <td style={{ padding:'7px 10px', color:T.muted }}>{t.description||'—'}</td>
+                                      <td style={{ padding:'7px 10px', textAlign:'right', color:T.text }}>{peso(t.amount_net||0)}</td>
+                                      <td style={{ padding:'7px 10px', textAlign:'right', color:T.muted }}>{(rate*100).toFixed(0)}%</td>
+                                      <td style={{ padding:'7px 10px', textAlign:'right', fontWeight:700, color:'#003087' }}>{peso(t.ewtAmount||0)}</td>
+                                    </tr>
+                                  );
+                                })}
+                              </tbody>
+                              <tfoot>
+                                <tr style={{ background:T.bg, fontWeight:700 }}>
+                                  <td colSpan={4} style={{ padding:'8px 10px', borderTop:`1px solid ${T.border}` }}>TOTAL</td>
+                                  <td style={{ padding:'8px 10px', textAlign:'right', borderTop:`1px solid ${T.border}` }}>{peso(totalBase)}</td>
+                                  <td style={{ borderTop:`1px solid ${T.border}` }}></td>
+                                  <td style={{ padding:'8px 10px', textAlign:'right', color:'#003087', borderTop:`1px solid ${T.border}` }}>{peso(totalEWT)}</td>
+                                </tr>
+                              </tfoot>
+                            </table>
+                          </div>
+                        </Card>
+                      )}
+
+                      <p style={{ fontSize:12, color:T.muted, marginTop:12 }}>
+                        Due: On or before March 1 of {birYear+1} · Attach Alphalist of Payees (available in the Alphalist tab) ·
+                        EWT was remitted quarterly via BIR Form 1601-EQ.
+                      </p>
+                    </div>
+                  );
+                })()}
+
                 {/* ── VAT / 2550 ── */}
-                {!isOPT && !is1601EQ && !isITForm && (() => {
+                {!isOPT && !is1601EQ && !is1604EQ && !isITForm && (() => {
                   const r = computeBIRVAT(txns, birYear, isQuarterly ? qStart : birMonth, isQuarterly);
                   return (
                     <div>
