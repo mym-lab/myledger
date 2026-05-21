@@ -126,7 +126,8 @@ router.get('/', (req, res) => {
       SELECT i.*,
         (SELECT json_group_array(json_object(
           'id', ii.id, 'description', ii.description,
-          'quantity', ii.quantity, 'unit_price', ii.unit_price, 'amount', ii.amount
+          'quantity', ii.quantity, 'unit_price', ii.unit_price, 'amount', ii.amount,
+          'line_vat_type', ii.line_vat_type
         )) FROM invoice_items ii WHERE ii.invoice_id = i.id) as items_json
       FROM invoices i
       WHERE i.client_id = ?
@@ -285,14 +286,15 @@ router.put('/:id', (req, res) => {
     if (items) {
       db.prepare(`DELETE FROM invoice_items WHERE invoice_id = ?`).run(req.params.id);
       const insertItem = db.prepare(`
-        INSERT INTO invoice_items (id, invoice_id, description, quantity, unit_price, amount)
-        VALUES (?, ?, ?, ?, ?, ?)
+        INSERT INTO invoice_items (id, invoice_id, description, quantity, unit_price, amount, line_vat_type)
+        VALUES (?, ?, ?, ?, ?, ?, ?)
       `);
       for (const item of items) {
         insertItem.run(
           uuidv4(), req.params.id, item.description,
           item.quantity || 1, item.unit_price || 0,
-          Math.round((item.quantity || 1) * (item.unit_price || 0) * 100) / 100
+          Math.round((item.quantity || 1) * (item.unit_price || 0) * 100) / 100,
+          item.line_vat_type || 'vatable'
         );
       }
     }
