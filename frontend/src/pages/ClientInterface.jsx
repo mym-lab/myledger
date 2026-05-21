@@ -56,6 +56,7 @@ const TAX_TYPES = [
   { code: '2551Q',  label: '2551Q — Quarterly Percentage Tax (Non-VAT)' },
   { code: '1601C',  label: '1601-C — WHT on Compensation' },
   { code: '1601EQ', label: '1601-EQ — Expanded WHT (Quarterly)' },
+  { code: '1604EQ', label: '1604-EQ — Annual EWT Return' },
   { code: '1702Q',  label: '1702Q — Quarterly IT (Corp)' },
   { code: '1702',   label: '1702 — Annual IT (Corp)' },
   { code: '1701Q',  label: '1701Q — Quarterly IT (Individual)' },
