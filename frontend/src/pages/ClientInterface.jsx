@@ -5,6 +5,7 @@
 import { useState, useEffect, useRef } from 'react';
 import { useMobile } from '../hooks/useMobile.js';
 import { InvoicesTab } from '../components/InvoiceModal.jsx';
+import { printReport, build2307Html } from '../utils/printReport.js';
 import {
   getClients, createClient, updateClient, deleteClient, backupClient,
   getTransactions, createTransaction, voidTransaction,
@@ -1194,6 +1195,10 @@ export default function ClientInterface({ onLogout }) {
   // Transactions tab
   const [txns,   setTxns]   = useState([]);
   const [txLoad, setTxLoad] = useState(false);
+  // BIR 2307 period picker
+  const now0 = new Date();
+  const [ewt2307Year, setEwt2307Year] = useState(now0.getFullYear());
+  const [ewt2307Q,    setEwt2307Q]    = useState(Math.ceil((now0.getMonth() + 1) / 3));
 
   // BIR tab
   const [birLoad, setBirLoad] = useState(false);
@@ -1752,6 +1757,89 @@ export default function ClientInterface({ onLogout }) {
                 )}
               </div>
             )}
+
+            {/* ── BIR Form 2307 Generator ───────────────────────────────────── */}
+            {(() => {
+              const ATC_MAP = {
+                0.01: { atc: 'WC010', description: 'Supplier of Goods — Top 20,000 Corporations' },
+                0.02: { atc: 'WC020', description: 'Supplier of Services / Contractors' },
+                0.05: { atc: 'WF010', description: 'Professional / Talent Fees (5%)' },
+                0.10: { atc: 'WF020', description: 'Professional / Talent Fees (10%)' },
+                0.15: { atc: 'WR010', description: 'Rental — Real / Personal Property (15%)' },
+                0.25: { atc: 'WF000', description: 'Non-Resident Payees (25%)' },
+              };
+              const qRanges = { 1:[1,3], 2:[4,6], 3:[7,9], 4:[10,12] };
+              const [m1, m2] = qRanges[ewt2307Q];
+              const qLabel   = `Q${ewt2307Q} ${ewt2307Year}`;
+              const ewtTxns  = txns.filter(t => {
+                const d = new Date(t.createdAt);
+                const m = d.getMonth() + 1;
+                return d.getFullYear() === ewt2307Year && m >= m1 && m <= m2
+                  && t.type === 'expense' && parseFloat(t.ewtRate) > 0 && t.ewtAmount > 0;
+              });
+              const totalEWT   = Math.round(ewtTxns.reduce((s, t) => s + (t.ewtAmount || 0), 0) * 100) / 100;
+              const payeeCount = new Set(ewtTxns.map(t => t.counterpartyName || t.description || '?')).size;
+              const hasEWT   = txns.some(t => parseFloat(t.ewtRate) > 0 && t.ewtAmount > 0);
+              if (!hasEWT && txns.length > 0) return null;
+              if (txns.length === 0) return null;
+              return (
+                <div style={{ background: '#f0f7ff', border: `1px solid #bfdbfe`, borderRadius: T.radius, padding: '16px 20px', marginBottom: 20 }}>
+                  <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: 12 }}>
+                    <div>
+                      <div style={{ fontWeight: 700, fontSize: 15, color: '#1e40af', marginBottom: 3 }}>
+                        📋 BIR Form 2307 — Certificate of Creditable Tax Withheld
+                      </div>
+                      <div style={{ fontSize: 12, color: T.muted }}>
+                        {ewtTxns.length > 0
+                          ? `${ewtTxns.length} EWT transaction${ewtTxns.length !== 1 ? 's' : ''} · Total EWT: ₱${totalEWT.toLocaleString('en-PH', { minimumFractionDigits: 2 })}`
+                          : 'No EWT transactions for this period'}
+                      </div>
+                    </div>
+                    <div style={{ display: 'flex', gap: 8, alignItems: 'center', flexWrap: 'wrap' }}>
+                      <select value={ewt2307Q} onChange={e => setEwt2307Q(Number(e.target.value))}
+                        style={{ padding: '6px 10px', borderRadius: 8, border: `1px solid ${T.border}`, fontSize: 13, background: '#fff' }}>
+                        <option value={1}>Q1 (Jan–Mar)</option>
+                        <option value={2}>Q2 (Apr–Jun)</option>
+                        <option value={3}>Q3 (Jul–Sep)</option>
+                        <option value={4}>Q4 (Oct–Dec)</option>
+                      </select>
+                      <select value={ewt2307Year} onChange={e => setEwt2307Year(Number(e.target.value))}
+                        style={{ padding: '6px 10px', borderRadius: 8, border: `1px solid ${T.border}`, fontSize: 13, background: '#fff' }}>
+                        {[now0.getFullYear(), now0.getFullYear()-1, now0.getFullYear()-2].map(y =>
+                          <option key={y} value={y}>{y}</option>
+                        )}
+                      </select>
+                      <Btn size="sm" disabled={ewtTxns.length === 0} onClick={() => {
+                        // Group by payee
+                        const byPayee = {};
+                        ewtTxns.forEach(t => {
+                          const key  = t.counterpartyName || t.description || 'Unknown Payee';
+                          const rate = parseFloat(t.ewtRate);
+                          const info = ATC_MAP[rate] || { atc: `WC${String(Math.round(rate*100)).padStart(3,'0')}`, description: `EWT ${(rate*100).toFixed(0)}%` };
+                          byPayee[key] = byPayee[key] || { name: key, tin: t.counterpartyTin || '—', address: t.counterpartyAddress || '—', atcs: {} };
+                          byPayee[key].atcs[info.atc] = byPayee[key].atcs[info.atc] || { ...info, base: 0, ewt: 0 };
+                          byPayee[key].atcs[info.atc].base = Math.round((byPayee[key].atcs[info.atc].base + (t.amount_net || 0)) * 100) / 100;
+                          byPayee[key].atcs[info.atc].ewt  = Math.round((byPayee[key].atcs[info.atc].ewt  + (t.ewtAmount  || 0)) * 100) / 100;
+                        });
+                        const payees  = Object.values(byPayee);
+                        const allHtml = payees.map(p =>
+                          build2307Html({ payee: p, client: active, period: qLabel, atcList: Object.values(p.atcs) })
+                        ).join('<div style="page-break-after:always"></div>');
+                        printReport({
+                          title: `BIR Form 2307 — ${active.tradeName} — ${qLabel}`,
+                          subtitle: `${payees.length} payee certificate${payees.length !== 1 ? 's' : ''}`,
+                          bodyHtml: allHtml,
+                          firmLabel: 'MyLedger by Kaiman & Co.',
+                        });
+                      }}>
+                        🖨 Generate 2307{ewtTxns.length > 0 ? ` (${payeeCount} payee${payeeCount !== 1 ? 's' : ''})` : ''}
+                      </Btn>
+                    </div>
+                  </div>
+                </div>
+              );
+            })()}
+            {/* ─────────────────────────────────────────────────────────────── */}
 
             {txLoad ? <div style={{ color: T.muted, padding: 20 }}>Loading…</div>
             : txns.length === 0 ? (
