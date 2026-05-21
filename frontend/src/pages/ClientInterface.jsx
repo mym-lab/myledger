@@ -523,6 +523,7 @@ function TxModal({ clientId, client, onSaved, onClose }) {
     counterpartyName: '', counterpartyTin: '', counterpartyAddress: '',
     referenceNo: '', notes: '',
     date: today,
+    ewtRate: '0',
   };
   const [form,       setForm]       = useState(blank);
   const [saving,     setSaving]     = useState(false);
@@ -597,6 +598,7 @@ function TxModal({ clientId, client, onSaved, onClose }) {
         counterpartyAddress: form.counterpartyAddress,
         referenceNo: form.referenceNo, notes: form.notes,
         date: form.date || undefined,
+        ewtRate: form.type === 'expense' ? Number(form.ewtRate) : 0,
       });
       onSaved(); onClose();
     } catch (e) { alert(e.message); setSaving(false); }
@@ -640,7 +642,7 @@ function TxModal({ clientId, client, onSaved, onClose }) {
           <Fld label="Type">
             <select style={inp} value={form.type} onChange={e => setForm(f => ({
               ...f, type: e.target.value, category: '', customCat: '', settlement: 'cash',
-              vatType: 'vatable', supplierVatType: 'vat',
+              vatType: 'vatable', supplierVatType: 'vat', ewtRate: '0',
             }))}>
               <option value="income">Income</option>
               <option value="expense">Expense</option>
@@ -742,6 +744,46 @@ function TxModal({ clientId, client, onSaved, onClose }) {
             </Fld>
           </div>
         </div>
+
+        {/* ── Expanded Withholding Tax (expense only) ── */}
+        {form.type === 'expense' && (
+          <div style={{ marginTop: 4, paddingTop: 14, borderTop: `1px solid ${T.border}` }}>
+            <SectionHead>Expanded Withholding Tax (EWT) — Optional</SectionHead>
+            <Fld label="EWT Rate (ATC)">
+              <select style={inp} value={form.ewtRate} onChange={set('ewtRate')}>
+                <option value="0">— No EWT —</option>
+                <option value="0.01">1% — WC010 · Goods / services ≤ ₱720K (supplier)</option>
+                <option value="0.02">2% — WC020 · Goods / services &gt; ₱720K (supplier)</option>
+                <option value="0.05">5% — WF010 · Professional fees (≤ ₱3M income)</option>
+                <option value="0.10">10% — WF020 · Professional fees (&gt; ₱3M income)</option>
+                <option value="0.15">15% — WR010 · Rental (land / building)</option>
+                <option value="0.25">25% — WF000 · Non-resident alien</option>
+              </select>
+            </Fld>
+            {Number(form.ewtRate) > 0 && form.amount && !isNaN(form.amount) && Number(form.amount) > 0 && (() => {
+              const gross   = parseFloat(form.amount);
+              const net     = form.supplierVatType === 'non_vat' ? gross : Math.round(gross / 1.12 * 100) / 100;
+              const ewtAmt  = Math.round(net * Number(form.ewtRate) * 100) / 100;
+              const netPay  = Math.round((gross - ewtAmt) * 100) / 100;
+              return (
+                <div style={{ background: '#fff8ec', border: `1px solid ${T.orange}40`, borderRadius: 8,
+                  padding: '10px 14px', fontSize: 13, marginTop: 4, marginBottom: 4 }}>
+                  <div style={{ color: '#7a5800', marginBottom: 6 }}>
+                    <strong>You withhold ₱{ewtAmt.toLocaleString('en-PH', { minimumFractionDigits: 2 })} from this payment.</strong>
+                  </div>
+                  <div style={{ display: 'flex', gap: 20, flexWrap: 'wrap', color: T.muted }}>
+                    <span>Gross due <strong style={{ color: T.text }}>₱{gross.toLocaleString('en-PH', { minimumFractionDigits: 2 })}</strong></span>
+                    <span>EWT withheld <strong style={{ color: T.orange }}>₱{ewtAmt.toLocaleString('en-PH', { minimumFractionDigits: 2 })}</strong></span>
+                    <span>Net cash paid <strong style={{ color: T.accent }}>₱{netPay.toLocaleString('en-PH', { minimumFractionDigits: 2 })}</strong></span>
+                  </div>
+                  <div style={{ marginTop: 6, fontSize: 11, color: T.muted }}>
+                    Issue a BIR Form 2307 to your vendor/landlord as proof of withholding.
+                  </div>
+                </div>
+              );
+            })()}
+          </div>
+        )}
 
         <Fld label="Notes">
           <textarea style={{ ...inp, resize: 'vertical', minHeight: 52 }}
