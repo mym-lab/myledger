@@ -50,6 +50,19 @@ const DEFAULT_SETTINGS = {
   contactEmail: 'mym@kaimanco.com',
 };
 
+// Default EWT/ATC rates — overridden by admin settings stored in DB
+const DEFAULT_EWT_RATES = [
+  { atc: 'WC010', rate: 0.01, description: 'Purchase of goods — regular supplier' },
+  { atc: 'WC020', rate: 0.02, description: 'Purchase of services — regular supplier' },
+  { atc: 'WC158', rate: 0.01, description: 'Purchase of goods — large taxpayer' },
+  { atc: 'WC160', rate: 0.02, description: 'Purchase of services — large taxpayer' },
+  { atc: 'WF010', rate: 0.05, description: 'Professional / talent fees (≤ ₱3M income)' },
+  { atc: 'WF020', rate: 0.10, description: 'Professional / talent fees (> ₱3M income)' },
+  { atc: 'WR010', rate: 0.05, description: 'Rental — real/personal property' },
+  { atc: 'WC050', rate: 0.10, description: 'Commissions — brokers, agents' },
+  { atc: 'WF000', rate: 0.25, description: 'Non-resident alien not engaged in trade' },
+];
+
 const TAX_TYPES = [
   { code: '2550M',  label: '2550M — Monthly VAT Return' },
   { code: '2550Q',  label: '2550Q — Quarterly VAT Return' },
@@ -510,7 +523,7 @@ function VatCalc({ type, amount, vatType = 'vatable', supplierVatType = 'vat', i
 }
 
 // ─── TxModal (module-level — own state, no parent remount) ───────────────────
-function TxModal({ clientId, client, onSaved, onClose }) {
+function TxModal({ clientId, client, onSaved, onClose, ewtRates = DEFAULT_EWT_RATES }) {
   const isMobile = useMobile();
   const isOPT   = client?.taxRegime === 'opt';
   const optRate = Number(client?.optRate) || 0.03;
@@ -752,12 +765,11 @@ function TxModal({ clientId, client, onSaved, onClose }) {
             <Fld label="EWT Rate (ATC)">
               <select style={inp} value={form.ewtRate} onChange={set('ewtRate')}>
                 <option value="0">— No EWT —</option>
-                <option value="0.01">1% — WC010 · Goods / services ≤ ₱720K (supplier)</option>
-                <option value="0.02">2% — WC020 · Goods / services &gt; ₱720K (supplier)</option>
-                <option value="0.05">5% — WF010 · Professional fees (≤ ₱3M income)</option>
-                <option value="0.10">10% — WF020 · Professional fees (&gt; ₱3M income)</option>
-                <option value="0.15">15% — WR010 · Rental (land / building)</option>
-                <option value="0.25">25% — WF000 · Non-resident alien</option>
+                {ewtRates.map(r => (
+                  <option key={r.atc} value={String(r.rate)}>
+                    {(r.rate * 100).toFixed(r.rate % 0.01 === 0 ? 0 : 2)}% — {r.atc} · {r.description}
+                  </option>
+                ))}
               </select>
             </Fld>
             {Number(form.ewtRate) > 0 && form.amount && !isNaN(form.amount) && Number(form.amount) > 0 && (() => {
@@ -1802,14 +1814,10 @@ export default function ClientInterface({ onLogout }) {
 
             {/* ── BIR Form 2307 Generator ───────────────────────────────────── */}
             {(() => {
-              const ATC_MAP = {
-                0.01: { atc: 'WC010', description: 'Supplier of Goods — Top 20,000 Corporations' },
-                0.02: { atc: 'WC020', description: 'Supplier of Services / Contractors' },
-                0.05: { atc: 'WF010', description: 'Professional / Talent Fees (5%)' },
-                0.10: { atc: 'WF020', description: 'Professional / Talent Fees (10%)' },
-                0.15: { atc: 'WR010', description: 'Rental — Real / Personal Property (15%)' },
-                0.25: { atc: 'WF000', description: 'Non-Resident Payees (25%)' },
-              };
+              // Build ATC_MAP from live settings (admin-configurable), fallback to defaults
+              const ewtRatesList = siteSettings.ewtRates || DEFAULT_EWT_RATES;
+              const ATC_MAP = {};
+              ewtRatesList.forEach(r => { ATC_MAP[r.rate] = { atc: r.atc, description: r.description }; });
               const qRanges = { 1:[1,3], 2:[4,6], 3:[7,9], 4:[10,12] };
               const [m1, m2] = qRanges[ewt2307Q];
               const qLabel   = `Q${ewt2307Q} ${ewt2307Year}`;
@@ -2742,6 +2750,7 @@ export default function ClientInterface({ onLogout }) {
       {/* ══ Modals (all module-level — no focus loss) ══ */}
       {showTx && (
         <TxModal key={active?.id} clientId={active?.id} client={active}
+          ewtRates={siteSettings.ewtRates || DEFAULT_EWT_RATES}
           onSaved={() => { loadTxns(); loadOverview(); }}
           onClose={() => setShowTx(false)} />
       )}

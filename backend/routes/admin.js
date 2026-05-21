@@ -7,6 +7,18 @@ const router = Router();
 
 // ── Public: pricing + payment info (no auth required) ────────────────────────
 // Used by ClientInterface and AccountantPortal to show up-to-date pricing.
+const DEFAULT_EWT_RATES = [
+  { atc: 'WC010', rate: 0.01, description: 'Purchase of goods — regular supplier' },
+  { atc: 'WC020', rate: 0.02, description: 'Purchase of services — regular supplier' },
+  { atc: 'WC158', rate: 0.01, description: 'Purchase of goods — large taxpayer' },
+  { atc: 'WC160', rate: 0.02, description: 'Purchase of services — large taxpayer' },
+  { atc: 'WF010', rate: 0.05, description: 'Professional / talent fees (≤ ₱3M income)' },
+  { atc: 'WF020', rate: 0.10, description: 'Professional / talent fees (> ₱3M income)' },
+  { atc: 'WR010', rate: 0.05, description: 'Rental — real/personal property' },
+  { atc: 'WC050', rate: 0.10, description: 'Commissions — brokers, agents' },
+  { atc: 'WF000', rate: 0.25, description: 'Non-resident alien not engaged in trade' },
+];
+
 router.get('/public-settings', (req, res) => {
   try {
     const pricing           = getSetting('pricing')           || {};
@@ -14,7 +26,8 @@ router.get('/public-settings', (req, res) => {
     const payment           = getSetting('payment')           || {};
     const contactEmail      = getSetting('contactEmail')      || '';
     const referral          = getSetting('referral')          || {};
-    res.json({ pricing, accountantPricing, payment, contactEmail, referral });
+    const ewtRates          = getSetting('ewtRates')          || DEFAULT_EWT_RATES;
+    res.json({ pricing, accountantPricing, payment, contactEmail, referral, ewtRates });
   } catch (err) {
     res.status(500).json({ error: err.message });
   }
@@ -100,7 +113,7 @@ router.get('/settings', (req, res, next) => {
 // PUT /api/admin/settings
 router.put('/settings', (req, res, next) => {
   try {
-    const { pricing, payment, contactEmail, accountantPricing, referral } = req.body;
+    const { pricing, payment, contactEmail, accountantPricing, referral, ewtRates } = req.body;
 
     if (pricing) {
       const current = getSetting('pricing') || {};
@@ -137,6 +150,13 @@ router.put('/settings', (req, res, next) => {
       if (accountantPricing.firm         != null) current.firm         = Number(accountantPricing.firm);
       if (accountantPricing.agency       != null) current.agency       = Number(accountantPricing.agency);
       setSetting('accountantPricing', current);
+    }
+    if (Array.isArray(ewtRates)) {
+      // Validate: each entry must have atc (string), rate (0–1), description (string)
+      const clean = ewtRates
+        .filter(r => r.atc && typeof r.atc === 'string' && Number(r.rate) >= 0 && Number(r.rate) <= 1)
+        .map(r => ({ atc: r.atc.trim().toUpperCase(), rate: Number(r.rate), description: r.description || '' }));
+      if (clean.length > 0) setSetting('ewtRates', clean);
     }
 
     res.json({ settings: getAllSettings() });

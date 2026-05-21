@@ -123,7 +123,8 @@ router.post('/', (req, res, next) => {
     const txAccount  = account || (type === 'income' ? 'Sales Revenue' : cat);
 
     // EWT calculation
-    const validEwtRate = [0, 0.01, 0.02, 0.05, 0.10, 0.15, 0.25].includes(Number(ewtRate)) ? Number(ewtRate) : 0;
+    const _ewtNum      = Number(ewtRate);
+    const validEwtRate = (!isNaN(_ewtNum) && _ewtNum >= 0 && _ewtNum <= 1) ? Math.round(_ewtNum * 10000) / 10000 : 0;
     const ewtAmount    = type === 'expense' ? Math.round(vatResult.net * validEwtRate * 100) / 100 : 0;
 
     const id = uuid();

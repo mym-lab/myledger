@@ -177,6 +177,19 @@ export default function CommandCenter({ onLogout }) {
   const [acctPricingForm, setAcctPricingForm] = useState({ solo: '', professional: '', firm: '', agency: '' });
   // Referral rate settings
   const [referralForm,  setReferralForm]  = useState({ signupBonus: '100', subscriptionPercent: '10' });
+  // EWT / ATC rates (editable table)
+  const DEFAULT_EWT_RATES_CC = [
+    { atc: 'WC010', rate: '0.01', description: 'Purchase of goods — regular supplier' },
+    { atc: 'WC020', rate: '0.02', description: 'Purchase of services — regular supplier' },
+    { atc: 'WC158', rate: '0.01', description: 'Purchase of goods — large taxpayer' },
+    { atc: 'WC160', rate: '0.02', description: 'Purchase of services — large taxpayer' },
+    { atc: 'WF010', rate: '0.05', description: 'Professional / talent fees (≤ ₱3M income)' },
+    { atc: 'WF020', rate: '0.10', description: 'Professional / talent fees (> ₱3M income)' },
+    { atc: 'WR010', rate: '0.05', description: 'Rental — real/personal property' },
+    { atc: 'WC050', rate: '0.10', description: 'Commissions — brokers, agents' },
+    { atc: 'WF000', rate: '0.25', description: 'Non-resident alien not engaged in trade' },
+  ];
+  const [ewtRatesForm, setEwtRatesForm] = useState(DEFAULT_EWT_RATES_CC);
   // White-label branding forms: keyed by userId
   const [brandingForms, setBrandingForms] = useState({});  // { [userId]: { firmName, accentColor } }
   const [brandingMsg,   setBrandingMsg]   = useState('');
@@ -295,6 +308,9 @@ export default function CommandCenter({ onLogout }) {
         signupBonus:         String(s.referral.signupBonus         ?? 100),
         subscriptionPercent: String(s.referral.subscriptionPercent ?? 10),
       });
+      if (Array.isArray(s.ewtRates) && s.ewtRates.length > 0) {
+        setEwtRatesForm(s.ewtRates.map(r => ({ atc: r.atc, rate: String(r.rate), description: r.description || '' })));
+      }
       if (s.smtp) setSmtpForm(f => ({ ...f, passSet: !!s.smtp.passSet,
         ...f,
         host:      s.smtp.host      ?? '',
@@ -408,6 +424,9 @@ export default function CommandCenter({ onLogout }) {
           signupBonus:         Number(referralForm.signupBonus),
           subscriptionPercent: Number(referralForm.subscriptionPercent),
         },
+        ewtRates: ewtRatesForm
+          .filter(r => r.atc.trim() && !isNaN(Number(r.rate)) && Number(r.rate) >= 0 && Number(r.rate) <= 1)
+          .map(r => ({ atc: r.atc.trim().toUpperCase(), rate: Number(r.rate), description: r.description.trim() })),
       });
       setSettings(r.settings);
       setSaveMsg('✓ Settings saved successfully');
@@ -1292,6 +1311,63 @@ export default function CommandCenter({ onLogout }) {
                         : 0})
                     </div>
                   </div>
+                </div>
+              </Card>
+
+              {/* EWT / ATC Rates */}
+              <Card style={{ gridColumn: '1 / -1' }}>
+                <SectionHead>EWT / ATC Rates (Withholding Tax)</SectionHead>
+                <div style={{ fontSize: 12, color: T.muted, marginBottom: 14 }}>
+                  These rates appear in the client &amp; accountant Add Transaction dropdowns and are used to generate BIR Form 2307. Add, edit, or remove rows as BIR updates rates.
+                </div>
+                <div style={{ overflowX: 'auto' }}>
+                  <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 13 }}>
+                    <thead>
+                      <tr style={{ background: T.border }}>
+                        {['ATC Code', 'Rate (%)', 'Description', ''].map(h => (
+                          <th key={h} style={{ padding: '8px 12px', textAlign: 'left', fontWeight: 600, color: T.muted, whiteSpace: 'nowrap' }}>{h}</th>
+                        ))}
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {ewtRatesForm.map((row, i) => (
+                        <tr key={i} style={{ borderBottom: `1px solid ${T.border}` }}>
+                          <td style={{ padding: '6px 8px' }}>
+                            <input value={row.atc} placeholder="WC010"
+                              onChange={e => setEwtRatesForm(f => f.map((r, j) => j === i ? { ...r, atc: e.target.value } : r))}
+                              style={{ ...inp, marginBottom: 0, width: 90, fontFamily: 'monospace', fontSize: 13 }} />
+                          </td>
+                          <td style={{ padding: '6px 8px' }}>
+                            <div style={{ display: 'flex', alignItems: 'center', gap: 4 }}>
+                              <input value={String(Number(row.rate) * 100)} placeholder="1"
+                                type="number" step="0.01" min="0" max="100"
+                                onChange={e => setEwtRatesForm(f => f.map((r, j) => j === i ? { ...r, rate: String(Number(e.target.value) / 100) } : r))}
+                                style={{ ...inp, marginBottom: 0, width: 70 }} />
+                              <span style={{ color: T.muted, fontSize: 13 }}>%</span>
+                            </div>
+                          </td>
+                          <td style={{ padding: '6px 8px' }}>
+                            <input value={row.description} placeholder="Description shown in dropdown"
+                              onChange={e => setEwtRatesForm(f => f.map((r, j) => j === i ? { ...r, description: e.target.value } : r))}
+                              style={{ ...inp, marginBottom: 0, width: '100%', minWidth: 220 }} />
+                          </td>
+                          <td style={{ padding: '6px 8px', textAlign: 'center' }}>
+                            <button onClick={() => setEwtRatesForm(f => f.filter((_, j) => j !== i))}
+                              style={{ background: 'none', border: 'none', color: T.red, cursor: 'pointer', fontSize: 16, padding: '2px 6px' }}
+                              title="Remove row">✕</button>
+                          </td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+                <button onClick={() => setEwtRatesForm(f => [...f, { atc: '', rate: '0.01', description: '' }])}
+                  style={{ marginTop: 10, padding: '7px 16px', borderRadius: 8, border: `1px dashed ${T.border}`,
+                    background: 'none', color: T.accent, cursor: 'pointer', fontSize: 13, fontFamily: 'inherit' }}>
+                  + Add Rate
+                </button>
+                <div style={{ fontSize: 11, color: T.muted, marginTop: 8 }}>
+                  Click <strong>Save All Settings</strong> below to apply changes.
                 </div>
               </Card>
 
