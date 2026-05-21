@@ -30,6 +30,66 @@ const stmtRejectUpgrade = db.prepare('UPDATE upgrade_requests SET status=@status
 const stmtUpdateClientTier    = db.prepare('UPDATE clients SET subscription_tier=?, subscription_expires_at=? WHERE id=?');
 const stmtUpdateAccountantTier = db.prepare('UPDATE users SET accountant_tier=? WHERE id=?');
 
+// ── Receipt email helpers ─────────────────────────────────────────────────────
+function buildReceiptHtml({ recipientName, planLabel, planPrice, paymentMethod, refNo, amount, approvedAt, validUntil, appUrl }) {
+  const dateStr = new Date(approvedAt).toLocaleDateString('en-PH', { year: 'numeric', month: 'long', day: 'numeric' });
+  return `
+    <div style="font-family:-apple-system,Arial,sans-serif;max-width:520px;margin:0 auto;padding:32px 0">
+      <div style="background:#111827;padding:20px 28px;border-radius:12px 12px 0 0;display:flex;align-items:center;gap:14px">
+        <span style="color:#fff;font-size:22px;font-weight:700;letter-spacing:-0.5px">MyLedger</span>
+        <span style="color:#C9A84C;font-size:11px;font-weight:700;letter-spacing:1.5px;text-transform:uppercase">Official Receipt</span>
+      </div>
+      <div style="background:#fff;padding:32px 28px;border:1px solid #e5e7eb;border-top:none;border-radius:0 0 12px 12px">
+        <h2 style="margin:0 0 4px;font-size:20px;color:#111827">Thank you, ${recipientName}!</h2>
+        <p style="margin:0 0 24px;color:#6b7280;font-size:14px">Your subscription has been activated. Here is your payment acknowledgement.</p>
+
+        <div style="background:#f9fafb;border:1px solid #e5e7eb;border-radius:10px;padding:20px;margin-bottom:24px">
+          <table style="width:100%;border-collapse:collapse;font-size:14px">
+            <tr style="border-bottom:1px solid #e5e7eb">
+              <td style="padding:10px 0;color:#6b7280;width:150px">Plan</td>
+              <td style="padding:10px 0;font-weight:700;color:#0071e3">${planLabel}${planPrice ? ` — ${planPrice}` : ''}</td>
+            </tr>
+            <tr style="border-bottom:1px solid #e5e7eb">
+              <td style="padding:10px 0;color:#6b7280">Payment Method</td>
+              <td style="padding:10px 0;font-weight:600;color:#111827;text-transform:uppercase">${paymentMethod}</td>
+            </tr>
+            <tr style="border-bottom:1px solid #e5e7eb">
+              <td style="padding:10px 0;color:#6b7280">Reference No.</td>
+              <td style="padding:10px 0;font-weight:700;color:#111827;font-family:monospace;font-size:15px">${refNo}</td>
+            </tr>
+            <tr style="border-bottom:1px solid #e5e7eb">
+              <td style="padding:10px 0;color:#6b7280">Amount Paid</td>
+              <td style="padding:10px 0;font-weight:700;color:#15803d;font-size:16px">₱${Number(amount || 0).toLocaleString()}</td>
+            </tr>
+            <tr style="border-bottom:1px solid #e5e7eb">
+              <td style="padding:10px 0;color:#6b7280">Date Approved</td>
+              <td style="padding:10px 0;font-weight:600;color:#111827">${dateStr}</td>
+            </tr>
+            <tr>
+              <td style="padding:10px 0;color:#6b7280">Valid Until</td>
+              <td style="padding:10px 0;font-weight:700;color:#111827">${validUntil}</td>
+            </tr>
+          </table>
+        </div>
+
+        <a href="${appUrl}"
+          style="display:inline-block;background:#111827;color:#fff;text-decoration:none;padding:13px 32px;border-radius:9px;font-size:15px;font-weight:700;margin-bottom:24px">
+          Go to MyLedger →
+        </a>
+
+        <p style="margin:0;font-size:12px;color:#9ca3af;line-height:1.6">
+          Please keep this email as your proof of payment.<br>
+          Questions? Reply to this email or reach us at support@kaimanco.com.
+        </p>
+      </div>
+    </div>`;
+}
+
+function buildReceiptText({ planLabel, priceHint, refNo, amount, expiresStr, appUrl }) {
+  return `Thank you for your MyLedger subscription!\n\nPlan: ${planLabel}${priceHint ? ' — ' + priceHint : ''}\nReference No.: ${refNo}\nAmount Paid: ₱${Number(amount || 0).toLocaleString()}\nValid Until: ${expiresStr}\n\nOpen MyLedger: ${appUrl}\n\nQuestions? Email support@kaimanco.com`;
+}
+// ─────────────────────────────────────────────────────────────────────────────
+
 function rowToUpgrade(r) {
   if (!r) return null;
   return {
@@ -200,6 +260,9 @@ router.put('/:id/approve', authenticate, (req, res, next) => {
 
     const resolvedAt = new Date().toISOString();
 
+    const appUrl   = process.env.APP_URL || 'https://app.kaimanco.com';
+    const tierLabel = r.targetTier.charAt(0).toUpperCase() + r.targetTier.slice(1);
+
     if (r.requestType === 'accountant') {
       // Update the accountant's tier on the users table
       stmtUpdateAccountantTier.run(r.targetTier, r.userId);
@@ -207,6 +270,32 @@ router.put('/:id/approve', authenticate, (req, res, next) => {
 
       const updated = enrichUpgrade(rowToUpgrade(stmtUpgradeById.get(req.params.id)));
       const user    = stmtUserById.get(r.userId);
+
+      // ── Receipt email → accountant ────────────────────────────────────────
+      if (user?.email) {
+        const prices     = getSetting('accountantTierPrices') || {};
+        const priceHint  = prices[r.targetTier] ? `₱${Number(prices[r.targetTier]).toLocaleString()}/mo` : '';
+        const expiresAt  = new Date(Date.now() + 30 * 24 * 60 * 60 * 1000);
+        const expiresStr = expiresAt.toLocaleDateString('en-PH', { year: 'numeric', month: 'long', day: 'numeric' });
+        sendEmail({
+          to: user.email,
+          subject: `MyLedger — ${tierLabel} Plan Activated ✅`,
+          html: buildReceiptHtml({
+            recipientName : user.name || user.email,
+            planLabel     : `${tierLabel} (Accountant)`,
+            planPrice     : priceHint,
+            paymentMethod : r.method,
+            refNo         : r.refNo,
+            amount        : r.amount,
+            approvedAt    : resolvedAt,
+            validUntil    : expiresStr,
+            appUrl,
+          }),
+          text: buildReceiptText({ planLabel: `${tierLabel} Accountant Plan`, priceHint, refNo: r.refNo, amount: r.amount, expiresStr, appUrl }),
+        }).catch(e => console.error('Accountant receipt email failed:', e.message));
+      }
+      // ─────────────────────────────────────────────────────────────────────
+
       return res.json({ upgradeRequest: updated, user });
     }
 
@@ -229,6 +318,29 @@ router.put('/:id/approve', authenticate, (req, res, next) => {
       `).run(
         `${r.id}-comm`, referrerId, submitter.id, submitter.email, commission, resolvedAt
       );
+    }
+    // ─────────────────────────────────────────────────────────────────────────
+
+    // ── Receipt email → client subscriber ────────────────────────────────────
+    if (submitter?.email) {
+      const clientObj  = rowToClient(stmtClientById.get(r.clientId));
+      const expiresStr = new Date(expiresAt).toLocaleDateString('en-PH', { year: 'numeric', month: 'long', day: 'numeric' });
+      sendEmail({
+        to: submitter.email,
+        subject: `MyLedger — ${tierLabel} Plan Activated ✅`,
+        html: buildReceiptHtml({
+          recipientName : submitter.name || submitter.email,
+          planLabel     : `${tierLabel} (${clientObj?.tradeName || 'Client'})`,
+          planPrice     : r.amount ? `₱${Number(r.amount).toLocaleString()}` : '',
+          paymentMethod : r.method,
+          refNo         : r.refNo,
+          amount        : r.amount,
+          approvedAt    : resolvedAt,
+          validUntil    : expiresStr,
+          appUrl,
+        }),
+        text: buildReceiptText({ planLabel: `${tierLabel} Client Plan`, priceHint: r.amount ? `₱${Number(r.amount).toLocaleString()}` : '', refNo: r.refNo, amount: r.amount, expiresStr, appUrl }),
+      }).catch(e => console.error('Client receipt email failed:', e.message));
     }
     // ─────────────────────────────────────────────────────────────────────────
 
