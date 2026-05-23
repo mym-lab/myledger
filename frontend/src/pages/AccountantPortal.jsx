@@ -29,6 +29,7 @@ import {
   createAccountantUpgradeRequest,
   getMyUpgradeRequests,
   getMe,
+  getPublicSettings,
 } from '../api.js';
 import {
   printReport,
@@ -84,6 +85,20 @@ const TAX_TYPES = [
   { code: '1701Q',  label: '1701Q — Quarterly IT (Individual)' },
   { code: '1701',   label: '1701 — Annual IT (Individual)' },
   { code: '1550',   label: '1550 — Documentary Stamp Tax' },
+];
+
+// Default EWT rates — used as fallback if admin hasn't configured custom rates via CommandCenter.
+// Built from dynamic admin settings at runtime; these are never sent to BIR directly.
+const DEFAULT_EWT_RATES = [
+  { atc: 'WC010', rate: 0.01, description: 'Purchase of goods — regular supplier' },
+  { atc: 'WC020', rate: 0.02, description: 'Purchase of services — regular supplier' },
+  { atc: 'WC158', rate: 0.01, description: 'Purchase of goods — large taxpayer' },
+  { atc: 'WC160', rate: 0.02, description: 'Purchase of services — large taxpayer' },
+  { atc: 'WF010', rate: 0.05, description: 'Professional / talent fees (≤ ₱3M income)' },
+  { atc: 'WF020', rate: 0.10, description: 'Professional / talent fees (> ₱3M income)' },
+  { atc: 'WR010', rate: 0.05, description: 'Rental — real/personal property' },
+  { atc: 'WC050', rate: 0.10, description: 'Commissions — brokers, agents' },
+  { atc: 'WF000', rate: 0.25, description: 'Non-resident alien not engaged in trade' },
 ];
 
 const peso  = n => '₱' + (n ?? 0).toLocaleString('en-PH', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
@@ -1284,10 +1299,13 @@ export default function AccountantPortal({ onLogout }) {
   const [upgradeSubmitting, setUpgradeSubmitting] = useState(false);
   const [upgradeMsg,     setUpgradeMsg]     = useState('');
   const [myUpgradeReqs,  setMyUpgradeReqs]  = useState([]);
+  // Site settings — EWT rates and other admin-configurable values
+  const [siteSettings, setSiteSettings] = useState({});
 
   useEffect(() => {
     loadClients();
     loadMyUpgradeReqs();
+    getPublicSettings().then(r => { if (r) setSiteSettings(r); }).catch(() => {});
     // Fetch fresh user data so tier reflects any admin approval since last login
     getMe().then(freshUser => {
       setMeData(freshUser);
@@ -2590,14 +2608,10 @@ export default function AccountantPortal({ onLogout }) {
                   const totalEWT  = Math.round(filtered.reduce((s, t) => s + (t.ewtAmount || 0), 0) * 100) / 100;
                   const totalBase = Math.round(filtered.reduce((s, t) => s + (t.amount_net || 0), 0) * 100) / 100;
 
-                  const ATC_MAP = {
-                    0.01: { atc: 'WC010', description: 'Supplier of Goods — Top 20,000 Corporations' },
-                    0.02: { atc: 'WC020', description: 'Supplier of Services / Contractors' },
-                    0.05: { atc: 'WF010', description: 'Professional / Talent Fees (5%)' },
-                    0.10: { atc: 'WF020', description: 'Professional / Talent Fees (10%)' },
-                    0.15: { atc: 'WR010', description: 'Rental — Real / Personal Property (15%)' },
-                    0.25: { atc: 'WF000', description: 'Non-Resident Payees (25%)' },
-                  };
+                  // Build ATC_MAP from admin-configurable settings (fallback to defaults)
+                  const ewtRatesList1601 = siteSettings.ewtRates || DEFAULT_EWT_RATES;
+                  const ATC_MAP = {};
+                  ewtRatesList1601.forEach(r => { ATC_MAP[r.rate] = { atc: r.atc, description: r.description }; });
 
                   const byAtc = {};
                   filtered.forEach(t => {
@@ -2814,14 +2828,10 @@ export default function AccountantPortal({ onLogout }) {
 
                 {/* ── 1604-EQ (Annual EWT Return) ── */}
                 {is1604EQ && (() => {
-                  const ATC_MAP = {
-                    0.01: { atc: 'WC010', description: 'Supplier of Goods — Top 20,000 Corps' },
-                    0.02: { atc: 'WC020', description: 'Supplier of Services / Contractors' },
-                    0.05: { atc: 'WF010', description: 'Professional / Talent Fees (5%)' },
-                    0.10: { atc: 'WF020', description: 'Professional / Talent Fees (10%)' },
-                    0.15: { atc: 'WR010', description: 'Rental (15%)' },
-                    0.25: { atc: 'WF000', description: 'Non-Resident Payees (25%)' },
-                  };
+                  // Build ATC_MAP from admin-configurable settings (fallback to defaults)
+                  const ewtRatesList1604 = siteSettings.ewtRates || DEFAULT_EWT_RATES;
+                  const ATC_MAP = {};
+                  ewtRatesList1604.forEach(r => { ATC_MAP[r.rate] = { atc: r.atc, description: r.description }; });
                   const filtered = txns.filter(t =>
                     new Date(t.createdAt).getFullYear() === birYear
                     && t.type === 'expense' && parseFloat(t.ewtRate) > 0 && t.ewtAmount > 0
@@ -3163,15 +3173,10 @@ export default function AccountantPortal({ onLogout }) {
               </div>
               <div style={{ display: 'flex', gap: 10, flexWrap: 'wrap' }}>
                 <Btn onClick={() => {
-                  // Build all 2307s in one print window
-                  const ATC_MAP = {
-                    0.01: { atc: 'WC010', description: 'Supplier of Goods — Top 20,000 Corporations' },
-                    0.02: { atc: 'WC020', description: 'Supplier of Services / Contractors' },
-                    0.05: { atc: 'WF010', description: 'Professional / Talent Fees (5%)' },
-                    0.10: { atc: 'WF020', description: 'Professional / Talent Fees (10%)' },
-                    0.15: { atc: 'WR010', description: 'Rental — Real / Personal Property (15%)' },
-                    0.25: { atc: 'WF000', description: 'Non-Resident Payees (25%)' },
-                  };
+                  // Build ATC_MAP from admin-configurable settings (fallback to defaults)
+                  const ewtRatesList2307 = siteSettings.ewtRates || DEFAULT_EWT_RATES;
+                  const ATC_MAP = {};
+                  ewtRatesList2307.forEach(r => { ATC_MAP[r.rate] = { atc: r.atc, description: r.description }; });
                   const qNum = alphaQ || Math.ceil((new Date().getMonth() + 1) / 3);
                   const qEnd = ['March','June','September','December'][qNum - 1];
                   const qLabel = `Q${qNum} (Jan–${qEnd}) ${alphaYear}`;
