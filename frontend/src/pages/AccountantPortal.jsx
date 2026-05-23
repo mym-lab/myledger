@@ -1299,6 +1299,7 @@ export default function AccountantPortal({ onLogout }) {
   const [upgradeSubmitting, setUpgradeSubmitting] = useState(false);
   const [upgradeMsg,     setUpgradeMsg]     = useState('');
   const [myUpgradeReqs,  setMyUpgradeReqs]  = useState([]);
+  const [tierUpgradedMsg, setTierUpgradedMsg] = useState(''); // success banner after admin approves tier
   // Site settings — EWT rates and other admin-configurable values
   const [siteSettings, setSiteSettings] = useState({});
 
@@ -1330,6 +1331,38 @@ export default function AccountantPortal({ onLogout }) {
     try { const r = await getMyUpgradeRequests(); setMyUpgradeReqs(r.upgradeRequests || []); }
     catch (e) { console.error(e); }
   }
+
+  // Helper: re-check /api/auth/me and update tier if it changed
+  async function refreshTier() {
+    try {
+      const freshUser = await getMe();
+      const freshTier = freshUser?.accountantTier || 'free';
+      setMeData(freshUser);
+      if (freshTier !== accountantTier) {
+        setAccountantTier(freshTier);
+        setTierUpgradedMsg(`🎉 Your plan has been upgraded to ${freshTier.charAt(0).toUpperCase() + freshTier.slice(1)}!`);
+        setTimeout(() => setTierUpgradedMsg(''), 8000);
+        try {
+          const stored = JSON.parse(localStorage.getItem('ml_user') || 'null');
+          if (stored) localStorage.setItem('ml_user', JSON.stringify({
+            ...stored, accountantTier: freshTier,
+            firmName:    freshUser?.firmName    ?? stored.firmName,
+            accentColor: freshUser?.accentColor ?? stored.accentColor,
+          }));
+        } catch { /* ignore */ }
+        loadMyUpgradeReqs(); // refresh request list so pending banner clears
+      }
+      return freshTier;
+    } catch { return accountantTier; }
+  }
+
+  // Poll for tier change every 30s when there is a pending upgrade request
+  useEffect(() => {
+    const hasPending = myUpgradeReqs.some(r => r.status === 'pending');
+    if (!hasPending) return;
+    const interval = setInterval(refreshTier, 30000);
+    return () => clearInterval(interval);
+  }, [myUpgradeReqs, accountantTier]); // eslint-disable-line react-hooks/exhaustive-deps
 
   async function submitUpgrade() {
     if (!upgradeRef.trim()) { setUpgradeMsg('Please enter your payment reference number.'); return; }
@@ -1808,6 +1841,18 @@ export default function AccountantPortal({ onLogout }) {
           })}
         </div>
 
+        {/* ── Tier upgraded success toast ── */}
+        {tierUpgradedMsg && (
+          <div style={{ marginBottom: 16, borderRadius: 10, padding: '12px 18px',
+            background: '#edfbf5', border: `1px solid ${T.green}50`,
+            display: 'flex', alignItems: 'center', gap: 10, fontSize: 14, fontWeight: 600, color: T.text }}>
+            <span style={{ fontSize: 20 }}>🎉</span>
+            <span style={{ flex: 1 }}>{tierUpgradedMsg}</span>
+            <button onClick={() => setTierUpgradedMsg('')} style={{ background: 'none', border: 'none',
+              cursor: 'pointer', fontSize: 18, color: T.muted, lineHeight: 1 }}>×</button>
+          </div>
+        )}
+
         {/* ── Upgrade banner (free tier only) ── */}
         {!isPro && (() => {
           const pendingReq = myUpgradeReqs.find(r => r.status === 'pending');
@@ -1825,9 +1870,16 @@ export default function AccountantPortal({ onLogout }) {
                   </div>
                 </div>
                 {pendingReq ? (
-                  <div style={{ background: '#fff8ec', border: `1px solid ${T.orange}40`,
-                    borderRadius: 8, padding: '8px 14px', fontSize: 13, color: T.orange, fontWeight: 600 }}>
-                    ⏳ Upgrade pending review — we'll activate within 24 hrs
+                  <div style={{ display: 'flex', alignItems: 'center', gap: 10, flexWrap: 'wrap' }}>
+                    <div style={{ background: '#fff8ec', border: `1px solid ${T.orange}40`,
+                      borderRadius: 8, padding: '8px 14px', fontSize: 13, color: T.orange, fontWeight: 600 }}>
+                      ⏳ Upgrade pending review — checking automatically every 30s
+                    </div>
+                    <button onClick={refreshTier} style={{
+                      padding: '7px 14px', background: T.accent, color: '#fff', border: 'none',
+                      borderRadius: 8, fontSize: 12, fontWeight: 700, cursor: 'pointer', fontFamily: 'inherit',
+                      whiteSpace: 'nowrap',
+                    }}>↻ Check now</button>
                   </div>
                 ) : (
                   <button onClick={() => { setUpgradeTarget('solo'); setShowUpgrade(true); }} style={{
