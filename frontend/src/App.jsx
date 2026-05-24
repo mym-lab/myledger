@@ -24,6 +24,10 @@ function hasOnboarded(userId) {
 function markOnboarded(userId) {
   localStorage.setItem(`ml_onboarded_${userId}`, '1');
 }
+// Persists across role-redirect so accountants/encoders see the wizard too
+function setPendingOnboard() { localStorage.setItem('ml_pending_onboard', '1'); }
+function clearPendingOnboard() { localStorage.removeItem('ml_pending_onboard'); }
+function hasPendingOnboard() { return !!localStorage.getItem('ml_pending_onboard'); }
 
 const PATH = window.location.pathname;
 
@@ -53,16 +57,22 @@ export default function App() {
   const [user, setUser] = useState(() => {
     try { return JSON.parse(localStorage.getItem('ml_user') || 'null'); } catch { return null; }
   });
-  const [showOnboarding, setShowOnboarding] = useState(false);
+  // Check on mount: show wizard if a redirect-surviving pending flag exists
+  const [showOnboarding, setShowOnboarding] = useState(() => {
+    try {
+      const usr = JSON.parse(localStorage.getItem('ml_user') || 'null');
+      return !!(usr && usr.role !== 'admin' && hasPendingOnboard() && !hasOnboarded(usr.id));
+    } catch { return false; }
+  });
 
   function handleLogin(tok, usr) {
     localStorage.setItem('ml_token', tok);
     localStorage.setItem('ml_user',  JSON.stringify(usr));
     setToken(tok);
     setUser(usr);
-    // Show onboarding wizard on first login (skip for admin)
+    // Mark pending onboarding BEFORE any redirect (persists across page reload)
     if (usr?.role !== 'admin' && !hasOnboarded(usr?.id)) {
-      setShowOnboarding(true);
+      setPendingOnboard();
     }
     // Auto-redirect based on role after login
     if (usr?.role === 'admin' && !PATH.startsWith('/admin')) {
@@ -71,11 +81,15 @@ export default function App() {
       window.location.href = '/accountant';
     } else if (usr?.role === 'encoder' && !PATH.startsWith('/encoder')) {
       window.location.href = '/encoder';
+    } else {
+      // No redirect for clients — show wizard directly
+      if (usr?.role !== 'admin' && !hasOnboarded(usr?.id)) setShowOnboarding(true);
     }
   }
 
   function handleOnboardingComplete() {
     if (user?.id) markOnboarded(user.id);
+    clearPendingOnboard();
     setShowOnboarding(false);
   }
 
