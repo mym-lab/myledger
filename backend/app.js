@@ -30,6 +30,10 @@ import invitationRoutes      from './routes/invitations.js';
 import referralRoutes        from './routes/referrals.js';
 import invoiceRoutes         from './routes/invoices.js';
 import payrollRoutes         from './routes/payroll.js';
+import paymentRoutes         from './routes/payments.js';
+import monitoringRoutes, { trackActivity } from './routes/monitoring.js';
+
+
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname  = dirname(__filename);
@@ -46,6 +50,9 @@ if (!isProd) {
 }
 
 app.use(express.json({ limit: '10mb' }));
+app.use(trackActivity); // Track all user activity
+
+
 
 // ─── API Routes ───────────────────────────────────────────────
 app.use('/api/auth',             authRoutes);
@@ -67,6 +74,11 @@ app.use('/api/invitations',      invitationRoutes);
 app.use('/api/referrals',        referralRoutes);
 app.use('/api/invoices',         invoiceRoutes);
 app.use('/api/payroll',          payrollRoutes);
+app.use('/api/payments',         paymentRoutes);
+app.use('/api/monitoring',       monitoringRoutes);
+
+
+
 
 // ─── Health Check ─────────────────────────────────────────────
 app.get('/api/health', (req, res) => {
