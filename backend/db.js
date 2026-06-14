@@ -267,6 +267,30 @@ CREATE TABLE IF NOT EXISTS invoice_sequences (
   last_number INTEGER DEFAULT 0,
   PRIMARY KEY (client_id, year)
 );
+
+CREATE TABLE IF NOT EXISTS payments (
+  id               TEXT PRIMARY KEY,
+  user_id          TEXT NOT NULL,
+  amount           REAL NOT NULL,
+  method           TEXT NOT NULL,
+  status           TEXT NOT NULL DEFAULT 'pending',
+  reference_number TEXT NOT NULL UNIQUE,
+  created_at       TEXT NOT NULL,
+  FOREIGN KEY (user_id) REFERENCES users(id)
+);
+CREATE INDEX IF NOT EXISTS idx_payments_user ON payments(user_id);
+
+CREATE TABLE IF NOT EXISTS user_activity (
+  id               TEXT PRIMARY KEY,
+  user_id          TEXT NOT NULL,
+  action           TEXT NOT NULL,
+  method           TEXT NOT NULL,
+  timestamp        TEXT NOT NULL,
+  duration_seconds INTEGER NOT NULL DEFAULT 0,
+  FOREIGN KEY (user_id) REFERENCES users(id)
+);
+CREATE INDEX IF NOT EXISTS idx_activity_user ON user_activity(user_id);
+CREATE INDEX IF NOT EXISTS idx_activity_time ON user_activity(timestamp);
 `);
 
 // ── Column migrations — add columns that were missing in earlier versions ──────
