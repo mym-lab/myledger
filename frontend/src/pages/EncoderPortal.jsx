@@ -142,10 +142,11 @@ function VatCalc({ type, amount, vatType = 'vatable', supplierVatType = 'vat' })
 // ─── TxModal (module-level) ───────────────────────────────────────────────────
 function TxModal({ clientId, onSaved, onClose }) {
   const isMobile = useMobile();
+  const today = new Date().toISOString().substring(0, 10);
   const blank = {
     type: 'income', amount: '', description: '', category: '', customCat: '',
     vatType: 'vatable', supplierVatType: 'vat', settlement: 'cash',
-    referenceNo: '', notes: '',
+    referenceNo: '', notes: '', date: today,
     counterpartyName: '', counterpartyTin: '', counterpartyAddress: '',
   };
   const [form,   setForm]   = useState(blank);
@@ -167,6 +168,7 @@ function TxModal({ clientId, onSaved, onClose }) {
         counterpartyName: form.counterpartyName, counterpartyTin: form.counterpartyTin,
         counterpartyAddress: form.counterpartyAddress,
         referenceNo: form.referenceNo, notes: form.notes,
+        date: form.date || undefined,
       });
       onSaved(); onClose();
     } catch (err) { alert(err.message); setSaving(false); }
@@ -176,6 +178,10 @@ function TxModal({ clientId, onSaved, onClose }) {
     <ModalShell title="Add Transaction" onClose={onClose}>
       <form onSubmit={handleSubmit}>
         <div style={{ display: 'grid', gridTemplateColumns: isMobile ? '1fr' : '1fr 1fr', gap: '0 16px' }}>
+          <Fld label="Transaction Date">
+            <input style={inp} type="date" required
+              value={form.date} onChange={set('date')} max={today} />
+          </Fld>
           <Fld label="Type">
             <select style={inp} value={form.type}
               onChange={e => setForm(f => ({ ...f, type: e.target.value, category: '', customCat: '',
@@ -501,20 +507,4 @@ export default function EncoderPortal({ onLogout }) {
                     </tbody>
                   </table>
                 </div>
-              </div>
-            )}
-          </div>
-        )}
-      </div>
-
-      {showTx && (
-        <TxModal
-          key={active?.id}
-          clientId={active?.id}
-          onSaved={() => loadTxns()}
-          onClose={() => setShowTx(false)}
-        />
-      )}
-    </div>
-  );
-}
+ 

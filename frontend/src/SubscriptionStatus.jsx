@@ -63,7 +63,7 @@ function SubscriptionStatus() {
       setPayment(paymentData);
 
       // Attempt to open GCash app with deep link
-      const amount = subscription.amount || 599;
+      const amount = subscription?.amount || 599;
       const deepLink = `gcash://pay?amount=${amount}&reference=${paymentData.reference_number}`;
 
       // Check if on mobile
@@ -83,6 +83,10 @@ function SubscriptionStatus() {
 
   const handlePayMayaPayment = async () => {
     try {
+      if (!subscription) {
+        alert('Subscription not found');
+        return;
+      }
       const paymentRes = await fetch('/api/payments', {
         method: 'POST',
         headers: {
@@ -99,7 +103,7 @@ function SubscriptionStatus() {
       setPayment(paymentData);
 
       window.open('https://www.paymaya.com', '_blank');
-      alert(`Payment initiated!\nAmount: ₱${subscription.amount || 599}\nReference: ${paymentData.reference_number}`);
+      alert(`Payment initiated!\nAmount: ₱${subscription?.amount || 599}\nReference: ${paymentData.reference_number}`);
     } catch (error) {
       console.error('PayMaya payment error:', error);
       alert('Error: ' + error.message);
@@ -108,6 +112,10 @@ function SubscriptionStatus() {
 
   const handleBankTransfer = async () => {
     try {
+      if (!subscription) {
+        alert('Subscription not found');
+        return;
+      }
       const paymentRes = await fetch('/api/payments', {
         method: 'POST',
         headers: {
@@ -254,14 +262,3 @@ const styles = {
     padding: '20px',
     textAlign: 'center',
     color: '#666'
-  },
-  error: {
-    padding: '20px',
-    textAlign: 'center',
-    color: '#d32f2f',
-    backgroundColor: '#ffebee',
-    borderRadius: '4px'
-  }
-};
-
-export default SubscriptionStatus;

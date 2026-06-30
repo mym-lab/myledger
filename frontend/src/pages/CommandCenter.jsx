@@ -209,14 +209,27 @@ export default function CommandCenter({ onLogout }) {
   const [refLoading,     setRefLoading]     = useState(false);
   const [refMsg,         setRefMsg]         = useState('');
   const [refFilter,      setRefFilter]      = useState('all');
+  // Active users (live polling)
+  const [activeUsers,    setActiveUsers]    = useState([]);
 
   // Named function so RestoreBackupButton (and other places) can call it
   function loadStats() {
     getAdminStats().then(setStats).catch(e => setError(e.message));
   }
 
+  function loadActiveUsers() {
+    const token = localStorage.getItem('ml_token') || '';
+    fetch('/api/monitoring/active-users', { headers: { Authorization: `Bearer ${token}` } })
+      .then(r => r.ok ? r.json() : null)
+      .then(data => { if (data?.users) setActiveUsers(data.users); })
+      .catch(() => {});
+  }
+
   useEffect(() => {
     loadUpgradeRequests();
+    loadActiveUsers();
+    const interval = setInterval(loadActiveUsers, 60_000);
+    return () => clearInterval(interval);
     // auditClients is derived from stats.clients (loaded below) — no separate call needed
   }, []);
 
@@ -507,6 +520,7 @@ export default function CommandCenter({ onLogout }) {
 
             <div style={{ display: 'flex', gap: 16, flexWrap: 'wrap', marginBottom: 24 }}>
               <MetricCard label="Total Users"         value={stats?.totalUsers        ?? '—'} color={T.accent} />
+              <MetricCard label="Active Now"          value={activeUsers.length}               color={T.green} sub="last 5 min" />
               <MetricCard label="Client Businesses"   value={stats?.totalClients      ?? '—'} color={T.blue} />
               <MetricCard label="Total Transactions"  value={stats?.totalTransactions  ?? '—'} color={T.text} />
               <MetricCard label="Net Revenue (all)"   value={stats ? peso(stats.totalRevenue) : '—'} sub="VAT-exclusive" color={T.green} />
@@ -1541,24 +1555,4 @@ export default function CommandCenter({ onLogout }) {
                     style={{ padding: '9px 20px', borderRadius: 8, background: smtpForm.enabled ? T.accent : T.border,
                       color: '#fff', border: 'none', fontSize: 13, fontWeight: 600,
                       cursor: smtpForm.enabled ? 'pointer' : 'not-allowed', fontFamily: 'inherit',
-                      opacity: smtpForm.enabled ? 1 : 0.5 }}
-                    disabled={!smtpForm.enabled}>
-                    📧 Send Reminders Now
-                  </button>
-                  {reminderMsg && (
-                    <span style={{ fontSize: 12, fontWeight: 600,
-                      color: reminderMsg.startsWith('✓') ? '#00836e' : T.red }}>{reminderMsg}</span>
-                  )}
-                  {!smtpForm.enabled && (
-                    <span style={{ fontSize: 11, color: T.muted }}>Enable SMTP above to activate</span>
-                  )}
-                </div>
-              </div>
-            </Card>
-          </div>
-        )}
-
-      </div>
-    </div>
-  );
-}
+                      opacity:
