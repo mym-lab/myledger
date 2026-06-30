@@ -8,7 +8,7 @@ import { useState, useEffect, useRef } from 'react';
 import { useMobile } from '../hooks/useMobile.js';
 import { InvoicesTab } from '../components/InvoiceModal.jsx';
 import {
-  getClients,
+  getClients, updateClient,
   getTransactions, createTransaction, updateTransaction, voidTransaction,
   getIncomeReport, getBalanceReport, getCashFlowReport,
   getBooksReport, getGeneralJournal, getGeneralLedger,
@@ -1158,7 +1158,22 @@ function computeIncomeTax(transactions, client, year, quarter /* null = annual *
   };
 }
 
-const TABS = ['Dashboard', 'Transactions', 'Invoices', 'Journal Entries', 'Trial Balance', 'Books', 'General Journal', 'General Ledger', 'COA', 'Period Lock', 'Audit Log', 'BIR Returns', 'Payroll', 'Alphalist', 'SLSP', 'Income Statement', 'Balance Sheet', 'Cash Flow', 'Assets', 'Contacts', 'BIR Reminders', 'Referral'];
+const TABS = ['Dashboard', 'Transactions', 'Invoices', 'Journal Entries', 'Trial Balance', 'Books', 'General Journal', 'General Ledger', 'COA', 'Period Lock', 'Audit Log', 'BIR Returns', 'Payroll', 'Alphalist', 'SLSP', 'Income Statement', 'Balance Sheet', 'Cash Flow', 'Assets', 'Contacts', 'BIR Reminders', 'Business Setup', 'Referral'];
+
+const TAX_TYPES_LIST = [
+  { code: '2550M',  label: '2550M — Monthly VAT Return' },
+  { code: '2550Q',  label: '2550Q — Quarterly VAT Return' },
+  { code: '2551M',  label: '2551M — Monthly Percentage Tax (Non-VAT)' },
+  { code: '2551Q',  label: '2551Q — Quarterly Percentage Tax (Non-VAT)' },
+  { code: '1601C',  label: '1601-C — WHT on Compensation' },
+  { code: '1601EQ', label: '1601-EQ — Expanded WHT (Quarterly)' },
+  { code: '1604EQ', label: '1604-EQ — Annual EWT Return' },
+  { code: '1702Q',  label: '1702Q — Quarterly IT (Corp)' },
+  { code: '1702',   label: '1702 — Annual IT (Corp)' },
+  { code: '1701Q',  label: '1701Q — Quarterly IT (Individual)' },
+  { code: '1701',   label: '1701 — Annual IT (Individual)' },
+  { code: '1550',   label: '1550 — Documentary Stamp Tax' },
+];
 
 const BOOKS_COLUMNS = {
   sales: ['Date','Ref / OR No.','Customer','Description','Gross Sales','Output VAT','Net Sales'],
@@ -1294,6 +1309,223 @@ function EditTxModal({ tx, lockedPeriods = [], onSave, onClose }) {
         </div>
       </form>
     </ModalShell>
+  );
+}
+
+// ─── BusinessSetupTab — lets accountants edit business profile & tax config ───
+function BusinessSetupTab({ client, onSaved }) {
+  const isMobile = useMobile();
+  const [form, setForm] = useState({
+    tradeName:         client.tradeName         || '',
+    tin:               client.tin               || '',
+    type:              client.type              || 'Corporation',
+    address:           client.address           || '',
+    zipCode:           client.zipCode           || '',
+    telephone:         client.telephone         || '',
+    rdoCode:           client.rdoCode           || '',
+    ownerBirthdate:    client.birthday          || '',
+    incorporationDate: client.incorporationDate || '',
+    civilStatus:       client.civilStatus       || 'Single',
+    spouseTin:         client.spouseTin         || '',
+    taxOption:         client.taxOption         || 'graduated',
+    isMsme:            !!client.isMsme,
+    taxTypes:          client.taxTypes          || [],
+    taxRegime:         client.taxRegime         || 'vat',
+    optRate:           client.optRate           != null ? String(client.optRate) : '0.03',
+    businessType:      client.businessType      || '',
+  });
+  const [saving, setSaving] = useState(false);
+  const [saved,  setSaved]  = useState(false);
+  const [err,    setErr]    = useState('');
+
+  const set = key => e => { setSaved(false); setForm(f => ({ ...f, [key]: e.target.value })); };
+  const isSoleProp = form.type === 'Sole Proprietor';
+
+  function toggleTT(code) {
+    setSaved(false);
+    setForm(f => ({
+      ...f,
+      taxTypes: f.taxTypes.includes(code) ? f.taxTypes.filter(x => x !== code) : [...f.taxTypes, code],
+    }));
+  }
+
+  async function handleSave(e) {
+    e.preventDefault();
+    if (!form.tradeName || !form.tin) { setErr('Trade Name and TIN are required.'); return; }
+    setSaving(true); setErr(''); setSaved(false);
+    try {
+      const { client: updated } = await updateClient(client.id, {
+        ...form,
+        optRate: form.taxRegime === 'opt' ? Number(form.optRate) : undefined,
+      });
+      setSaved(true);
+      onSaved(updated);
+    } catch (e) {
+      setErr(e.message || 'Failed to save');
+    } finally {
+      setSaving(false);
+    }
+  }
+
+  const grid2 = { display: 'grid', gridTemplateColumns: isMobile ? '1fr' : '1fr 1fr', gap: '0 16px' };
+  const grid3 = { display: 'grid', gridTemplateColumns: isMobile ? '1fr' : '1fr 1fr 1fr', gap: '0 16px' };
+
+  return (
+    <form onSubmit={handleSave}>
+      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 20 }}>
+        <div>
+          <h2 style={{ margin: 0, fontSize: 22, fontWeight: 600 }}>Business Setup</h2>
+          <div style={{ fontSize: 13, color: T.muted, marginTop: 4 }}>
+            Update business profile, tax obligations, and BIR configuration for this client.
+          </div>
+        </div>
+        <Btn type="submit" disabled={saving}>
+          {saving ? 'Saving…' : '💾 Save Changes'}
+        </Btn>
+      </div>
+
+      {err   && <div style={{ color: T.red, background: '#fff2f2', border: `1px solid ${T.red}40`,
+        borderRadius: 8, padding: '10px 14px', marginBottom: 14, fontSize: 13 }}>⚠️ {err}</div>}
+      {saved && <div style={{ color: '#1a8a1a', background: '#f0fff0', border: '1px solid #90ee9060',
+        borderRadius: 8, padding: '10px 14px', marginBottom: 14, fontSize: 13 }}>✅ Business profile saved successfully.</div>}
+
+      {/* ── Basic Info ── */}
+      <Card style={{ marginBottom: 16 }}>
+        <SectionHead>Business Information</SectionHead>
+        <div style={grid2}>
+          <Fld label="Trade Name *">
+            <input style={inp} required value={form.tradeName} onChange={set('tradeName')} placeholder="ABC Corporation" />
+          </Fld>
+          <Fld label="TIN *">
+            <input style={inp} required value={form.tin} onChange={set('tin')} placeholder="000-000-000-000" />
+          </Fld>
+        </div>
+        <div style={grid2}>
+          <Fld label="Business Type">
+            <select style={inp} value={form.type} onChange={set('type')}>
+              {['Corporation','Sole Proprietor','One Person Corporation (OPC)','Partnership'].map(t => (
+                <option key={t}>{t}</option>
+              ))}
+            </select>
+          </Fld>
+          <Fld label="Line of Business">
+            <input style={inp} value={form.businessType} onChange={set('businessType')} placeholder="e.g. Consultancy, Retail" />
+          </Fld>
+        </div>
+        <Fld label="Registered Address">
+          <input style={inp} value={form.address} onChange={set('address')} placeholder="Full registered business address" />
+        </Fld>
+        <div style={grid3}>
+          <Fld label="ZIP Code">
+            <input style={inp} value={form.zipCode} onChange={set('zipCode')} placeholder="1234" />
+          </Fld>
+          <Fld label="Telephone">
+            <input style={inp} value={form.telephone} onChange={set('telephone')} placeholder="02-8123-4567" />
+          </Fld>
+          <Fld label="RDO Code">
+            <input style={inp} value={form.rdoCode} onChange={set('rdoCode')} placeholder="e.g. 040" />
+          </Fld>
+        </div>
+      </Card>
+
+      {/* ── Sole Prop fields ── */}
+      {isSoleProp && (
+        <Card style={{ marginBottom: 16, background: '#fffbec', borderColor: `${T.yellow}60` }}>
+          <SectionHead>📋 Individual / Sole Proprietor (Form 1701 / 1701A)</SectionHead>
+          <div style={grid2}>
+            <Fld label="Owner's Date of Birth *">
+              <input style={inp} type="date" value={form.ownerBirthdate} onChange={set('ownerBirthdate')} />
+            </Fld>
+            <Fld label="Civil Status">
+              <select style={inp} value={form.civilStatus} onChange={set('civilStatus')}>
+                {['Single','Married','Head of Family','Legally Separated','Widow/Widower'].map(s => (
+                  <option key={s}>{s}</option>
+                ))}
+              </select>
+            </Fld>
+          </div>
+          {form.civilStatus === 'Married' && (
+            <Fld label="Spouse's TIN">
+              <input style={inp} value={form.spouseTin} onChange={set('spouseTin')} placeholder="000-000-000-000" />
+            </Fld>
+          )}
+          <Fld label="Income Tax Option (1701A: 8% Flat vs. Graduated)">
+            <select style={inp} value={form.taxOption} onChange={set('taxOption')}>
+              <option value="graduated">Graduated Rates (TRAIN Law — 0% to 35%)</option>
+              <option value="8percent">8% Flat Tax on Gross Revenue − ₱250,000 (Form 1701A)</option>
+              <option value="osd">Optional Standard Deduction (40% of Gross Revenue)</option>
+            </select>
+          </Fld>
+        </Card>
+      )}
+
+      {/* ── Corporate fields ── */}
+      {!isSoleProp && (
+        <Card style={{ marginBottom: 16, background: '#f0f4ff', borderColor: '#4a6cf760' }}>
+          <SectionHead>📋 Corporate (Form 1702 / 1702Q)</SectionHead>
+          <Fld label="Date of Incorporation">
+            <input style={inp} type="date" value={form.incorporationDate} onChange={set('incorporationDate')} />
+          </Fld>
+          <label style={{ display: 'flex', alignItems: 'center', gap: 10, fontSize: 13, cursor: 'pointer', marginTop: 4 }}>
+            <input type="checkbox" checked={!!form.isMsme}
+              onChange={e => { setSaved(false); setForm(f => ({ ...f, isMsme: e.target.checked })); }} />
+            <span>Qualifies as MSME — 20% RCIT rate (instead of 25%)</span>
+          </label>
+        </Card>
+      )}
+
+      {/* ── Tax Regime ── */}
+      <Card style={{ marginBottom: 16 }}>
+        <SectionHead>VAT / Tax Regime</SectionHead>
+        <Fld label="Tax Regime">
+          <select style={inp} value={form.taxRegime} onChange={set('taxRegime')}>
+            <option value="vat">VAT Registered — 12% Output VAT on vatable sales</option>
+            <option value="opt">Percentage Tax / OPT — Section 116 NIRC (Non-VAT)</option>
+            <option value="non_vat_exempt">Non-VAT Exempt — no VAT, no percentage tax</option>
+          </select>
+        </Fld>
+        {form.taxRegime === 'opt' && (
+          <Fld label="OPT Rate (as decimal)">
+            <input style={inp} type="number" step="0.001" min="0.001" max="0.1"
+              value={form.optRate} onChange={set('optRate')} placeholder="0.03" />
+            <div style={{ fontSize: 12, color: T.muted, marginTop: 4 }}>
+              Enter as decimal: 0.03 = 3% · 0.01 = 1%. Common: 3% (general), 1% (TRAIN Law 2023–2025)
+            </div>
+          </Fld>
+        )}
+      </Card>
+
+      {/* ── Tax Obligations ── */}
+      <Card style={{ marginBottom: 16 }}>
+        <SectionHead>BIR Tax Obligations</SectionHead>
+        <div style={{ fontSize: 13, color: T.muted, marginBottom: 12 }}>
+          Check all BIR forms this client is required to file. This controls which BIR Reminders and returns appear.
+        </div>
+        <div style={{ display: 'grid', gridTemplateColumns: isMobile ? '1fr' : '1fr 1fr', gap: '8px 16px' }}>
+          {TAX_TYPES_LIST.map(o => (
+            <label key={o.code} style={{ display: 'flex', alignItems: 'center', gap: 8,
+              fontSize: 13, cursor: 'pointer', padding: '6px 10px', borderRadius: 8,
+              background: form.taxTypes.includes(o.code) ? `${T.teal}14` : T.bg,
+              border: `1px solid ${form.taxTypes.includes(o.code) ? T.teal : T.border}`,
+              transition: 'all .15s' }}>
+              <input type="checkbox" checked={form.taxTypes.includes(o.code)} onChange={() => toggleTT(o.code)} />
+              {o.label}
+            </label>
+          ))}
+        </div>
+        {form.taxTypes.length === 0 && (
+          <div style={{ marginTop: 12, fontSize: 13, color: T.orange }}>
+            ⚠️ No tax obligations selected — BIR Reminders tab will show "No tax types configured".
+          </div>
+        )}
+      </Card>
+
+      <div style={{ display: 'flex', justifyContent: 'flex-end', gap: 10 }}>
+        <Btn type="submit" disabled={saving}>
+          {saving ? 'Saving…' : '💾 Save Changes'}
+        </Btn>
+      </div>
+    </form>
   );
 }
 
@@ -5094,6 +5326,21 @@ export default function AccountantPortal({ onLogout }) {
         {tab === 'Invoices' && active && (
           <InvoicesTab clientId={active.id} isAccountant={true} />
         )}
+
+        {/* ══════════ BUSINESS SETUP ══════════ */}
+        {tab === 'Business Setup' && active && (() => {
+          // Local form state is managed in a sub-component to isolate re-renders
+          return <BusinessSetupTab client={active} onSaved={client => {
+            // Refresh the clients list so header / dashboard reflects changes
+            getClients().then(r => {
+              if (r?.clients) {
+                setClients(r.clients);
+                const updated = r.clients.find(c => c.id === client.id);
+                if (updated) setActive(updated);
+              }
+            }).catch(() => {});
+          }} />;
+        })()}
 
         {/* ══════════ REFERRAL ══════════ */}
         {tab === 'Referral' && (
