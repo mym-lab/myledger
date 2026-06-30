@@ -3,23 +3,13 @@
 // Tracks user actions, active users, and provides admin statistics
 
 import express from 'express';
+import jwt from 'jsonwebtoken';
 import { db } from '../db.js';
+import { authenticate, requireAdmin } from '../middleware/auth.js';
+
+const JWT_SECRET = process.env.JWT_SECRET || 'myledger-dev-secret-change-in-prod';
 
 const router = express.Router();
-
-// Middleware to authenticate requests
-const authenticateToken = (req, res, next) => {
-  const token = req.headers.authorization?.split(' ')[1];
-  if (!token) return res.status(401).json({ error: 'No token' });
-  
-  try {
-    const decoded = JSON.parse(Buffer.from(token.split('.')[1], 'base64').toString());
-    req.user = decoded;
-    next();
-  } catch (e) {
-    res.status(401).json({ error: 'Invalid token' });
-  }
-};
 
 // ═══════════════════════════════════════════════════════════════════
 // MIDDLEWARE: trackActivity
@@ -27,7 +17,20 @@ const authenticateToken = (req, res, next) => {
 // Logs every user request: login, view transaction, submit report, etc.
 // ═══════════════════════════════════════════════════════════════════
 export const trackActivity = (req, res, next) => {
-  if (req.user) {
+  // This middleware runs globally (before per-route authenticate calls),
+  // so we decode the JWT here directly rather than relying on req.userId.
+  // We verify the signature so activity can only be logged for valid sessions.
+  const auth = req.headers['authorization'];
+  const token = auth && auth.split(' ')[1];
+  let userId = null;
+  if (token) {
+    try {
+      const decoded = jwt.verify(token, JWT_SECRET);
+      userId = decoded.userId;
+    } catch { /* unauthenticated request — skip tracking */ }
+  }
+
+  if (userId) {
     res.startTime = Date.now();
     res.on('finish', () => {
       try {
@@ -36,7 +39,7 @@ export const trackActivity = (req, res, next) => {
           INSERT INTO user_activity (user_id, action, method, timestamp, duration_seconds)
           VALUES (?, ?, ?, ?, ?)
         `).run(
-          req.user.id,
+          userId,
           req.path,
           req.method,
           new Date().toISOString(),
@@ -54,33 +57,27 @@ export const trackActivity = (req, res, next) => {
 // GET /api/monitoring/active-users
 // Admin only: See who's online RIGHT NOW
 // ═══════════════════════════════════════════════════════════════════
-router.get('/active-users', authenticateToken, (req, res) => {
+router.get('/active-users', authenticate, requireAdmin, (req, res) => {
   try {
-    // Check if user is admin
-    const user = db.prepare('SELECT role FROM clients WHERE id = ?').get(req.user.id);
-    if (!user || user.role !== 'admin') {
-      return res.status(403).json({ error: 'Admin only' });
-    }
-
     const fiveMinutesAgo = new Date(Date.now() - 5 * 60 * 1000).toISOString();
 
     // Get users active in last 5 minutes
     const activeUserIds = db.prepare(`
-      SELECT DISTINCT user_id FROM user_activity 
+      SELECT DISTINCT user_id FROM user_activity
       WHERE timestamp > ?
       ORDER BY timestamp DESC
     `).all(fiveMinutesAgo).map(row => row.user_id);
 
-    // Get user details for active users
+    // Get user details for active users (from users table, not clients)
     const activeUsers = activeUserIds.map(userId => {
       const userData = db.prepare(`
-        SELECT id, name, email, subscription_tier FROM clients WHERE id = ?
+        SELECT id, name, email, role FROM users WHERE id = ?
       `).get(userId);
 
       const lastActivity = db.prepare(`
-        SELECT action, timestamp FROM user_activity 
-        WHERE user_id = ? 
-        ORDER BY timestamp DESC 
+        SELECT action, timestamp FROM user_activity
+        WHERE user_id = ?
+        ORDER BY timestamp DESC
         LIMIT 1
       `).get(userId);
 
@@ -91,14 +88,14 @@ router.get('/active-users', authenticateToken, (req, res) => {
         id: userId,
         name: userData?.name || 'Unknown',
         email: userData?.email,
-        plan: userData?.subscription_tier || 'free',
+        role: userData?.role || 'client',
         last_activity: lastActivity?.action || 'Unknown',
         last_activity_time: lastActivity?.timestamp,
         status: lastActivityTime > oneMinuteAgo ? 'online' : 'away'
       };
     });
 
-    const totalUsers = db.prepare('SELECT COUNT(*) as count FROM clients').get().count;
+    const totalUsers = db.prepare('SELECT COUNT(*) as count FROM users').get().count;
 
     res.json({
       total_users: totalUsers,
@@ -116,13 +113,8 @@ router.get('/active-users', authenticateToken, (req, res) => {
 // GET /api/monitoring/payment-stats
 // Admin only: Payment collection status & statistics
 // ═══════════════════════════════════════════════════════════════════
-router.get('/payment-stats', authenticateToken, (req, res) => {
+router.get('/payment-stats', authenticate, requireAdmin, (req, res) => {
   try {
-    // Check if admin
-    const user = db.prepare('SELECT role FROM clients WHERE id = ?').get(req.user.id);
-    if (!user || user.role !== 'admin') {
-      return res.status(403).json({ error: 'Admin only' });
-    }
 
     const threeDaysAgo = new Date(Date.now() - 3 * 24 * 60 * 60 * 1000).toISOString();
 
@@ -170,20 +162,14 @@ router.get('/payment-stats', authenticateToken, (req, res) => {
 // GET /api/monitoring/user-stats/:userId
 // Admin only: Detailed stats for a specific user
 // ═══════════════════════════════════════════════════════════════════
-router.get('/user-stats/:userId', authenticateToken, (req, res) => {
+router.get('/user-stats/:userId', authenticate, requireAdmin, (req, res) => {
   try {
-    // Check if admin
-    const user = db.prepare('SELECT role FROM clients WHERE id = ?').get(req.user.id);
-    if (!user || user.role !== 'admin') {
-      return res.status(403).json({ error: 'Admin only' });
-    }
-
     const userId = req.params.userId;
     const twentyFourHoursAgo = new Date(Date.now() - 24 * 60 * 60 * 1000).toISOString();
     const thirtyDaysAgo = new Date(Date.now() - 30 * 24 * 60 * 60 * 1000).toISOString();
 
     // Get user info
-    const userData = db.prepare('SELECT name, email, subscription_tier FROM clients WHERE id = ?').get(userId);
+    const userData = db.prepare('SELECT name, email, role FROM users WHERE id = ?').get(userId);
     if (!userData) {
       return res.status(404).json({ error: 'User not found' });
     }
@@ -206,7 +192,7 @@ router.get('/user-stats/:userId', authenticateToken, (req, res) => {
       user_id: userId,
       name: userData.name,
       email: userData.email,
-      plan: userData.subscription_tier,
+      role: userData.role,
       total_sessions: totalSessions,
       sessions_today: sessionsToday,
       sessions_this_month: sessionsThisMonth,
@@ -227,14 +213,8 @@ router.get('/user-stats/:userId', authenticateToken, (req, res) => {
 // GET /api/monitoring/activity-log/:userId
 // Admin only: Full activity log for a user
 // ═══════════════════════════════════════════════════════════════════
-router.get('/activity-log/:userId', authenticateToken, (req, res) => {
+router.get('/activity-log/:userId', authenticate, requireAdmin, (req, res) => {
   try {
-    // Check if admin
-    const user = db.prepare('SELECT role FROM clients WHERE id = ?').get(req.user.id);
-    if (!user || user.role !== 'admin') {
-      return res.status(403).json({ error: 'Admin only' });
-    }
-
     const userId = req.params.userId;
     const limit = req.query.limit || 100;
 
