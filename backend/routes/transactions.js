@@ -1,12 +1,13 @@
 // ─── Transaction Routes ────────────────────────────────────────────────────────
 // POST   /api/transactions              create (clientId required)
 // GET    /api/transactions?clientId=    list for client (includes voided, marked voided:true)
+// PUT    /api/transactions/:id          edit non-amount fields — accountant/owner only, period-lock aware
 // PUT    /api/transactions/:id/void     soft-delete (CAS-compliant — no hard deletes)
 
 import { Router } from 'express';
 import { v4 as uuid } from 'uuid';
 import { db, rowToClient, rowToTx } from '../db.js';
-import { authenticate } from '../middleware/auth.js';
+import { authenticate, noEncoder } from '../middleware/auth.js';
 import { calculateIncomeVAT, calculateExpenseVAT } from '../lib/vat.js';
 import { INCOME_CATEGORIES, EXPENSE_CATEGORIES } from '../lib/categories.js';
 import { logAudit } from './audit.js';
@@ -47,6 +48,15 @@ const stmtTxById  = db.prepare('SELECT * FROM transactions WHERE id = ?');
 const stmtVoidTx  = db.prepare(
   'UPDATE transactions SET voided_at=@voided_at, voided_by=@voided_by, void_reason=@void_reason WHERE id=@id'
 );
+const stmtEditTx  = db.prepare(`
+  UPDATE transactions
+  SET description=@description, category=@category,
+      reference_no=@reference_no, notes=@notes,
+      counterparty_name=@counterparty_name, counterparty_tin=@counterparty_tin,
+      counterparty_address=@counterparty_address, settlement=@settlement,
+      settlement_account=@settlement_account, created_at=@created_at
+  WHERE id=@id
+`);
 const stmtLockCheck = db.prepare(
   'SELECT id FROM locked_periods WHERE client_id=? AND period=?'
 );
@@ -247,6 +257,74 @@ router.get('/', (req, res, next) => {
     }
 
     res.json({ transactions, count: transactions.length });
+  } catch (err) { next(err); }
+});
+
+// PUT /api/transactions/:id  — edit metadata; accountant/owner only, period-lock aware
+router.put('/:id', noEncoder, (req, res, next) => {
+  try {
+    const tx = rowToTx(stmtTxById.get(req.params.id));
+    if (!tx) return res.status(404).json({ error: 'Transaction not found' });
+    if (tx.voidedAt) return res.status(400).json({ error: 'Cannot edit a voided transaction' });
+
+    const client = rowToClient(stmtClientById.get(tx.clientId));
+    if (!client || !canAccess(client, req.userId))
+      return res.status(403).json({ error: 'Not authorised' });
+
+    const {
+      date,
+      description,
+      category,
+      referenceNo,
+      notes,
+      counterpartyName,
+      counterpartyTin,
+      counterpartyAddress,
+      settlement,
+    } = req.body;
+
+    // Determine new date (fall back to existing)
+    const today    = new Date().toISOString().substring(0, 10);
+    const newDate  = date ? date.substring(0, 10) : tx.createdAt.substring(0, 10);
+    const fullDate = newDate + (tx.createdAt.length > 10 ? tx.createdAt.substring(10) : 'T00:00:00.000Z');
+
+    // Period-lock check: current period
+    const oldPeriod = tx.createdAt.substring(0, 7);
+    if (stmtLockCheck.get(tx.clientId, oldPeriod))
+      return res.status(423).json({ error: `Period ${oldPeriod} is locked. Unlock it first.` });
+
+    // Period-lock check: new period (if date changed)
+    const newPeriod = newDate.substring(0, 7);
+    if (newPeriod !== oldPeriod && stmtLockCheck.get(tx.clientId, newPeriod))
+      return res.status(423).json({ error: `Target period ${newPeriod} is locked. Unlock it first.` });
+
+    // Reject future dates
+    if (newDate > today)
+      return res.status(400).json({ error: 'Transaction date cannot be in the future' });
+
+    const settlementAccount = SETTLEMENT_ACCOUNT[settlement] || SETTLEMENT_ACCOUNT[tx.settlement] || 'Cash on Hand';
+
+    stmtEditTx.run({
+      id:                  tx.id,
+      created_at:          fullDate,
+      description:         description          ?? tx.description,
+      category:            category             ?? tx.category,
+      reference_no:        referenceNo          ?? tx.referenceNo,
+      notes:               notes                ?? tx.notes,
+      counterparty_name:   counterpartyName     ?? tx.counterpartyName,
+      counterparty_tin:    counterpartyTin      ?? tx.counterpartyTin,
+      counterparty_address: counterpartyAddress ?? tx.counterpartyAddress,
+      settlement:          settlement           ?? tx.settlement,
+      settlement_account:  settlementAccount,
+    });
+
+    logAudit({
+      clientId: tx.clientId, userId: req.userId,
+      action: 'EDIT_TRANSACTION', entity: 'transaction', entityId: tx.id,
+      detail: `Edited: ${JSON.stringify({ date: newDate, description, category, referenceNo, settlement }).replace(/"/g, '')}`,
+    });
+
+    res.json({ message: 'Transaction updated', transaction: rowToTx(stmtTxById.get(tx.id)) });
   } catch (err) { next(err); }
 });
 

@@ -9,7 +9,7 @@ import { useMobile } from '../hooks/useMobile.js';
 import { InvoicesTab } from '../components/InvoiceModal.jsx';
 import {
   getClients,
-  getTransactions, createTransaction, voidTransaction,
+  getTransactions, createTransaction, updateTransaction, voidTransaction,
   getIncomeReport, getBalanceReport, getCashFlowReport,
   getBooksReport, getGeneralJournal, getGeneralLedger,
   getCOA, seedCOA, createAccount, updateAccount, deleteAccount,
@@ -1167,6 +1167,136 @@ const BOOKS_COLUMNS = {
   disbursements: ['Date','Ref No.','Paid To','Description','Mode','Amount (Gross)'],
 };
 
+// ─── EditTxModal ─────────────────────────────────────────────────────────────
+// Accountant-only: correct non-amount fields (date, desc, category, ref, notes,
+// settlement, counterparty) on transactions that fall in an unlocked period.
+const EDIT_INCOME_CATS  = ['Sale of Goods','Sale of Services','Professional Fees','Rental Income','Interest Income','Commission Income','Dividend Income','Other Income'];
+const EDIT_EXPENSE_CATS = ['Cost of Goods Sold','Salaries & Wages','Rent','Utilities','Office Supplies','Advertising & Marketing','Transportation & Travel','Professional Fees','Repairs & Maintenance','Bank Charges & Fees','Taxes & Licenses','Depreciation','Insurance','Interest Expense','Other Expenses'];
+const EDIT_SETTLEMENTS  = ['cash','ar','ap','ewallet','bank_transfer','check','credit_card'];
+const EDIT_SETTLE_LABELS = {
+  cash: 'Cash', ar: 'Accounts Receivable', ap: 'Accounts Payable',
+  ewallet: 'E-wallet (GCash/Maya)', bank_transfer: 'Bank Transfer',
+  check: 'Check', credit_card: 'Credit Card',
+};
+
+function EditTxModal({ tx, lockedPeriods = [], onSave, onClose }) {
+  const today    = new Date().toISOString().substring(0, 10);
+  const origDate = tx.createdAt ? tx.createdAt.substring(0, 10) : today;
+  const origPeriod = origDate.substring(0, 7);
+  const isLocked = lockedPeriods.some(p => p.period === origPeriod);
+
+  const [form, setForm] = useState({
+    date:               origDate,
+    description:        tx.description         || '',
+    category:           tx.category            || '',
+    referenceNo:        tx.referenceNo         || '',
+    notes:              tx.notes               || '',
+    counterpartyName:   tx.counterpartyName    || '',
+    counterpartyTin:    tx.counterpartyTin     || '',
+    counterpartyAddress: tx.counterpartyAddress || '',
+    settlement:         tx.settlement          || 'cash',
+  });
+  const [saving, setSaving] = useState(false);
+  const cats = tx.type === 'income' ? EDIT_INCOME_CATS : EDIT_EXPENSE_CATS;
+  const set  = key => e => setForm(f => ({ ...f, [key]: e.target.value }));
+
+  const inp = {
+    width: '100%', padding: '9px 12px', borderRadius: 8, border: `1px solid ${T.border}`,
+    fontSize: 14, color: T.text, background: '#fafafa', boxSizing: 'border-box',
+    outline: 'none', fontFamily: 'inherit',
+  };
+
+  async function handleSubmit(e) {
+    e.preventDefault();
+    setSaving(true);
+    try { await onSave(tx.id, form); }
+    catch { /* error shown by caller */ }
+    finally { setSaving(false); }
+  }
+
+  const newPeriod = form.date.substring(0, 7);
+  const newPeriodLocked = newPeriod !== origPeriod && lockedPeriods.some(p => p.period === newPeriod);
+
+  return (
+    <ModalShell title={`✎ Edit Transaction — ${tx.type === 'income' ? '🟢 Income' : '🔴 Expense'}`} onClose={onClose}>
+      {isLocked && (
+        <div style={{ background: '#fff3cd', border: '1px solid #ffc107', borderRadius: 8,
+          padding: '10px 14px', marginBottom: 16, fontSize: 13, color: '#856404' }}>
+          ⚠️ Period <strong>{origPeriod}</strong> is currently locked. Unlock it first in the Period Lock tab before editing this transaction.
+        </div>
+      )}
+      <div style={{ background: T.bg, borderRadius: 8, padding: '10px 14px', marginBottom: 16, fontSize: 12, color: T.muted }}>
+        <strong>Note:</strong> Amount and VAT cannot be changed here. To correct the amount, void this transaction and add a new one.
+        <div style={{ marginTop: 4 }}>Original: {origDate} · {tx.type} · NET {tx.net != null ? `₱${tx.net.toLocaleString('en-PH', { minimumFractionDigits: 2 })}` : '—'}</div>
+      </div>
+      <form onSubmit={handleSubmit}>
+        <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '0 16px' }}>
+          <Fld label="Transaction Date *">
+            <input style={inp} type="date" required value={form.date}
+              onChange={set('date')} max={today} />
+            {newPeriodLocked && (
+              <div style={{ fontSize: 11, color: T.red, marginTop: 4 }}>
+                ⚠️ Target period {newPeriod} is also locked.
+              </div>
+            )}
+          </Fld>
+          <Fld label="Settlement">
+            <select style={inp} value={form.settlement} onChange={set('settlement')}>
+              {EDIT_SETTLEMENTS.map(s => <option key={s} value={s}>{EDIT_SETTLE_LABELS[s]}</option>)}
+            </select>
+          </Fld>
+        </div>
+
+        <Fld label="Description *">
+          <input style={inp} required value={form.description} onChange={set('description')} />
+        </Fld>
+
+        <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '0 16px' }}>
+          <Fld label="Category">
+            <select style={inp} value={form.category} onChange={set('category')}>
+              <option value="">— Select —</option>
+              {cats.map(c => <option key={c}>{c}</option>)}
+            </select>
+          </Fld>
+          <Fld label="Reference / OR No.">
+            <input style={inp} value={form.referenceNo} onChange={set('referenceNo')} placeholder="Invoice or OR number" />
+          </Fld>
+        </div>
+
+        <div style={{ paddingTop: 10, borderTop: `1px solid ${T.border}`, marginTop: 4, marginBottom: 4 }}>
+          <div style={{ fontSize: 11, fontWeight: 700, color: T.muted, marginBottom: 8,
+            textTransform: 'uppercase', letterSpacing: '0.5px' }}>
+            {tx.type === 'income' ? 'Customer Details' : 'Vendor Details'}
+          </div>
+          <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr', gap: '0 12px' }}>
+            <Fld label={tx.type === 'income' ? 'Customer Name' : 'Vendor Name'}>
+              <input style={inp} value={form.counterpartyName} onChange={set('counterpartyName')} placeholder="Optional" />
+            </Fld>
+            <Fld label="TIN">
+              <input style={inp} value={form.counterpartyTin} onChange={set('counterpartyTin')} placeholder="000-000-000-000" />
+            </Fld>
+            <Fld label="Address">
+              <input style={inp} value={form.counterpartyAddress} onChange={set('counterpartyAddress')} placeholder="Optional" />
+            </Fld>
+          </div>
+        </div>
+
+        <Fld label="Notes">
+          <textarea style={{ ...inp, resize: 'vertical', minHeight: 48 }}
+            value={form.notes} onChange={set('notes')} placeholder="Internal notes or correction reason…" />
+        </Fld>
+
+        <div style={{ display: 'flex', gap: 10, justifyContent: 'flex-end', marginTop: 8 }}>
+          <Btn variant="ghost" onClick={onClose}>Cancel</Btn>
+          <Btn type="submit" disabled={saving || isLocked || newPeriodLocked}>
+            {saving ? 'Saving…' : 'Save Changes'}
+          </Btn>
+        </div>
+      </form>
+    </ModalShell>
+  );
+}
+
 // ─── Main component ───────────────────────────────────────────────────────────
 export default function AccountantPortal({ onLogout }) {
   const isMobile = useMobile();
@@ -1579,6 +1709,19 @@ export default function AccountantPortal({ onLogout }) {
       await voidTransaction(id, reason.trim());
       loadTxns(); loadIncome();
     } catch (e) { alert(e.message); }
+  }
+
+  // Edit transaction (accountant-only, period-lock aware)
+  const [editTx, setEditTx] = useState(null);  // null | transaction object
+
+  async function handleEditSave(id, data) {
+    try {
+      await updateTransaction(id, data);
+      setEditTx(null);
+      loadTxns(); loadIncome();
+    } catch (e) {
+      alert(e.message || 'Failed to update transaction');
+    }
   }
 
   async function deleteJE(id) {
@@ -2150,11 +2293,18 @@ export default function AccountantPortal({ onLogout }) {
                             textDecoration: t.voided ? 'line-through' : 'none' }}>{peso(t.gross)}</td>
                           <td style={{ padding: '11px 14px' }}>
                             {!t.voided && (
-                              <button onClick={() => voidTx(t.id)}
-                                style={{ background: 'none', border: 'none', cursor: 'pointer',
-                                  color: T.red, fontSize: 13, padding: '3px 6px', borderRadius: 5 }}>
-                                ⊘ Void
-                              </button>
+                              <div style={{ display: 'flex', gap: 4, flexWrap: 'wrap' }}>
+                                <button onClick={() => setEditTx(t)}
+                                  style={{ background: 'none', border: 'none', cursor: 'pointer',
+                                    color: T.blue, fontSize: 13, padding: '3px 6px', borderRadius: 5 }}>
+                                  ✎ Edit
+                                </button>
+                                <button onClick={() => voidTx(t.id)}
+                                  style={{ background: 'none', border: 'none', cursor: 'pointer',
+                                    color: T.red, fontSize: 13, padding: '3px 6px', borderRadius: 5 }}>
+                                  ⊘ Void
+                                </button>
+                              </div>
                             )}
                           </td>
                         </tr>
@@ -2165,6 +2315,16 @@ export default function AccountantPortal({ onLogout }) {
               </Card>
             )}
           </div>
+        )}
+
+        {/* ── Edit transaction modal (accountant-only) ── */}
+        {editTx && (
+          <EditTxModal
+            tx={editTx}
+            lockedPeriods={periods}
+            onSave={handleEditSave}
+            onClose={() => setEditTx(null)}
+          />
         )}
 
         {/* ════════════ JOURNAL ENTRIES ════════════ */}

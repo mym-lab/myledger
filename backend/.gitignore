@@ -1,7 +1,0 @@
-node_modules/
-myledger.db
-myledger.db-wal
-myledger.db-shm
-.env
-service-account.json
-*.json.bak

@@ -70,8 +70,9 @@ export const getTransactions   = (clientId, from, to) => {
   if (to)   url += `&to=${to}`;
   return get(url, true);
 };
-export const createTransaction = (data)       => post('/transactions', data, true);
-export const voidTransaction   = (id, reason) => put(`/transactions/${id}/void`, { reason: reason || '' }, true);
+export const createTransaction  = (data)       => post('/transactions', data, true);
+export const updateTransaction  = (id, data)   => put(`/transactions/${id}`, data, true);
+export const voidTransaction    = (id, reason) => put(`/transactions/${id}/void`, { reason: reason || '' }, true);
 // backward compat alias — routes to void (no hard deletes per CAS)
 export const deleteTransaction = (id)         => put(`/transactions/${id}/void`, { reason: '' }, true);
 
