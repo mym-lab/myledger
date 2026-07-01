@@ -12,6 +12,7 @@ import {
   getClients, createClient, updateClient, deleteClient, backupClient,
   getTransactions, createTransaction, voidTransaction,
   getIncomeReport, getBalanceReport, getCashFlowReport, getBooksReport, getCashFlowForecast,
+  getReceipts, uploadReceipt, deleteReceipt,
   getAssets, createAsset, deleteAsset, getLapsing,
   getBirDeadlines, getBirVatBalance,
   assignAccountant,
@@ -1456,6 +1457,10 @@ export default function ClientInterface({ onLogout }) {
   const [forecast,      setForecast]      = useState(null);
   const [forecastDays,  setForecastDays]  = useState(90);
   const [forecastLoad,  setForecastLoad]  = useState(false);
+  const [receiptTx,     setReceiptTx]     = useState(null);
+  const [receiptList,   setReceiptList]   = useState([]);
+  const [receiptLoad,   setReceiptLoad]   = useState(false);
+  const [receiptUploading, setReceiptUploading] = useState(false);
 
   useEffect(() => {
     loadClients();
@@ -1582,6 +1587,31 @@ export default function ClientInterface({ onLogout }) {
   async function viewLapsing(id) {
     try { const r = await getLapsing(id); setLapsingData(r); setShowLapsing(true); }
     catch (e) { alert(e.message); }
+  }
+
+  async function openReceipts(tx) {
+    setReceiptTx(tx);
+    setReceiptLoad(true);
+    try { const r = await getReceipts(tx.id); setReceiptList(r.attachments || []); }
+    catch (e) { console.error(e); }
+    finally { setReceiptLoad(false); }
+  }
+
+  async function handleReceiptUpload(e) {
+    const file = e.target.files?.[0];
+    if (!file || !receiptTx) return;
+    setReceiptUploading(true);
+    try {
+      const att = await uploadReceipt(receiptTx.id, file);
+      setReceiptList(prev => [...prev, att]);
+    } catch (err) { alert(err.message || 'Upload failed'); }
+    finally { setReceiptUploading(false); e.target.value = ''; }
+  }
+
+  async function handleReceiptDelete(attachId) {
+    if (!receiptTx || !confirm('Delete this attachment?')) return;
+    await deleteReceipt(receiptTx.id, attachId);
+    setReceiptList(prev => prev.filter(a => a.id !== attachId));
   }
 
   async function voidTx(id) {
@@ -2187,13 +2217,20 @@ export default function ClientInterface({ onLogout }) {
                             {t.settlement ? t.settlement.replace('_',' ') : 'cash'}
                           </td>
                           <td style={{ padding: '10px 14px' }}>
-                            {!t.voided && (
-                              <button onClick={() => voidTx(t.id)}
+                            <div style={{ display: 'flex', gap: 4, alignItems: 'center' }}>
+                              {!t.voided && (
+                                <button onClick={() => voidTx(t.id)}
+                                  style={{ background: 'none', border: 'none', cursor: 'pointer',
+                                    color: T.red, fontSize: 13, padding: '3px 6px', borderRadius: 5 }}>
+                                  ⊘ Void
+                                </button>
+                              )}
+                              <button onClick={() => openReceipts(t)}
                                 style={{ background: 'none', border: 'none', cursor: 'pointer',
-                                  color: T.red, fontSize: 13, padding: '3px 6px', borderRadius: 5 }}>
-                                ⊘ Void
+                                  color: T.muted, fontSize: 14, padding: '3px 6px', borderRadius: 5 }}>
+                                📎
                               </button>
-                            )}
+                            </div>
                           </td>
                         </tr>
                       ))}
@@ -2202,6 +2239,65 @@ export default function ClientInterface({ onLogout }) {
                 </div>
               </Card>
             )}
+          </div>
+        )}
+
+        {/* ── Receipt Attachments Modal ── */}
+        {receiptTx && (
+          <div style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.45)', zIndex: 900,
+            display: 'flex', alignItems: 'center', justifyContent: 'center', padding: 20 }}
+            onClick={() => setReceiptTx(null)}>
+            <div onClick={e => e.stopPropagation()} style={{
+              background: T.surface, borderRadius: 16, padding: 28, width: '100%', maxWidth: 480,
+              boxShadow: '0 8px 32px rgba(0,0,0,0.18)', maxHeight: '80vh', overflowY: 'auto' }}>
+              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 16 }}>
+                <div style={{ fontWeight: 700, fontSize: 16 }}>📎 Attachments</div>
+                <button onClick={() => setReceiptTx(null)} style={{ background: 'none', border: 'none', cursor: 'pointer', fontSize: 20, color: T.muted }}>✕</button>
+              </div>
+              <div style={{ fontSize: 12, color: T.muted, marginBottom: 14 }}>
+                {receiptTx.description} — {fmtDt(receiptTx.createdAt)}
+              </div>
+              <label style={{ display: 'block', border: `2px dashed ${T.border}`, borderRadius: 10,
+                padding: '14px 20px', cursor: 'pointer', textAlign: 'center',
+                background: T.bg, marginBottom: 16, fontSize: 13, color: T.muted }}>
+                {receiptUploading ? 'Uploading…' : '+ Upload receipt (JPG, PNG, PDF, CSV, XLS — max 10 MB)'}
+                <input type="file" hidden onChange={handleReceiptUpload} disabled={receiptUploading}
+                  accept="image/*,.pdf,.csv,.xls,.xlsx" />
+              </label>
+              {receiptLoad ? (
+                <div style={{ color: T.muted, fontSize: 13 }}>Loading…</div>
+              ) : receiptList.length === 0 ? (
+                <div style={{ color: T.muted, fontSize: 13, fontStyle: 'italic' }}>No attachments yet.</div>
+              ) : (
+                <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
+                  {receiptList.map(att => (
+                    <div key={att.id} style={{ display: 'flex', alignItems: 'center', gap: 10,
+                      padding: '10px 14px', background: T.bg, borderRadius: 10, border: `1px solid ${T.border}` }}>
+                      <span style={{ fontSize: 20 }}>
+                        {att.mimetype === 'application/pdf' ? '📄' : att.mimetype.startsWith('image') ? '🖼️' : '📊'}
+                      </span>
+                      <div style={{ flex: 1, minWidth: 0 }}>
+                        <div style={{ fontSize: 13, fontWeight: 500, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                          {att.filename}
+                        </div>
+                        <div style={{ fontSize: 11, color: T.muted }}>
+                          {(att.size / 1024).toFixed(1)} KB · {fmtDt(att.createdAt)}
+                        </div>
+                      </div>
+                      <a href={`/api/receipts/${receiptTx.id}/${att.id}`}
+                        target="_blank" rel="noreferrer"
+                        style={{ fontSize: 12, color: T.accent, textDecoration: 'none', whiteSpace: 'nowrap' }}>
+                        View
+                      </a>
+                      <button onClick={() => handleReceiptDelete(att.id)}
+                        style={{ background: 'none', border: 'none', cursor: 'pointer', color: T.red, fontSize: 16 }}>
+                        ✕
+                      </button>
+                    </div>
+                  ))}
+                </div>
+              )}
+            </div>
           </div>
         )}
 

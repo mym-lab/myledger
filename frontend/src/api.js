@@ -99,6 +99,21 @@ export const getCashFlowReport = (clientId, from, to) => {
 export const getCashFlowForecast = (clientId, days = 90) =>
   get(`/reports/cashflow-forecast?clientId=${clientId}&days=${days}`, true);
 
+// ── Receipt Attachments ────────────────────────────────────────────────────────
+export const getReceipts   = (txId) => get(`/receipts/${txId}`, true);
+export const deleteReceipt = (txId, attachId) => del(`/receipts/${txId}/${attachId}`, true);
+export async function uploadReceipt(txId, file) {
+  const form = new FormData();
+  form.append('file', file);
+  const res = await fetch(`${BASE}/receipts/${txId}`, {
+    method: 'POST',
+    headers: { Authorization: `Bearer ${getToken()}` },
+    body: form,
+  });
+  if (!res.ok) { const e = await res.json().catch(() => ({})); throw new Error(e.error || 'Upload failed'); }
+  return res.json();
+}
+
 export const getSLSP           = (clientId, year, quarter) =>
   get(`/reports/slsp?clientId=${clientId}&year=${year}&quarter=${quarter}`, true);
 
