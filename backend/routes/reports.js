@@ -543,4 +543,112 @@ router.get('/general-ledger', (req, res, next) => {
   } catch (err) { next(err); }
 });
 
+// ── Income Compare (Multi-Period) ──────────────────────────────────────────────
+// GET /api/reports/income-compare?clientId=&period=YYYY-MM
+// Returns 3-column income statement: current month, previous month, same month last year + variances
+router.get('/income-compare', (req, res, next) => {
+  try {
+    const { clientId } = req.query;
+    let { period } = req.query;
+    if (!clientId) return res.status(400).json({ error: 'clientId required' });
+
+    // Default period = current month
+    if (!period) {
+      const now = new Date();
+      period = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}`;
+    }
+
+    const { client, txns } = getClientAndTx(clientId, req.userId);
+    if (!client) return res.status(404).json({ error: 'Client not found' });
+
+    const [y, m] = period.split('-').map(Number);
+
+    // Build date ranges for the 3 periods
+    function monthRange(year, month) {
+      const pad = n => String(n).padStart(2, '0');
+      const lastDay = new Date(year, month, 0).getDate();
+      return {
+        from: `${year}-${pad(month)}-01`,
+        to:   `${year}-${pad(month)}-${lastDay}`,
+        label: new Date(year, month - 1, 1).toLocaleString('en-PH', { month: 'long', year: 'numeric' }),
+      };
+    }
+
+    const prevMonth = m === 1 ? monthRange(y - 1, 12) : monthRange(y, m - 1);
+    const currMonth = monthRange(y, m);
+    const lastYear  = monthRange(y - 1, m);
+
+    function computePeriod(range) {
+      const filtered = filterByDate(txns, range.from, range.to);
+      const income   = filtered.filter(t => t.type === 'income');
+      const expense  = filtered.filter(t => t.type === 'expense');
+
+      const COGS_CATS = ['Cost of Goods Sold'];
+      const cogsExpense = expense.filter(t =>  COGS_CATS.includes(t.category));
+      const opexExpense = expense.filter(t => !COGS_CATS.includes(t.category));
+
+      const revenue   = round(sum(income,  'amount_net'));
+      const expenses  = round(sum(expense, 'amount_net'));
+      const costOfSales = round(sum(cogsExpense, 'amount_net'));
+      const opex      = round(sum(opexExpense, 'amount_net'));
+      const grossProfit = round(revenue - costOfSales);
+      const profit    = round(revenue - expenses);
+      const outputVAT = round(sum(income,  'amount_vat'));
+      const inputVAT  = round(sum(expense, 'amount_vat'));
+      const txCount   = filtered.length;
+
+      // Expense by category
+      const expenseDetail = {};
+      for (const t of expense) {
+        const cat = t.category || 'Other Expenses';
+        expenseDetail[cat] = round((expenseDetail[cat] || 0) + (t.amount_net || 0));
+      }
+
+      return { revenue, expenses, costOfSales, opex, grossProfit, profit, outputVAT, inputVAT, txCount, expenseDetail };
+    }
+
+    const curr = computePeriod(currMonth);
+    const prev = computePeriod(prevMonth);
+    const ly   = computePeriod(lastYear);
+
+    function variance(curr, prev) {
+      const varPHP = round(curr - prev);
+      const varPct = prev !== 0 ? round((varPHP / Math.abs(prev)) * 100) : null;
+      return { varPHP, varPct };
+    }
+
+    const vsPrev = {
+      revenue:       variance(curr.revenue,    prev.revenue),
+      expenses:      variance(curr.expenses,   prev.expenses),
+      costOfSales:   variance(curr.costOfSales,prev.costOfSales),
+      opex:          variance(curr.opex,       prev.opex),
+      grossProfit:   variance(curr.grossProfit,prev.grossProfit),
+      profit:        variance(curr.profit,     prev.profit),
+      outputVAT:     variance(curr.outputVAT,  prev.outputVAT),
+      inputVAT:      variance(curr.inputVAT,   prev.inputVAT),
+    };
+
+    const vsLY = {
+      revenue:       variance(curr.revenue,    ly.revenue),
+      expenses:      variance(curr.expenses,   ly.expenses),
+      costOfSales:   variance(curr.costOfSales,ly.costOfSales),
+      opex:          variance(curr.opex,       ly.opex),
+      grossProfit:   variance(curr.grossProfit,ly.grossProfit),
+      profit:        variance(curr.profit,     ly.profit),
+      outputVAT:     variance(curr.outputVAT,  ly.outputVAT),
+      inputVAT:      variance(curr.inputVAT,   ly.inputVAT),
+    };
+
+    res.json({
+      period,
+      periods: {
+        current:      { ...currMonth, ...curr },
+        previous:     { ...prevMonth, ...prev },
+        sameLastYear: { ...lastYear,  ...ly   },
+      },
+      variance: { vsPrev, vsLY },
+    });
+  } catch (err) { next(err); }
+});
+
 export default router;

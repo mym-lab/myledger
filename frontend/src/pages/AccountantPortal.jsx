@@ -17,7 +17,8 @@ import {
   getCOA, seedCOA, createAccount, updateAccount, deleteAccount,
   getPeriodLocks, lockPeriod, unlockPeriod,
   getAuditLog,
-  getBirDeadlines, getBirVatBalance,
+  getBirDeadlines, getBirVatBalance, getBirFilingSummary, updateBirFilingStatus, getBirPortfolio,
+  getIncomeCompare,
   getJournalEntries, createJournalEntry, deleteJournalEntry,
   assignEncoder, removeEncoder,
   getAssets, createAsset, deleteAsset, getLapsing,
@@ -1160,7 +1161,7 @@ function computeIncomeTax(transactions, client, year, quarter /* null = annual *
   };
 }
 
-const TABS = ['Dashboard', 'Transactions', 'Invoices', 'Journal Entries', 'Trial Balance', 'Books', 'General Journal', 'General Ledger', 'COA', 'Period Lock', 'Audit Log', 'BIR Returns', 'Payroll', 'Alphalist', 'SLSP', 'Income Statement', 'Balance Sheet', 'Cash Flow', 'Assets', 'Contacts', 'BIR Reminders', 'Business Setup', 'Referral'];
+const TABS = ['Dashboard', 'Transactions', 'Invoices', 'Journal Entries', 'Trial Balance', 'Books', 'General Journal', 'General Ledger', 'COA', 'Period Lock', 'Audit Log', 'BIR Returns', 'Payroll', 'Alphalist', 'SLSP', 'Income Statement', 'Balance Sheet', 'Cash Flow', 'Assets', 'Contacts', 'BIR Reminders', 'Compare', 'Portfolio', 'Business Setup', 'Referral'];
 
 const TAX_TYPES_LIST = [
   { code: '2550M',  label: '2550M — Monthly VAT Return' },
@@ -1703,6 +1704,21 @@ export default function AccountantPortal({ onLogout }) {
   const [narrativeLoad, setNarrativeLoad] = useState(false);
   // Cash position
   const [cashPos,       setCashPos]       = useState(null);
+  // BIR Filing Summary
+  const now0a = new Date();
+  const defaultPeriod = `${now0a.getFullYear()}-${String(now0a.getMonth() + 1).padStart(2, '0')}`;
+  const [birSummaryPeriod,  setBirSummaryPeriod]  = useState(defaultPeriod);
+  const [birSummaryData,    setBirSummaryData]    = useState(null);
+  const [birSummaryLoad,    setBirSummaryLoad]    = useState(false);
+  const [birSummaryMarkingId, setBirSummaryMarkingId] = useState(null); // form being marked
+  // Multi-Period Compare
+  const [comparePeriod, setComparePeriod] = useState(defaultPeriod);
+  const [compareData,   setCompareData]   = useState(null);
+  const [compareLoad,   setCompareLoad]   = useState(false);
+  // Portfolio (all clients)
+  const [portfolioPeriod, setPortfolioPeriod] = useState(defaultPeriod);
+  const [portfolioData,   setPortfolioData]   = useState(null);
+  const [portfolioLoad,   setPortfolioLoad]   = useState(false);
 
   useEffect(() => {
     loadClients();
@@ -1813,7 +1829,14 @@ export default function AccountantPortal({ onLogout }) {
     if (tab === 'Contacts')         loadContacts();
     if (tab === 'SLSP')             loadSLSP();
     if (tab === 'Payroll')          loadEmployees();
+    if (tab === 'BIR Reminders')    { loadBirSummary(); loadBIR(); }
+    if (tab === 'Compare')          loadIncomeCompare();
   }, [active?.id, tab]);
+
+  // Portfolio tab doesn't need an active client — loads on tab switch only
+  useEffect(() => {
+    if (tab === 'Portfolio') loadPortfolio();
+  }, [tab]);
 
   async function loadClients() {
     setCLL(true);
@@ -1891,6 +1914,46 @@ export default function AccountantPortal({ onLogout }) {
       setDL(dl.deadlines || []); setVatBal(vat);
     } catch (e) { console.error(e); }
     finally { setBirLoad(false); }
+  }
+
+  async function loadBirSummary(period) {
+    const p = period || birSummaryPeriod;
+    setBirSummaryLoad(true);
+    try {
+      const data = await getBirFilingSummary(active.id, p);
+      setBirSummaryData(data);
+    } catch (e) { console.error(e); }
+    finally { setBirSummaryLoad(false); }
+  }
+
+  async function markBirFiling(form, period, currentStatus) {
+    const newStatus = currentStatus === 'filed' ? 'pending' : 'filed';
+    setBirSummaryMarkingId(form + period);
+    try {
+      await updateBirFilingStatus(active.id, form, period, newStatus);
+      await loadBirSummary();
+    } catch (e) { console.error(e); }
+    finally { setBirSummaryMarkingId(null); }
+  }
+
+  async function loadIncomeCompare(period) {
+    const p = period || comparePeriod;
+    setCompareLoad(true);
+    try {
+      const data = await getIncomeCompare(active.id, p);
+      setCompareData(data);
+    } catch (e) { console.error(e); }
+    finally { setCompareLoad(false); }
+  }
+
+  async function loadPortfolio(period) {
+    const p = period || portfolioPeriod;
+    setPortfolioLoad(true);
+    try {
+      const data = await getBirPortfolio(p);
+      setPortfolioData(data);
+    } catch (e) { console.error(e); }
+    finally { setPortfolioLoad(false); }
   }
 
   async function loadJournals() {
@@ -5394,61 +5457,377 @@ export default function AccountantPortal({ onLogout }) {
           );
         })()}
 
-        {/* ════════════ BIR REMINDERS ════════════ */}
-        {tab === 'BIR Reminders' && active && (
-          <div>
-            <h2 style={{ margin: '0 0 22px', fontSize: 22, fontWeight: 600 }}>BIR Filing Reminders — {active.tradeName}</h2>
-
-            {birLoad ? <div style={{ color: T.muted }}>Loading…</div>
-            : (active.taxTypes || []).length === 0 ? (
-              <Card style={{ textAlign: 'center', color: T.muted, padding: 32 }}>
-                <div style={{ fontSize: 36, marginBottom: 12 }}>📋</div>
-                No tax types configured for this client. Their business profile needs to be updated with tax obligations.
-              </Card>
-            ) : deadlines.length === 0 ? <div style={{ color: T.muted }}>No upcoming deadlines.</div>
-            : (
-              <div style={{ display: 'flex', flexDirection: 'column', gap: 12, marginBottom: 28 }}>
-                {deadlines.map((d, i) => {
-                  const uc  = d.urgency === 'urgent' ? T.red : d.urgency === 'upcoming' ? T.orange : T.green;
-                  const ubg = d.urgency === 'urgent' ? '#fff5f5' : d.urgency === 'upcoming' ? '#fff8ec' : '#f0fff4';
-                  return (
-                    <div key={i} style={{ background: ubg, borderRadius: T.radius, padding: '16px 20px',
-                      border: `1px solid ${uc}30`, display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-                      <div>
-                        <div style={{ fontWeight: 600, fontSize: 15 }}>{d.form} — {d.name}</div>
-                        <div style={{ color: T.muted, fontSize: 13, marginTop: 3 }}>Due: {d.dueDate}</div>
-                      </div>
-                      <div style={{ textAlign: 'right' }}>
-                        <div style={{ fontWeight: 700, fontSize: 20, color: uc }}>{d.daysUntil}d</div>
-                        <div style={{ fontSize: 11, color: uc, textTransform: 'uppercase', fontWeight: 600 }}>{d.urgency}</div>
-                      </div>
-                    </div>
-                  );
-                })}
-              </div>
-            )}
-
-            {vatBal && (
-              <Card>
-                <SectionHead>Current VAT Balance</SectionHead>
-                <div style={{ display: 'flex', gap: 36, flexWrap: 'wrap' }}>
-                  <div>
-                    <div style={{ fontSize: 12, color: T.muted }}>Input VAT</div>
-                    <div style={{ fontSize: 22, fontWeight: 600, color: T.green }}>{peso(vatBal.inputVAT)}</div>
-                  </div>
-                  <div>
-                    <div style={{ fontSize: 12, color: T.muted }}>Output VAT</div>
-                    <div style={{ fontSize: 22, fontWeight: 600, color: T.orange }}>{peso(vatBal.outputVAT)}</div>
-                  </div>
-                  <div>
-                    <div style={{ fontSize: 12, color: T.muted }}>Net position</div>
-                    <div style={{ fontSize: 20, fontWeight: 600, color: vatBal.netVATPayable >= 0 ? T.red : T.green }}>{vatBal.note}</div>
+        {/* ════════════ BIR REMINDERS (Filing Summary) ════════════ */}
+        {tab === 'BIR Reminders' && active && (() => {
+          const forms = birSummaryData?.forms || [];
+          const readinessColor = { filed: T.green, ready: T.accent, zero: T.muted, missing: T.orange, pending: T.muted };
+          const readinessBg    = { filed: '#f0fff4', ready: T.accentL, zero: '#f5f5f7', missing: '#fff8ec', pending: '#f5f5f7' };
+          const readinessLabel = { filed: '✅ Filed', ready: '🟢 Ready to file', zero: '⚪ Zero due', missing: '⚠️ Missing data', pending: '⏳ Pending' };
+          return (
+            <div>
+              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: 22, flexWrap: 'wrap', gap: 12 }}>
+                <div>
+                  <h2 style={{ margin: 0, fontSize: 22, fontWeight: 600 }}>BIR Filing Summary — {active.tradeName}</h2>
+                  <div style={{ fontSize: 13, color: T.muted, marginTop: 4 }}>
+                    Computed amounts per form · Mark obligations as filed when submitted
                   </div>
                 </div>
-              </Card>
-            )}
-          </div>
-        )}
+                <div style={{ display: 'flex', gap: 10, alignItems: 'center' }}>
+                  <input type="month" value={birSummaryPeriod}
+                    onChange={e => { setBirSummaryPeriod(e.target.value); loadBirSummary(e.target.value); }}
+                    style={{ ...inp, width: 160, padding: '7px 10px' }} />
+                  <Btn size="sm" variant="ghost" onClick={() => loadBirSummary()}>↻ Refresh</Btn>
+                </div>
+              </div>
+
+              {birSummaryLoad ? (
+                <div style={{ color: T.muted, padding: 24 }}>Computing filing summary…</div>
+              ) : (active.taxTypes || []).length === 0 ? (
+                <Card style={{ textAlign: 'center', color: T.muted, padding: 32 }}>
+                  <div style={{ fontSize: 36, marginBottom: 12 }}>📋</div>
+                  No tax obligations configured. Go to Business Setup to add this client's BIR forms.
+                </Card>
+              ) : forms.length === 0 ? (
+                <Card style={{ textAlign: 'center', color: T.muted, padding: 32 }}>
+                  No filings found for this period. Check that the client's tax types are configured.
+                </Card>
+              ) : (
+                <div style={{ display: 'flex', flexDirection: 'column', gap: 12, marginBottom: 28 }}>
+                  {forms.map(f => {
+                    const rl    = f.readiness || 'pending';
+                    const col   = readinessColor[rl] || T.muted;
+                    const bg    = readinessBg[rl]    || '#f5f5f7';
+                    const lbl   = readinessLabel[rl] || '⏳ Pending';
+                    const marking = birSummaryMarkingId === f.form + f.period;
+                    return (
+                      <div key={f.form + f.period} style={{ background: bg, borderRadius: T.radius,
+                        padding: '18px 22px', border: `1px solid ${col}30`,
+                        display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: 12 }}>
+                        {/* Left: form info */}
+                        <div style={{ flex: 1, minWidth: 200 }}>
+                          <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: 4 }}>
+                            <span style={{ fontWeight: 700, fontSize: 16 }}>{f.form}</span>
+                            <span style={{ fontSize: 12, background: `${col}18`, color: col,
+                              borderRadius: 20, padding: '2px 10px', fontWeight: 600, border: `1px solid ${col}30` }}>
+                              {lbl}
+                            </span>
+                            {f.isEstimate && (
+                              <span style={{ fontSize: 11, color: T.orange, background: '#fff8ec',
+                                borderRadius: 20, padding: '2px 8px', border: '1px solid #ff950030' }}>
+                                Estimate
+                              </span>
+                            )}
+                          </div>
+                          <div style={{ fontWeight: 500, fontSize: 14, color: T.text, marginBottom: 3 }}>{f.name}</div>
+                          <div style={{ fontSize: 12, color: T.muted }}>Period: {f.periodLabel}</div>
+                          {f.breakdown && (
+                            <div style={{ fontSize: 12, color: T.muted, marginTop: 2 }}>{f.breakdown}</div>
+                          )}
+                          {f.dueDay && (
+                            <div style={{ fontSize: 11, color: T.muted, marginTop: 4 }}>📅 Due: {f.dueDay}</div>
+                          )}
+                        </div>
+
+                        {/* Right: amount + action */}
+                        <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'flex-end', gap: 8 }}>
+                          <div style={{ textAlign: 'right' }}>
+                            <div style={{ fontSize: 11, color: T.muted, marginBottom: 1 }}>Amount Due</div>
+                            <div style={{ fontSize: 24, fontWeight: 700, color: f.amountDue > 0 ? T.red : T.muted }}>
+                              {peso(f.amountDue)}
+                            </div>
+                          </div>
+                          <button
+                            disabled={marking}
+                            onClick={() => markBirFiling(f.form, f.period, f.status)}
+                            style={{
+                              padding: '6px 14px', borderRadius: 8, border: 'none', fontSize: 12,
+                              fontWeight: 600, cursor: marking ? 'not-allowed' : 'pointer',
+                              background: f.status === 'filed' ? '#f5f5f7' : T.accent,
+                              color: f.status === 'filed' ? T.muted : '#fff',
+                              fontFamily: 'inherit', opacity: marking ? 0.6 : 1,
+                            }}>
+                            {marking ? '…' : f.status === 'filed' ? 'Unmark Filed' : 'Mark as Filed'}
+                          </button>
+                        </div>
+                      </div>
+                    );
+                  })}
+                </div>
+              )}
+
+              {/* VAT Position summary */}
+              {vatBal && (
+                <Card>
+                  <SectionHead>All-Time VAT Balance</SectionHead>
+                  <div style={{ display: 'flex', gap: 36, flexWrap: 'wrap' }}>
+                    <div>
+                      <div style={{ fontSize: 12, color: T.muted }}>Input VAT (asset)</div>
+                      <div style={{ fontSize: 22, fontWeight: 600, color: T.green }}>{peso(vatBal.inputVAT)}</div>
+                    </div>
+                    <div>
+                      <div style={{ fontSize: 12, color: T.muted }}>Output VAT (liability)</div>
+                      <div style={{ fontSize: 22, fontWeight: 600, color: T.orange }}>{peso(vatBal.outputVAT)}</div>
+                    </div>
+                    <div>
+                      <div style={{ fontSize: 12, color: T.muted }}>Net to remit</div>
+                      <div style={{ fontSize: 20, fontWeight: 600, color: vatBal.netVATPayable >= 0 ? T.red : T.green }}>
+                        {vatBal.note}
+                      </div>
+                    </div>
+                  </div>
+                </Card>
+              )}
+            </div>
+          );
+        })()}
+
+        {/* ══════════ COMPARE (Multi-Period Income Statement) ══════════ */}
+        {tab === 'Compare' && active && (() => {
+          const p = compareData?.periods;
+          const v = compareData?.variance;
+          function varCell(varObj) {
+            if (!varObj) return <td style={{ color: T.muted, textAlign: 'right' }}>—</td>;
+            const sign = varObj.varPHP >= 0 ? '+' : '';
+            const pct  = varObj.varPct != null ? ` (${varObj.varPHP >= 0 ? '+' : ''}${varObj.varPct}%)` : '';
+            const col  = varObj.varPHP >= 0 ? T.green : T.red;
+            return (
+              <td style={{ textAlign: 'right', fontSize: 13, color: col, fontWeight: 500 }}>
+                {sign}{peso(varObj.varPHP)}{pct}
+              </td>
+            );
+          }
+          const rows = [
+            { label: 'Net Revenue',        key: 'revenue',     bold: true },
+            { label: 'Cost of Goods Sold', key: 'costOfSales', indent: true },
+            { label: 'Gross Profit',       key: 'grossProfit', bold: true, rule: true },
+            { label: 'Operating Expenses', key: 'opex',        indent: true },
+            { label: 'Net Profit / Loss',  key: 'profit',      bold: true, rule: true },
+            { label: 'Output VAT',         key: 'outputVAT',   muted: true },
+            { label: 'Input VAT',          key: 'inputVAT',    muted: true },
+          ];
+          const cellSt = (val, bold) => ({
+            textAlign: 'right', fontSize: bold ? 15 : 13, fontWeight: bold ? 700 : 400,
+            color: typeof val === 'number' && val < 0 ? T.red : T.text,
+            padding: '7px 12px',
+          });
+          const thSt = { textAlign: 'right', fontSize: 11, fontWeight: 700, color: T.muted,
+            textTransform: 'uppercase', letterSpacing: '0.5px', padding: '8px 12px' };
+          return (
+            <div>
+              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: 22, flexWrap: 'wrap', gap: 12 }}>
+                <div>
+                  <h2 style={{ margin: 0, fontSize: 22, fontWeight: 600 }}>Period Comparison — {active.tradeName}</h2>
+                  <div style={{ fontSize: 13, color: T.muted, marginTop: 4 }}>
+                    3-column income statement: this month, last month, same month last year
+                  </div>
+                </div>
+                <div style={{ display: 'flex', gap: 10, alignItems: 'center' }}>
+                  <input type="month" value={comparePeriod}
+                    onChange={e => { setComparePeriod(e.target.value); loadIncomeCompare(e.target.value); }}
+                    style={{ ...inp, width: 160, padding: '7px 10px' }} />
+                  <Btn size="sm" variant="ghost" onClick={() => loadIncomeCompare()}>↻ Refresh</Btn>
+                </div>
+              </div>
+
+              {compareLoad ? (
+                <div style={{ color: T.muted }}>Loading comparison…</div>
+              ) : !compareData ? (
+                <Card style={{ textAlign: 'center', color: T.muted, padding: 32 }}>
+                  Select a period and click Refresh.
+                </Card>
+              ) : (
+                <Card style={{ overflowX: 'auto' }}>
+                  <table style={{ width: '100%', borderCollapse: 'collapse', minWidth: 680 }}>
+                    <thead>
+                      <tr style={{ borderBottom: `2px solid ${T.border}` }}>
+                        <th style={{ textAlign: 'left', fontSize: 11, fontWeight: 700, color: T.muted,
+                          textTransform: 'uppercase', letterSpacing: '0.5px', padding: '8px 12px', width: '22%' }}>
+                          Line Item
+                        </th>
+                        <th style={thSt}>{p?.current?.label || 'Current'}</th>
+                        <th style={thSt}>{p?.previous?.label || 'Prev Month'}</th>
+                        <th style={{ ...thSt, color: T.orange }}>vs Prev Month</th>
+                        <th style={thSt}>{p?.sameLastYear?.label || 'Same Mth LY'}</th>
+                        <th style={{ ...thSt, color: T.purple }}>vs Last Year</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {rows.map(r => (
+                        <tr key={r.key} style={{
+                          borderBottom: r.rule ? `2px solid ${T.border}` : `1px solid ${T.border}20`,
+                          background: r.bold ? '#f9f9fb' : 'transparent',
+                        }}>
+                          <td style={{ padding: '7px 12px', paddingLeft: r.indent ? 24 : 12,
+                            fontSize: r.bold ? 14 : 13, fontWeight: r.bold ? 600 : 400,
+                            color: r.muted ? T.muted : T.text }}>
+                            {r.label}
+                          </td>
+                          <td style={cellSt(p?.current?.[r.key], r.bold)}>{peso(p?.current?.[r.key] ?? 0)}</td>
+                          <td style={cellSt(p?.previous?.[r.key], false)}>{peso(p?.previous?.[r.key] ?? 0)}</td>
+                          {varCell(v?.vsPrev?.[r.key])}
+                          <td style={cellSt(p?.sameLastYear?.[r.key], false)}>{peso(p?.sameLastYear?.[r.key] ?? 0)}</td>
+                          {varCell(v?.vsLY?.[r.key])}
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                  <div style={{ fontSize: 11.5, color: T.muted, marginTop: 12 }}>
+                    All amounts NET (VAT-exclusive). Positive variance = higher than comparison period.
+                  </div>
+                </Card>
+              )}
+
+              {/* Expense detail breakdown */}
+              {compareData && p?.current?.expenseDetail && Object.keys(p.current.expenseDetail).length > 0 && (
+                <Card style={{ marginTop: 16 }}>
+                  <SectionHead>Current Month Expense Detail</SectionHead>
+                  <table style={{ width: '100%', borderCollapse: 'collapse' }}>
+                    <thead>
+                      <tr style={{ borderBottom: `1px solid ${T.border}` }}>
+                        <th style={{ textAlign: 'left', fontSize: 11, fontWeight: 700, color: T.muted,
+                          padding: '6px 8px', textTransform: 'uppercase' }}>Category</th>
+                        <th style={{ textAlign: 'right', fontSize: 11, fontWeight: 700, color: T.muted,
+                          padding: '6px 8px', textTransform: 'uppercase' }}>Amount (NET)</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {Object.entries(p.current.expenseDetail)
+                        .sort((a, b) => b[1] - a[1])
+                        .map(([cat, amt]) => (
+                          <tr key={cat} style={{ borderBottom: `1px solid ${T.border}20` }}>
+                            <td style={{ padding: '5px 8px', fontSize: 13, color: T.text }}>{cat}</td>
+                            <td style={{ padding: '5px 8px', fontSize: 13, textAlign: 'right', color: T.text }}>{peso(amt)}</td>
+                          </tr>
+                        ))}
+                    </tbody>
+                  </table>
+                </Card>
+              )}
+            </div>
+          );
+        })()}
+
+        {/* ══════════ PORTFOLIO (All Clients) ══════════ */}
+        {tab === 'Portfolio' && (() => {
+          const clients = portfolioData?.clients || [];
+          const periodLabel = portfolioPeriod
+            ? new Date(portfolioPeriod + '-01').toLocaleString('en-PH', { month: 'long', year: 'numeric' })
+            : '';
+          return (
+            <div>
+              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: 22, flexWrap: 'wrap', gap: 12 }}>
+                <div>
+                  <h2 style={{ margin: 0, fontSize: 22, fontWeight: 600 }}>Portfolio Overview</h2>
+                  <div style={{ fontSize: 13, color: T.muted, marginTop: 4 }}>
+                    All {clients.length} client{clients.length !== 1 ? 's' : ''} · {periodLabel}
+                  </div>
+                </div>
+                <div style={{ display: 'flex', gap: 10, alignItems: 'center' }}>
+                  <input type="month" value={portfolioPeriod}
+                    onChange={e => { setPortfolioPeriod(e.target.value); loadPortfolio(e.target.value); }}
+                    style={{ ...inp, width: 160, padding: '7px 10px' }} />
+                  <Btn size="sm" variant="ghost" onClick={() => loadPortfolio()}>↻ Refresh</Btn>
+                </div>
+              </div>
+
+              {portfolioLoad ? (
+                <div style={{ color: T.muted }}>Loading portfolio…</div>
+              ) : clients.length === 0 ? (
+                <Card style={{ textAlign: 'center', color: T.muted, padding: 32 }}>
+                  <div style={{ fontSize: 36, marginBottom: 12 }}>📁</div>
+                  No clients assigned yet. Clients will appear here once assigned to your account.
+                </Card>
+              ) : (
+                <>
+                  {/* Summary metrics */}
+                  <div style={{ display: 'grid', gridTemplateColumns: isMobile ? '1fr' : 'repeat(4, 1fr)', gap: 12, marginBottom: 20 }}>
+                    {[
+                      { label: 'Total Clients',    value: clients.length,                                  fmt: 'count' },
+                      { label: 'Total Revenue',     value: clients.reduce((s, c) => s + (c.metrics?.revenue || 0), 0), fmt: 'peso' },
+                      { label: 'Total Net Profit',  value: clients.reduce((s, c) => s + (c.metrics?.profit  || 0), 0), fmt: 'peso' },
+                      { label: 'VAT to Remit',      value: clients.reduce((s, c) => s + Math.max(0, c.metrics?.vatDue || 0), 0), fmt: 'peso' },
+                    ].map(m => (
+                      <div key={m.label} style={{ background: T.surface, borderRadius: T.radius, padding: '16px 20px',
+                        border: `1px solid ${T.border}`, boxShadow: T.shadow }}>
+                        <div style={{ fontSize: 12, color: T.muted, marginBottom: 4 }}>{m.label}</div>
+                        <div style={{ fontSize: 22, fontWeight: 700, color: T.text }}>
+                          {m.fmt === 'peso' ? peso(m.value) : m.value}
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+
+                  {/* Client table */}
+                  <Card style={{ overflowX: 'auto' }}>
+                    <table style={{ width: '100%', borderCollapse: 'collapse', minWidth: 700 }}>
+                      <thead>
+                        <tr style={{ borderBottom: `2px solid ${T.border}` }}>
+                          {['Client','Type','Revenue','Expenses','Profit','VAT Due','Txns','Deadlines'].map(h => (
+                            <th key={h} style={{ textAlign: h === 'Client' ? 'left' : 'right', padding: '8px 10px',
+                              fontSize: 11, fontWeight: 700, color: T.muted, textTransform: 'uppercase', letterSpacing: '0.4px' }}>
+                              {h}
+                            </th>
+                          ))}
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {clients.map(c => {
+                          const m = c.metrics || {};
+                          const dl = c.deadlines || {};
+                          const urgColor = dl.urgent > 0 ? T.red : dl.upcoming > 0 ? T.orange : T.green;
+                          return (
+                            <tr key={c.id}
+                              onClick={() => { setActive(c); setTab('Dashboard'); }}
+                              style={{ borderBottom: `1px solid ${T.border}30`, cursor: 'pointer' }}
+                              onMouseEnter={e => e.currentTarget.style.background = T.accentL}
+                              onMouseLeave={e => e.currentTarget.style.background = 'transparent'}>
+                              <td style={{ padding: '9px 10px' }}>
+                                <div style={{ fontWeight: 600, fontSize: 13, color: T.text }}>{c.tradeName}</div>
+                                {c.tin && <div style={{ fontSize: 11, color: T.muted }}>TIN: {c.tin}</div>}
+                              </td>
+                              <td style={{ padding: '9px 10px', textAlign: 'right', fontSize: 12, color: T.muted }}>
+                                {c.type || '—'}
+                              </td>
+                              <td style={{ padding: '9px 10px', textAlign: 'right', fontSize: 13, color: T.text }}>
+                                {peso(m.revenue || 0)}
+                              </td>
+                              <td style={{ padding: '9px 10px', textAlign: 'right', fontSize: 13, color: T.text }}>
+                                {peso(m.expenses || 0)}
+                              </td>
+                              <td style={{ padding: '9px 10px', textAlign: 'right', fontSize: 13,
+                                fontWeight: 600, color: (m.profit || 0) >= 0 ? T.accent : T.red }}>
+                                {peso(m.profit || 0)}
+                              </td>
+                              <td style={{ padding: '9px 10px', textAlign: 'right', fontSize: 13,
+                                color: (m.vatDue || 0) > 0 ? T.orange : T.muted }}>
+                                {peso(Math.max(0, m.vatDue || 0))}
+                              </td>
+                              <td style={{ padding: '9px 10px', textAlign: 'right', fontSize: 13, color: T.muted }}>
+                                {m.txCount || 0}
+                              </td>
+                              <td style={{ padding: '9px 10px', textAlign: 'right' }}>
+                                {dl.total === 0 ? (
+                                  <span style={{ fontSize: 12, color: T.muted }}>None</span>
+                                ) : (
+                                  <span style={{ fontSize: 12, fontWeight: 600, color: urgColor }}>
+                                    {dl.urgent > 0 ? `🔴 ${dl.urgent} urgent` : `🟡 ${dl.upcoming} upcoming`}
+                                  </span>
+                                )}
+                              </td>
+                            </tr>
+                          );
+                        })}
+                      </tbody>
+                    </table>
+                    <div style={{ fontSize: 11.5, color: T.muted, marginTop: 12 }}>
+                      Click any row to go to that client's dashboard. Amounts shown in NET (VAT-exclusive) for the selected period.
+                    </div>
+                  </Card>
+                </>
+              )}
+            </div>
+          );
+        })()}
 
         {/* ══════════ INVOICES ══════════ */}
         {tab === 'Invoices' && active && (

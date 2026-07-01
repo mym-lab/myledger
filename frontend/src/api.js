@@ -131,6 +131,25 @@ export const getLapsing   = (id)            => get(`/assets/${id}/lapsing`, true
 // ─── BIR ──────────────────────────────────────────────────────
 export const getBirDeadlines   = (clientId)   => get(`/bir/deadlines?clientId=${clientId}`,   true);
 export const getBirVatBalance  = (clientId)   => get(`/bir/vat-balance?clientId=${clientId}`, true);
+export const getBirFilingSummary = (clientId, period) => {
+  let url = `/bir/filing-summary?clientId=${clientId}`;
+  if (period) url += `&period=${period}`;
+  return get(url, true);
+};
+export const updateBirFilingStatus = (clientId, form, period, status, notes) =>
+  put('/bir/filing-status', { clientId, form, period, status, notes }, true);
+export const getBirPortfolio   = (period) => {
+  let url = '/bir/portfolio';
+  if (period) url += `?period=${period}`;
+  return get(url, true);
+};
+
+// ─── Multi-Period Reports ──────────────────────────────────────
+export const getIncomeCompare = (clientId, period) => {
+  let url = `/reports/income-compare?clientId=${clientId}`;
+  if (period) url += `&period=${period}`;
+  return get(url, true);
+};
 
 // ─── Journal Entries ──────────────────────────────────────────
 export const getJournalEntries  = (clientId)  => get(`/journal-entries?clientId=${clientId}`, true);
