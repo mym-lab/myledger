@@ -29,6 +29,9 @@ import {
   scanReceipt,
   getMyReferrals,
   downloadCSV,
+  downloadBirXml,
+  createPaymongoLink,
+  pollPaymongoStatus,
   createAccountantUpgradeRequest,
   getMyUpgradeRequests,
   getMe,
@@ -1694,6 +1697,14 @@ export default function AccountantPortal({ onLogout }) {
   const [upgradeMsg,     setUpgradeMsg]     = useState('');
   const [myUpgradeReqs,  setMyUpgradeReqs]  = useState([]);
   const [tierUpgradedMsg, setTierUpgradedMsg] = useState(''); // success banner after admin approves tier
+  // PayMongo online payment state (accountant upgrade modal)
+  const [pmLinkId,      setPmLinkId]      = useState(null);
+  const [pmCheckoutUrl, setPmCheckoutUrl] = useState(null);
+  const [pmCreating,    setPmCreating]    = useState(false);
+  const [pmPolling,     setPmPolling]     = useState(false);
+  const [pmPollTimer,   setPmPollTimer]   = useState(null);
+  const [pmError,       setPmError]       = useState('');
+  const [showManual,    setShowManual]    = useState(false);
   // Site settings — EWT rates and other admin-configurable values
   const [siteSettings, setSiteSettings] = useState({});
   // CSV / Balance Sheet import modals
@@ -2959,10 +2970,22 @@ export default function AccountantPortal({ onLogout }) {
 
             return (
               <div>
-                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: 4 }}>
+                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: 4, flexWrap: 'wrap', gap: 8 }}>
                   <h2 style={{ margin: 0, fontSize: 22, fontWeight: 600 }}>
                     BIR Returns — {active.tradeName}
                   </h2>
+                  <div style={{ display: 'flex', gap: 8 }}>
+                    {['2550M','2550Q','2551M','2551Q','1601C','1601EQ'].includes(
+                      effectiveBirType === '1601-EQ' ? '1601EQ' : effectiveBirType
+                    ) && (
+                      <Btn size="sm" variant="neutral" onClick={async () => {
+                        try {
+                          const xmlForm  = effectiveBirType === '1601-EQ' ? '1601EQ' : effectiveBirType;
+                          const xmlMonth = isQuarterly ? qStart : birMonth;
+                          await downloadBirXml(active.id, xmlForm, birYear, xmlMonth);
+                        } catch (e) { alert('XML export failed: ' + e.message); }
+                      }}>Export XML</Btn>
+                    )}
                   <Btn size="sm" variant="neutral" onClick={() => {
                     let r, bodyHtml;
                     if (is1604EQ) {
@@ -6128,78 +6151,143 @@ export default function AccountantPortal({ onLogout }) {
               </div>
             </div>
 
-            {/* Payment instructions */}
-            <div style={{ background: '#f0f8ff', border: `1px solid #0071e330`, borderRadius: 10,
-              padding: '14px 16px', marginBottom: 20, fontSize: 13 }}>
-              <div style={{ fontWeight: 700, marginBottom: 8, color: T.text }}>💳 How to Pay</div>
-              <div style={{ color: T.muted, lineHeight: 1.7 }}>
-                Send your payment to any of the following:<br />
-                <strong style={{ color: T.text }}>GCash / Maya:</strong> 0998-991-9660 (Kaiman & Co.)<br />
-                <strong style={{ color: T.text }}>Bank transfer:</strong> BDO — Kaiman & Co. (ask via email for account details)<br />
-                Then enter your reference number below.
+            {/* Status messages */}
+            {pmError && (
+              <div style={{ marginBottom: 12, padding: '10px 14px', borderRadius: 9, fontSize: 13,
+                background: '#fff5f5', color: '#d32f2f', border: '1px solid #d32f2f30' }}>
+                {pmError}
               </div>
-            </div>
-
-            {/* Payment method */}
-            <div style={{ marginBottom: 14 }}>
-              <label style={{ fontSize: 12, fontWeight: 600, color: T.muted, display: 'block',
-                marginBottom: 6, textTransform: 'uppercase', letterSpacing: '0.5px' }}>Payment Method</label>
-              <div style={{ display: 'flex', gap: 8 }}>
-                {['gcash', 'maya', 'bank'].map(m => (
-                  <button key={m} onClick={() => setUpgradeMethod(m)}
-                    style={{ padding: '7px 16px', borderRadius: 8, border: `1.5px solid ${upgradeMethod === m ? T.accent : T.border}`,
-                      background: upgradeMethod === m ? `${T.accent}10` : T.surface, color: upgradeMethod === m ? T.accent : T.muted,
-                      fontWeight: 600, fontSize: 13, cursor: 'pointer', fontFamily: 'inherit', textTransform: 'uppercase' }}>
-                    {m}
-                  </button>
-                ))}
-              </div>
-            </div>
-
-            {/* Reference number */}
-            <div style={{ marginBottom: 14 }}>
-              <label style={{ fontSize: 12, fontWeight: 600, color: T.muted, display: 'block',
-                marginBottom: 6, textTransform: 'uppercase', letterSpacing: '0.5px' }}>Reference / Confirmation No. *</label>
-              <input value={upgradeRef} onChange={e => setUpgradeRef(e.target.value)}
-                placeholder="e.g. GC2025001234 or transaction ID"
-                style={{ width: '100%', padding: '10px 12px', borderRadius: 9, border: `1px solid ${T.border}`,
-                  fontSize: 14, fontFamily: 'inherit', outline: 'none', boxSizing: 'border-box' }} />
-            </div>
-
-            {/* Amount */}
-            <div style={{ marginBottom: 22 }}>
-              <label style={{ fontSize: 12, fontWeight: 600, color: T.muted, display: 'block',
-                marginBottom: 6, textTransform: 'uppercase', letterSpacing: '0.5px' }}>Amount Paid (₱)</label>
-              <input type="number" value={upgradeAmount} onChange={e => setUpgradeAmount(e.target.value)}
-                placeholder="e.g. 2499"
-                style={{ width: '100%', padding: '10px 12px', borderRadius: 9, border: `1px solid ${T.border}`,
-                  fontSize: 14, fontFamily: 'inherit', outline: 'none', boxSizing: 'border-box' }} />
-            </div>
-
+            )}
             {upgradeMsg && (
-              <div style={{ marginBottom: 16, padding: '10px 14px', borderRadius: 9, fontSize: 13,
+              <div style={{ marginBottom: 12, padding: '10px 14px', borderRadius: 9, fontSize: 13,
                 background: upgradeMsg.startsWith('✓') ? '#f0fff4' : '#fff5f5',
-                color: upgradeMsg.startsWith('✓') ? T.green : T.red,
-                border: `1px solid ${upgradeMsg.startsWith('✓') ? T.green : T.red}30` }}>
+                color: upgradeMsg.startsWith('✓') ? '#15803d' : '#d32f2f',
+                border: `1px solid ${upgradeMsg.startsWith('✓') ? '#15803d' : '#d32f2f'}30` }}>
                 {upgradeMsg}
               </div>
             )}
 
-            <div style={{ display: 'flex', gap: 10 }}>
-              <button onClick={() => setShowUpgrade(false)}
-                style={{ flex: 1, padding: '11px', borderRadius: 10, border: `1px solid ${T.border}`,
-                  background: T.surface, color: T.muted, fontSize: 14, fontWeight: 600,
-                  cursor: 'pointer', fontFamily: 'inherit' }}>
-                Cancel
-              </button>
-              <button onClick={submitUpgrade} disabled={upgradeSubmitting}
-                style={{ flex: 2, padding: '11px', borderRadius: 10, border: 'none',
-                  background: upgradeSubmitting ? T.border : T.accent, color: '#fff',
-                  fontSize: 14, fontWeight: 700, cursor: upgradeSubmitting ? 'not-allowed' : 'pointer',
-                  fontFamily: 'inherit' }}>
-                {upgradeSubmitting ? 'Submitting…' : 'Submit Payment Notification'}
+            {/* PayMongo — primary payment */}
+            {pmPolling ? (
+              <div style={{ textAlign: 'center', padding: '18px 0', marginBottom: 16 }}>
+                <div style={{ fontSize: 14, color: T.muted, marginBottom: 6 }}>
+                  Waiting for payment confirmation...
+                </div>
+                <div style={{ fontSize: 12, color: T.muted, marginBottom: 10 }}>
+                  Complete payment in the tab that opened. This page updates automatically.
+                </div>
+                <button onClick={() => { clearInterval(pmPollTimer); setPmPolling(false); setPmLinkId(null); }}
+                  style={{ fontSize: 12, color: T.muted, background: 'none', border: 'none',
+                    cursor: 'pointer', textDecoration: 'underline' }}>
+                  Cancel / use bank transfer instead
+                </button>
+              </div>
+            ) : !pmLinkId ? (
+              <div style={{ marginBottom: 18 }}>
+                <button disabled={pmCreating}
+                  onClick={async () => {
+                    setPmCreating(true); setPmError('');
+                    try {
+                      const r = await createPaymongoLink(null, upgradeTarget, 'accountant');
+                      setPmLinkId(r.linkId);
+                      window.open(r.checkoutUrl, '_blank', 'noopener');
+                      setPmPolling(true);
+                      const timer = setInterval(async () => {
+                        try {
+                          const s = await pollPaymongoStatus(r.linkId);
+                          if (s.status === 'paid') {
+                            clearInterval(timer); setPmPolling(false);
+                            setUpgradeMsg('✓ Payment confirmed! Your plan has been upgraded.');
+                            setTimeout(() => {
+                              setShowUpgrade(false); setUpgradeMsg('');
+                              getMe().then(u => localStorage.setItem('ml_user', JSON.stringify(u))).catch(() => {});
+                            }, 2500);
+                          }
+                        } catch (_) {}
+                      }, 4000);
+                      setPmPollTimer(timer);
+                    } catch (e) { setPmError('Payment error: ' + e.message); }
+                    finally { setPmCreating(false); }
+                  }}
+                  style={{ width: '100%', padding: '14px', borderRadius: 12, border: 'none',
+                    background: pmCreating ? '#ccc' : '#00a551', color: '#fff',
+                    fontSize: 15, fontWeight: 700,
+                    cursor: pmCreating ? 'not-allowed' : 'pointer', fontFamily: 'inherit' }}>
+                  {pmCreating ? 'Creating link...' : 'Pay Online — GCash / Maya / Card'}
+                </button>
+                <div style={{ marginTop: 6, fontSize: 11, color: T.muted, textAlign: 'center' }}>
+                  Powered by PayMongo · Secure checkout · Plan activates instantly
+                </div>
+              </div>
+            ) : null}
+
+            {/* Manual bank transfer fallback */}
+            <div style={{ textAlign: 'center', marginBottom: 12 }}>
+              <button onClick={() => setShowManual(m => !m)}
+                style={{ fontSize: 12, color: T.muted, background: 'none', border: 'none',
+                  cursor: 'pointer', textDecoration: 'underline' }}>
+                {showManual ? 'Hide manual transfer option' : 'Already paid via GCash / bank transfer?'}
               </button>
             </div>
+            {showManual && (
+              <>
+                <div style={{ background: '#f0f8ff', border: '1px solid #0071e330', borderRadius: 10,
+                  padding: '14px 16px', marginBottom: 14, fontSize: 13 }}>
+                  <div style={{ fontWeight: 700, marginBottom: 6, color: T.text }}>Manual Transfer</div>
+                  <div style={{ color: T.muted, lineHeight: 1.7 }}>
+                    <strong style={{ color: T.text }}>GCash / Maya:</strong> 0998-991-9660 (Kaiman and Co.)<br />
+                    <strong style={{ color: T.text }}>Bank transfer:</strong> BDO — Kaiman and Co. (email for account details)<br />
+                    Enter reference and amount below — we verify and upgrade within 1 business day.
+                  </div>
+                </div>
+                <div style={{ display: 'flex', gap: 8, marginBottom: 12 }}>
+                  {['gcash', 'maya', 'bank'].map(m => (
+                    <button key={m} onClick={() => setUpgradeMethod(m)}
+                      style={{ padding: '7px 14px', borderRadius: 8,
+                        border: `1.5px solid ${upgradeMethod === m ? T.accent : T.border}`,
+                        background: upgradeMethod === m ? `${T.accent}10` : T.surface,
+                        color: upgradeMethod === m ? T.accent : T.muted,
+                        fontWeight: 600, fontSize: 13, cursor: 'pointer',
+                        fontFamily: 'inherit', textTransform: 'uppercase' }}>
+                      {m}
+                    </button>
+                  ))}
+                </div>
+                <div style={{ marginBottom: 12 }}>
+                  <label style={{ fontSize: 12, fontWeight: 600, color: T.muted, display: 'block',
+                    marginBottom: 5, textTransform: 'uppercase', letterSpacing: '0.5px' }}>Reference No. *</label>
+                  <input value={upgradeRef} onChange={e => setUpgradeRef(e.target.value)}
+                    placeholder="e.g. GC2025001234"
+                    style={{ width: '100%', padding: '10px 12px', borderRadius: 9,
+                      border: `1px solid ${T.border}`, fontSize: 14, fontFamily: 'inherit',
+                      outline: 'none', boxSizing: 'border-box' }} />
+                </div>
+                <div style={{ marginBottom: 16 }}>
+                  <label style={{ fontSize: 12, fontWeight: 600, color: T.muted, display: 'block',
+                    marginBottom: 5, textTransform: 'uppercase', letterSpacing: '0.5px' }}>Amount Paid (PHP)</label>
+                  <input type="number" value={upgradeAmount} onChange={e => setUpgradeAmount(e.target.value)}
+                    placeholder="e.g. 599"
+                    style={{ width: '100%', padding: '10px 12px', borderRadius: 9,
+                      border: `1px solid ${T.border}`, fontSize: 14, fontFamily: 'inherit',
+                      outline: 'none', boxSizing: 'border-box' }} />
+                </div>
+                <div style={{ display: 'flex', gap: 10, marginBottom: 4 }}>
+                  <button onClick={() => { setShowUpgrade(false); setShowManual(false); }}
+                    style={{ flex: 1, padding: '11px', borderRadius: 10, border: `1px solid ${T.border}`,
+                      background: T.surface, color: T.muted, fontSize: 14, fontWeight: 600,
+                      cursor: 'pointer', fontFamily: 'inherit' }}>
+                    Cancel
+                  </button>
+                  <button onClick={submitUpgrade} disabled={upgradeSubmitting}
+                    style={{ flex: 2, padding: '11px', borderRadius: 10, border: 'none',
+                      background: upgradeSubmitting ? T.border : T.accent, color: '#fff',
+                      fontSize: 14, fontWeight: 700,
+                      cursor: upgradeSubmitting ? 'not-allowed' : 'pointer', fontFamily: 'inherit' }}>
+                    {upgradeSubmitting ? 'Submitting...' : 'Submit Payment Notification'}
+                  </button>
+                </div>
+              </>
+            )}
 
             <div style={{ marginTop: 14, fontSize: 12, color: T.muted, textAlign: 'center' }}>
               Questions? Email <a href="mailto:mym@kaimanco.com" style={{ color: T.accent }}>mym@kaimanco.com</a>

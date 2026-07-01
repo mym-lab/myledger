@@ -18,6 +18,8 @@ import {
   getPendingInvite, cancelPendingInvite,
   getPublicSettings,
   createUpgradeRequest,
+  createPaymongoLink,
+  pollPaymongoStatus,
   scanReceipt,
   getMyReferrals,
   downloadCSV,
@@ -204,55 +206,49 @@ function UpgradeGate({ tier, required, onUpgrade, children }) {
   );
 }
 
-// ─── PaymentModal (module-level) ──────────────────────────────────────────────
-// Maya / GCash manual-transfer upgrade flow.
+// ─── PaymentModal ─────────────────────────────────────────────────────────────
+// Primary: PayMongo online payment (GCash / Maya / card, instant activation)
+// Fallback: Manual GCash/Maya bank transfer (1–2 hour activation)
 function PaymentModal({ clientId, currentTier, settings, onClose, onUpgradeSuccess }) {
   const isMobile = useMobile();
-  const pricing    = settings?.pricing      || DEFAULT_SETTINGS.pricing;
-  const payAccts   = settings?.payment      || DEFAULT_SETTINGS.payment;
+  const pricing      = settings?.pricing      || DEFAULT_SETTINGS.pricing;
+  const payAccts     = settings?.payment      || DEFAULT_SETTINGS.payment;
   const contactEmail = settings?.contactEmail || DEFAULT_SETTINGS.contactEmail;
 
-  // Build tiers with live prices
   const tiersWithPrice = SUBSCRIPTION_TIERS.map(t => ({
     ...t,
     price: t.value === 'free' ? 0 : (pricing[t.value] ?? 0),
   }));
-
   const upgradeable = tiersWithPrice.filter(t => t.value !== 'free' &&
     (TIER_RANK[t.value] ?? 0) > (TIER_RANK[currentTier] ?? 0));
+
   const [selTier,    setSelTier]    = useState(upgradeable[0]?.value || 'starter');
-  const [method,     setMethod]     = useState(null);   // 'maya' | 'gcash'
-  const [step,       setStep]       = useState(1);      // 1=pick tier, 1.5=method, 2=pay, 3=confirm
+  const [step,       setStep]       = useState(1);       // 1=pick, 2=pay, 3=done
+  const [method,     setMethod]     = useState(null);    // 'maya' | 'gcash' (manual fallback)
   const [refNo,      setRefNo]      = useState('');
   const [submitting, setSubmitting] = useState(false);
+  const [showManual, setShowManual] = useState(false);
 
-  const tierObj  = tiersWithPrice.find(t => t.value === selTier);
-  const acct     = method ? { ...payAccts[method], type: method === 'maya' ? 'Maya' : 'GCash' } : null;
-  // Generate a reference number on entering step 2
-  function goToPay(m) {
+  // PayMongo
+  const [pmCreating, setPmCreating] = useState(false);
+  const [pmError,    setPmError]    = useState('');
+  const [pmPolling,  setPmPolling]  = useState(false);
+  const [pmTimer,    setPmTimer]    = useState(null);
+
+  const tierObj = tiersWithPrice.find(t => t.value === selTier);
+  const acct    = method ? { ...payAccts[method], type: method === 'maya' ? 'Maya' : 'GCash' } : null;
+
+  function goManual(m) {
     setMethod(m);
-    const rand = Math.floor(100000 + Math.random() * 900000);
-    setRefNo(`ML-${rand}`);
-    setStep(2);
+    setRefNo(`ML-${Math.floor(100000 + Math.random() * 900000)}`);
+    setStep('manual');
   }
 
+  // Cleanup polling timer on unmount
+  // (useEffect isn't available at module-level; use a cleanup pattern inside step rendering)
+
   return (
-    <ModalShell title="Upgrade Your Plan" onClose={onClose} wide>
-      {/* Step indicators */}
-      <div style={{ display: 'flex', gap: 8, marginBottom: 24 }}>
-        {['Select Plan','Pay','Confirm'].map((s, i) => (
-          <div key={s} style={{ display: 'flex', alignItems: 'center', gap: 6, fontSize: 13 }}>
-            <div style={{ width: 22, height: 22, borderRadius: '50%', display: 'flex',
-              alignItems: 'center', justifyContent: 'center', fontSize: 12, fontWeight: 700,
-              background: step > i + 1 ? T.green : step === i + 1 ? T.accent : T.border,
-              color: step >= i + 1 ? '#fff' : T.muted }}>
-              {step > i + 1 ? '✓' : i + 1}
-            </div>
-            <span style={{ color: step === i + 1 ? T.text : T.muted }}>{s}</span>
-            {i < 2 && <span style={{ color: T.border }}>›</span>}
-          </div>
-        ))}
-      </div>
+    <ModalShell title="Upgrade Your Plan" onClose={() => { if (pmTimer) clearInterval(pmTimer); onClose(); }} wide>
 
       {/* ── Step 1: Pick tier ── */}
       {step === 1 && (
@@ -260,10 +256,9 @@ function PaymentModal({ clientId, currentTier, settings, onClose, onUpgradeSucce
           <p style={{ fontSize: 14, color: T.muted, marginBottom: 18 }}>
             Choose the plan that fits your business. Billed monthly.
           </p>
-          <div style={{ display: 'flex', flexDirection: 'column', gap: 12, marginBottom: 24 }}>
+          <div style={{ display: 'flex', flexDirection: 'column', gap: 12, marginBottom: 20 }}>
             {upgradeable.map(t => (
               <div key={t.value} onClick={() => setSelTier(t.value)}
-
                 style={{ borderRadius: 12, padding: '14px 18px', cursor: 'pointer', transition: 'all .15s',
                   border: selTier === t.value ? `2px solid ${t.color}` : `1.5px solid ${T.border}`,
                   background: selTier === t.value ? `${t.color}08` : T.surface,
@@ -271,11 +266,6 @@ function PaymentModal({ clientId, currentTier, settings, onClose, onUpgradeSucce
                 <div>
                   <div style={{ fontWeight: 700, fontSize: 15, color: t.color }}>{t.label}</div>
                   <div style={{ fontSize: 13, color: T.muted, marginTop: 3 }}>{t.desc}</div>
-                  <div style={{ fontSize: 12, color: T.muted, marginTop: 4 }}>
-                    {t.value === 'starter' && '≤ 300 transactions/month'}
-                    {t.value === 'professional' && '≤ 500 transactions/month'}
-                    {t.value === 'enterprise' && 'Unlimited transactions'}
-                  </div>
                 </div>
                 <div style={{ textAlign: 'right', minWidth: 90 }}>
                   <div style={{ fontSize: 22, fontWeight: 700, color: t.color }}>₱{t.price}</div>
@@ -284,52 +274,96 @@ function PaymentModal({ clientId, currentTier, settings, onClose, onUpgradeSucce
               </div>
             ))}
           </div>
-          <div style={{ fontSize: 13, color: T.muted, marginBottom: 20, lineHeight: 1.6,
-            background: '#f0f7ff', borderRadius: 10, padding: '10px 14px' }}>
-            💡 Payment is via <strong>Maya</strong> or <strong>GCash</strong> manual transfer.
-            Your plan activates within <strong>1–2 hours</strong> after we confirm receipt.
+
+          {/* PayMongo CTA */}
+          {pmError && (
+            <div style={{ marginBottom: 12, padding: '10px 14px', borderRadius: 9, fontSize: 13,
+              background: '#fff5f5', color: '#d32f2f', border: '1px solid #d32f2f30' }}>
+              {pmError}
+            </div>
+          )}
+
+          {pmPolling ? (
+            <div style={{ textAlign: 'center', padding: '18px 0', marginBottom: 12 }}>
+              <div style={{ fontSize: 14, color: T.muted, marginBottom: 6 }}>⏳ Waiting for payment confirmation…</div>
+              <div style={{ fontSize: 12, color: T.muted }}>Complete payment in the tab that opened. This page updates automatically.</div>
+              <button onClick={() => { clearInterval(pmTimer); setPmPolling(false); setPmTimer(null); }}
+                style={{ marginTop: 10, fontSize: 12, color: T.muted, background: 'none', border: 'none',
+                  cursor: 'pointer', textDecoration: 'underline' }}>
+                Cancel and use manual transfer instead
+              </button>
+            </div>
+          ) : (
+            <button disabled={pmCreating}
+              onClick={async () => {
+                setPmCreating(true); setPmError('');
+                try {
+                  const r = await createPaymongoLink(clientId, selTier, 'client');
+                  window.open(r.checkoutUrl, '_blank', 'noopener');
+                  setPmPolling(true);
+                  const t = setInterval(async () => {
+                    try {
+                      const s = await pollPaymongoStatus(r.linkId);
+                      if (s.status === 'paid') {
+                        clearInterval(t); setPmPolling(false); setPmTimer(null);
+                        setStep('paid');
+                        if (onUpgradeSuccess) onUpgradeSuccess(selTier);
+                      }
+                    } catch { /* keep polling */ }
+                  }, 4000);
+                  setPmTimer(t);
+                } catch (e) { setPmError('Payment link error: ' + e.message); }
+                finally { setPmCreating(false); }
+              }}
+              style={{ width: '100%', padding: '14px', borderRadius: 12, border: 'none',
+                background: pmCreating ? T.border : '#00a551', color: '#fff', fontSize: 15,
+                fontWeight: 700, cursor: pmCreating ? 'not-allowed' : 'pointer', fontFamily: 'inherit',
+                marginBottom: 8 }}>
+              {pmCreating ? '⏳ Creating payment link…' : '💳 Pay Online — GCash / Maya / Card'}
+            </button>
+          )}
+          <div style={{ fontSize: 11, color: T.muted, textAlign: 'center', marginBottom: 16 }}>
+            Powered by PayMongo · Secure · Instant activation
           </div>
-          <div style={{ display: 'flex', gap: 10, justifyContent: 'flex-end' }}>
+
+          {/* Manual fallback toggle */}
+          <div style={{ textAlign: 'center', marginBottom: 12 }}>
+            <button onClick={() => setShowManual(m => !m)}
+              style={{ fontSize: 12, color: T.muted, background: 'none', border: 'none',
+                cursor: 'pointer', textDecoration: 'underline' }}>
+              {showManual ? '▲ Hide' : '▼ Already paid via bank transfer? Click here'}
+            </button>
+          </div>
+          {showManual && (
+            <div>
+              <p style={{ fontSize: 13, color: T.muted, marginBottom: 12 }}>
+                Choose your manual payment method:
+              </p>
+              <div style={{ display: 'grid', gridTemplateColumns: isMobile ? '1fr' : '1fr 1fr', gap: 12, marginBottom: 16 }}>
+                <div onClick={() => goManual('maya')}
+                  style={{ borderRadius: 12, padding: '18px 16px', cursor: 'pointer',
+                    border: `1.5px solid #00a8e0`, background: '#f0fbff', textAlign: 'center' }}>
+                  <div style={{ fontWeight: 700, fontSize: 20, color: '#00a8e0', marginBottom: 4 }}>Maya</div>
+                  <div style={{ fontSize: 12, color: T.muted }}>PayMaya / Maya Wallet</div>
+                </div>
+                <div onClick={() => goManual('gcash')}
+                  style={{ borderRadius: 12, padding: '18px 16px', cursor: 'pointer',
+                    border: `1.5px solid #007dff`, background: '#f0f5ff', textAlign: 'center' }}>
+                  <div style={{ fontWeight: 700, fontSize: 20, color: '#007dff', marginBottom: 4 }}>GCash</div>
+                  <div style={{ fontSize: 12, color: T.muted }}>Globe GCash</div>
+                </div>
+              </div>
+            </div>
+          )}
+
+          <div style={{ display: 'flex', justifyContent: 'flex-end' }}>
             <Btn variant="ghost" onClick={onClose}>Cancel</Btn>
-            <Btn onClick={() => setStep(1.5)}
-              style={{ background: tierObj?.color }}>
-              Pay ₱{tierObj?.price}/month →
-            </Btn>
           </div>
         </div>
       )}
 
-      {/* ── Step 1.5: Choose payment method ── */}
-      {step === 1.5 && (
-        <div>
-          <p style={{ fontSize: 14, color: T.muted, marginBottom: 20 }}>
-            Upgrading to <strong style={{ color: tierObj?.color }}>{tierObj?.label}</strong> — ₱{tierObj?.price}/month.
-            Choose your payment method:
-          </p>
-          <div style={{ display: 'grid', gridTemplateColumns: isMobile ? '1fr' : '1fr 1fr', gap: 16, marginBottom: 24 }}>
-            {/* Maya */}
-            <div onClick={() => goToPay('maya')}
-              style={{ borderRadius: 14, padding: '24px 20px', cursor: 'pointer',
-                border: `1.5px solid #00a8e0`, background: '#f0fbff',
-                textAlign: 'center', transition: 'all .15s' }}>
-              <div style={{ fontWeight: 700, fontSize: 22, color: '#00a8e0', marginBottom: 6 }}>Maya</div>
-              <div style={{ fontSize: 12, color: T.muted }}>PayMaya / Maya Wallet</div>
-            </div>
-            {/* GCash */}
-            <div onClick={() => goToPay('gcash')}
-              style={{ borderRadius: 14, padding: '24px 20px', cursor: 'pointer',
-                border: `1.5px solid #007dff`, background: '#f0f5ff',
-                textAlign: 'center', transition: 'all .15s' }}>
-              <div style={{ fontWeight: 700, fontSize: 22, color: '#007dff', marginBottom: 6 }}>GCash</div>
-              <div style={{ fontSize: 12, color: T.muted }}>Globe GCash</div>
-            </div>
-          </div>
-          <Btn variant="ghost" onClick={() => setStep(1)}>← Back</Btn>
-        </div>
-      )}
-
-      {/* ── Step 2: Payment instructions ── */}
-      {step === 2 && acct && (
+      {/* ── Manual transfer step ── */}
+      {step === 'manual' && acct && (
         <div>
           <div style={{ background: `${method === 'maya' ? '#00a8e0' : '#007dff'}10`,
             border: `1.5px solid ${method === 'maya' ? '#00a8e0' : '#007dff'}30`,
@@ -356,33 +390,18 @@ function PaymentModal({ clientId, currentTier, settings, onClose, onUpgradeSucce
           </div>
           <div style={{ background: '#fffbe6', borderRadius: 10, padding: '10px 14px',
             fontSize: 13, color: '#856404', marginBottom: 20, lineHeight: 1.6 }}>
-            ⚠️ <strong>Important:</strong> Include the reference number <strong>{refNo}</strong> in your
-            payment notes/description so we can match your payment automatically.
-          </div>
-          <div style={{ fontSize: 13, color: T.muted, marginBottom: 20 }}>
-            After sending, tap the button below to notify us. Your plan will be activated within 1–2 hours on business days.
+            ⚠️ Include reference <strong>{refNo}</strong> in payment notes so we can match it. Plan activates within 1–2 hours.
           </div>
           <div style={{ display: 'flex', gap: 10, justifyContent: 'flex-end' }}>
-            <Btn variant="ghost" onClick={() => setStep(1.5)}>← Back</Btn>
+            <Btn variant="ghost" onClick={() => { setStep(1); setShowManual(true); }}>← Back</Btn>
             <Btn disabled={submitting}
               onClick={async () => {
                 setSubmitting(true);
                 try {
-                  if (clientId) {
-                    await createUpgradeRequest({
-                      clientId,
-                      targetTier: selTier,
-                      method,
-                      refNo,
-                      amount: tierObj?.price || 0,
-                    });
-                  }
+                  if (clientId) await createUpgradeRequest({ clientId, targetTier: selTier, method, refNo, amount: tierObj?.price || 0 });
                   setStep(3);
-                } catch (err) {
-                  // Still move to confirmation even if logging fails
-                  console.error('Upgrade request error:', err);
-                  setStep(3);
-                } finally { setSubmitting(false); }
+                } catch (err) { setStep(3); }
+                finally { setSubmitting(false); }
               }}
               style={{ background: method === 'maya' ? '#00a8e0' : '#007dff' }}>
               {submitting ? 'Sending…' : "I've sent the payment ✓"}
@@ -391,10 +410,23 @@ function PaymentModal({ clientId, currentTier, settings, onClose, onUpgradeSucce
         </div>
       )}
 
-      {/* ── Step 3: Confirmation ── */}
-      {step === 3 && (
+      {/* ── Paid (PayMongo confirmed) ── */}
+      {step === 'paid' && (
         <div style={{ textAlign: 'center', padding: '16px 0 8px' }}>
           <div style={{ fontSize: 56, marginBottom: 16 }}>🎉</div>
+          <h3 style={{ fontSize: 20, fontWeight: 700, marginBottom: 8 }}>Payment Confirmed!</h3>
+          <p style={{ fontSize: 14, color: T.muted, lineHeight: 1.7, marginBottom: 20 }}>
+            Your <strong style={{ color: tierObj?.color }}>{tierObj?.label} Plan</strong> is now active.<br />
+            A receipt has been sent to your email.
+          </p>
+          <Btn onClick={onClose} size="lg">Continue →</Btn>
+        </div>
+      )}
+
+      {/* ── Manual confirmation ── */}
+      {step === 3 && (
+        <div style={{ textAlign: 'center', padding: '16px 0 8px' }}>
+          <div style={{ fontSize: 56, marginBottom: 16 }}>✅</div>
           <h3 style={{ fontSize: 20, fontWeight: 700, marginBottom: 8 }}>Payment Notified!</h3>
           <p style={{ fontSize: 14, color: T.muted, lineHeight: 1.7, marginBottom: 6 }}>
             We've received your upgrade request for<br />
@@ -406,7 +438,7 @@ function PaymentModal({ clientId, currentTier, settings, onClose, onUpgradeSucce
           </div>
           <p style={{ fontSize: 13, color: T.muted, marginBottom: 24 }}>
             Your plan will be activated within <strong>1–2 hours</strong> on business days.<br />
-            Questions? Message us at <strong>{contactEmail}</strong>
+            Questions? Contact us at <strong>{contactEmail}</strong>
           </p>
           <Btn onClick={onClose} size="lg">Done</Btn>
         </div>

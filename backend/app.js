@@ -16,6 +16,7 @@ import clientRoutes          from './routes/clients.js';
 import transactionRoutes     from './routes/transactions.js';
 import reportRoutes          from './routes/reports.js';
 import birRoutes             from './routes/bir.js';
+import birExportRoutes       from './routes/bir-export.js';
 import adminRoutes           from './routes/admin.js';
 import journalEntriesRoutes  from './routes/journal-entries.js';
 import upgradeRequestsRoutes from './routes/upgrade-requests.js';
@@ -62,6 +63,7 @@ app.use('/api/clients',          clientRoutes);
 app.use('/api/transactions',     transactionRoutes);
 app.use('/api/reports',          reportRoutes);
 app.use('/api/bir',              birRoutes);
+app.use('/api/bir',              birExportRoutes);
 app.use('/api/admin',            adminRoutes);
 app.use('/api/journal-entries',  journalEntriesRoutes);
 app.use('/api/upgrade-requests', upgradeRequestsRoutes);
@@ -135,12 +137,4 @@ function checkExpiredSubscriptions() {
 checkExpiredSubscriptions();
 setInterval(checkExpiredSubscriptions, 24 * 60 * 60 * 1000);
 
-app.listen(PORT, () => {
-  console.log(`\n✅  MyLedger ${isProd ? 'PRODUCTION' : 'dev'} server → http://localhost:${PORT}`);
-  if (!isProd) {
-    console.log(`    Frontend dev server  → http://localhost:3000`);
-  } else {
-    console.log(`    Serving frontend from ${frontendDist}`);
-  }
-  console.log(`    Health : GET /api/health\n`);
-});
+app.listen(PORT, () => 

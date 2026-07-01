@@ -356,12 +356,4 @@ router.put('/:id/void', (req, res, next) => {
 
     logAudit({
       clientId: tx.clientId, userId: req.userId,
-      action: 'VOID_TRANSACTION', entity: 'transaction', entityId: tx.id,
-      detail: voidReason,
-    });
-
-    res.json({ message: 'Transaction voided', id: tx.id, voidedAt });
-  } catch (err) { next(err); }
-});
-
-export default router;
+      action: 'VOID_TRANSACTION', entity: 'transa

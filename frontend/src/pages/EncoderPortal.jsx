@@ -514,31 +514,4 @@ export default function EncoderPortal({ onLogout }) {
                           </td>
                         </tr>
                       ))}
-                    </tbody>
-                  </table>
-                </div>
-              </div>
-            )}
-          </div>
-        )}
-      </div>
-
-      {showTx && (
-        <TxModal
-          key={active?.id}
-          clientId={active?.id}
-          onSaved={() => loadTxns()}
-          onClose={() => setShowTx(false)}
-        />
-      )}
-
-      {showCSVImport && active && (
-        <CSVImportModal
-          clientId={active.id}
-          onClose={() => setShowCSVImport(false)}
-          onImported={() => loadTxns()}
-        />
-      )}
-    </div>
-  );
-}
+                    </t

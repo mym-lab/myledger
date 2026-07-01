@@ -289,6 +289,40 @@ export const getNarrative = (clientId, from, to, force = false) => {
   return get(url, true);
 };
 
+// ─── eBIR XML Export ──────────────────────────────────────────
+export async function downloadBirXml(clientId, form, year, month) {
+  const qs  = `clientId=${clientId}&form=${form}&year=${year}&month=${month}`;
+  const res = await fetch(`${BASE}/bir/export-xml?${qs}`, {
+    headers: { 'Authorization': `Bearer ${getToken()}` },
+  });
+  if (res.status === 401 || res.status === 403) {
+    localStorage.removeItem('ml_token');
+    localStorage.removeItem('ml_user');
+    throw new Error('Session expired. Please log in again.');
+  }
+  if (!res.ok) {
+    const d = await res.json().catch(() => ({}));
+    throw new Error(d.error || 'Export failed');
+  }
+  const blob = await res.blob();
+  const url  = URL.createObjectURL(blob);
+  const a    = document.createElement('a');
+  const cd   = res.headers.get('content-disposition') || '';
+  const fn   = cd.match(/filename="([^"]+)"/)?.[1]
+             || `${form}_${year}${String(month).padStart(2, '0')}.xml`;
+  a.href = url; a.download = fn;
+  document.body.appendChild(a); a.click();
+  document.body.removeChild(a);
+  URL.revokeObjectURL(url);
+}
+
+// ─── PayMongo Payments ────────────────────────────────────────
+export const createPaymongoLink = (clientId, targetTier, requestType = 'client') =>
+  post('/payments/paymongo/create-link', { clientId, targetTier, requestType }, true);
+
+export const pollPaymongoStatus = (linkId) =>
+  get(`/payments/paymongo/status/${linkId}`, true);
+
 // ─── CSV Downloads ────────────────────────────────────────────
 export async function downloadCSV(path, filename) {
   const sep = path.includes('?') ? '&' : '?';
