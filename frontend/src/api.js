@@ -237,6 +237,38 @@ export const computePayroll    = (clientId, year, month) => get(`/payroll/comput
 // ─── Health ───────────────────────────────────────────────────
 export const healthCheck       = ()           => get('/health');
 
+// ─── Import ────────────────────────────────────────────────────
+// Step 1: preview CSV (returns headers + sample rows)
+export const previewCSV = async (clientId, file) => {
+  const form = new FormData();
+  form.append('clientId', clientId);
+  form.append('preview', 'true');
+  form.append('file', file);
+  const res = await fetch('/api/import/csv', {
+    method: 'POST',
+    headers: { 'Authorization': `Bearer ${getToken()}` },
+    body: form,
+  });
+  const data = await res.json();
+  if (!res.ok) throw new Error(data.error || 'Preview failed');
+  return data;
+};
+// Step 2: import confirmed rows
+export const importCSV = (clientId, mapping, rows, opts = {}) =>
+  post('/import/csv', { clientId, mapping, rows, ...opts }, true);
+
+// Balance sheet opening balances
+export const importBalanceSheet = (clientId, openingDate, entries) =>
+  post('/import/balance-sheet', { clientId, openingDate, entries }, true);
+
+// ─── AI Narrative ─────────────────────────────────────────────
+export const getNarrative = (clientId, from, to) => {
+  let url = `/reports/narrative?clientId=${clientId}`;
+  if (from) url += `&from=${from}`;
+  if (to)   url += `&to=${to}`;
+  return get(url, true);
+};
+
 // ─── CSV Downloads ────────────────────────────────────────────
 export async function downloadCSV(path, filename) {
   const sep = path.includes('?') ? '&' : '?';

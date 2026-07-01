@@ -6,9 +6,11 @@
 
 import { useState, useEffect, useRef } from 'react';
 import { useMobile } from '../hooks/useMobile.js';
-import { InvoicesTab } from '../components/InvoiceModal.jsx';
+import { InvoicesTab }       from '../components/InvoiceModal.jsx';
+import CSVImportModal        from '../components/CSVImportModal.jsx';
+import BalanceSheetImport    from '../components/BalanceSheetImport.jsx';
 import {
-  getClients, updateClient,
+  getClients, updateClient, getNarrative,
   getTransactions, createTransaction, updateTransaction, voidTransaction,
   getIncomeReport, getBalanceReport, getCashFlowReport,
   getBooksReport, getGeneralJournal, getGeneralLedger,
@@ -1664,6 +1666,14 @@ export default function AccountantPortal({ onLogout }) {
   const [tierUpgradedMsg, setTierUpgradedMsg] = useState(''); // success banner after admin approves tier
   // Site settings — EWT rates and other admin-configurable values
   const [siteSettings, setSiteSettings] = useState({});
+  // CSV / Balance Sheet import modals
+  const [showCSVImport,  setShowCSVImport]  = useState(false);
+  const [showBSImport,   setShowBSImport]   = useState(false);
+  // AI Narrative
+  const [narrative,     setNarrative]     = useState(null);
+  const [narrativeLoad, setNarrativeLoad] = useState(false);
+  // Cash position
+  const [cashPos,       setCashPos]       = useState(null);
 
   useEffect(() => {
     loadClients();
@@ -1752,7 +1762,7 @@ export default function AccountantPortal({ onLogout }) {
 
   useEffect(() => {
     if (!active) return;
-    if (tab === 'Dashboard')        loadDashboard();
+    if (tab === 'Dashboard')        { loadDashboard(); loadNarrative(); }
     if (tab === 'Transactions')     loadTxns();
     if (tab === 'BIR Reminders')    loadBIR();
     // Pro-only tabs
@@ -1807,7 +1817,25 @@ export default function AccountantPortal({ onLogout }) {
         const dlr = await getBirDeadlines(active.id);
         setDL(dlr.deadlines || []);
       }
+      // Cash position derived from income report
+      if (inc) {
+        setCashPos({
+          cash:       (inc.grossRevenue || inc.revenue * 1.12 || 0) - (inc.grossExpenses || inc.expenses * 1.12 || 0),
+          netProfit:  inc.profit || 0,
+          vatPayable: Math.max(0, (vat?.outputVAT || 0) - (vat?.inputVAT || 0)),
+        });
+      }
     } catch (e) { console.error(e); }
+  }
+
+  async function loadNarrative() {
+    if (!active) return;
+    setNarrativeLoad(true);
+    try {
+      const data = await getNarrative(active.id);
+      setNarrative(data);
+    } catch (e) { console.error('Narrative load failed', e); }
+    finally { setNarrativeLoad(false); }
   }
 
   async function loadTxns() {
@@ -2379,6 +2407,68 @@ export default function AccountantPortal({ onLogout }) {
               </Card>
             )}
 
+            {/* ── Cash Position Widget ── */}
+            {cashPos && (
+              <Card style={{ marginBottom: 20 }}>
+                <SectionHead>💵 Cash Position</SectionHead>
+                <div style={{ display: 'flex', gap: 24, flexWrap: 'wrap' }}>
+                  {[
+                    { label: 'Estimated Cash (this period)', value: cashPos.cash,       color: cashPos.cash >= 0 ? T.green : T.red },
+                    { label: 'Net Profit / Loss',            value: cashPos.netProfit,  color: cashPos.netProfit >= 0 ? T.accent : T.red },
+                    { label: 'VAT to Remit to BIR',         value: cashPos.vatPayable, color: cashPos.vatPayable > 0 ? T.orange : T.green },
+                  ].map(m => (
+                    <div key={m.label} style={{ flex: 1, minWidth: 160, padding: '12px 16px',
+                      background: T.bg, borderRadius: 10, border: `1px solid ${T.border}` }}>
+                      <div style={{ fontSize: 11, color: T.muted, marginBottom: 5 }}>{m.label}</div>
+                      <div style={{ fontSize: 20, fontWeight: 700, color: m.color }}>{peso(m.value)}</div>
+                    </div>
+                  ))}
+                </div>
+                <div style={{ fontSize: 11.5, color: T.muted, marginTop: 10 }}>
+                  Cash estimate = gross income received − gross expenses paid this period.
+                  Set aside the VAT amount before the 20th for BIR remittance.
+                </div>
+              </Card>
+            )}
+
+            {/* ── AI Narrative ── */}
+            <Card style={{ marginBottom: 20 }}>
+              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 10 }}>
+                <SectionHead style={{ margin: 0 }}>✨ AI Summary</SectionHead>
+                <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
+                  {narrative?.cachedAt && (
+                    <span style={{ fontSize: 11, color: T.muted }}>
+                      {narrative.fromCache ? 'Cached · ' : 'Fresh · '}
+                      {new Date(narrative.cachedAt).toLocaleTimeString('en-PH', { hour: '2-digit', minute: '2-digit' })}
+                    </span>
+                  )}
+                  <Btn size="sm" variant="ghost" onClick={loadNarrative} disabled={narrativeLoad}>
+                    {narrativeLoad ? '…' : '↻ Refresh'}
+                  </Btn>
+                </div>
+              </div>
+              {narrativeLoad && (
+                <div style={{ fontSize: 13, color: T.muted, fontStyle: 'italic' }}>
+                  Generating summary…
+                </div>
+              )}
+              {!narrativeLoad && narrative?.narrative && (
+                <div style={{ fontSize: 14, color: T.text, lineHeight: 1.7,
+                  padding: '12px 16px', background: `${T.accent}08`,
+                  borderRadius: 10, border: `1px solid ${T.accent}20` }}>
+                  {narrative.narrative}
+                </div>
+              )}
+              {!narrativeLoad && !narrative && (
+                <div style={{ fontSize: 13, color: T.muted, fontStyle: 'italic' }}>
+                  Click Refresh to generate today's summary.
+                </div>
+              )}
+              <div style={{ fontSize: 11, color: T.muted, marginTop: 8 }}>
+                Generated once per day by AI · Resets at midnight Philippine time
+              </div>
+            </Card>
+
             {/* Client profile */}
             <Card style={{ marginBottom: 20 }}>
               <SectionHead>Client Profile</SectionHead>
@@ -2456,13 +2546,15 @@ export default function AccountantPortal({ onLogout }) {
           <div>
             <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 20 }}>
               <h2 style={{ margin: 0, fontSize: 22, fontWeight: 600 }}>Transactions — {active.tradeName}</h2>
-              <div style={{ display: 'flex', gap: 10, alignItems: 'center' }}>
+              <div style={{ display: 'flex', gap: 8, alignItems: 'center', flexWrap: 'wrap' }}>
                 {txns.length > 0 && (
                   <Btn size="sm" variant="neutral" onClick={() => {
                     const date = new Date().toISOString().substring(0, 10);
                     downloadCSV(`/transactions?clientId=${active.id}`, `transactions_${active.tradeName}_${date}.csv`);
-                  }}>⬇ CSV</Btn>
+                  }}>⬇ Export CSV</Btn>
                 )}
+                <Btn size="sm" variant="neutral" onClick={() => setShowCSVImport(true)}>📥 Import Bank CSV</Btn>
+                <Btn size="sm" variant="neutral" onClick={() => setShowBSImport(true)}>📊 Import Opening Balances</Btn>
                 <Btn onClick={() => setShowTx(true)}>+ Add Transaction</Btn>
               </div>
             </div>
@@ -5468,6 +5560,24 @@ export default function AccountantPortal({ onLogout }) {
         )}
 
       </div>
+
+      {/* CSV Import Modal */}
+      {showCSVImport && active && (
+        <CSVImportModal
+          clientId={active.id}
+          onClose={() => setShowCSVImport(false)}
+          onImported={() => { loadTxns(); if (tab === 'Dashboard') loadDashboard(); }}
+        />
+      )}
+
+      {/* Balance Sheet Opening Balances Import */}
+      {showBSImport && active && (
+        <BalanceSheetImport
+          clientId={active.id}
+          onClose={() => setShowBSImport(false)}
+          onImported={() => { loadJournals(); if (tab === 'Dashboard') loadDashboard(); }}
+        />
+      )}
 
       {/* TxModal — module-level, no focus loss on typing */}
       {showTx && (

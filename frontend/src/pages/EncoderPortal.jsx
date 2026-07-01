@@ -11,6 +11,7 @@ import {
   getTransactions, createTransaction, voidTransaction,
 } from '../api.js';
 import { useMobile } from '../hooks/useMobile.js';
+import CSVImportModal from '../components/CSVImportModal.jsx';
 
 // ─── Design tokens ────────────────────────────────────────────────────────────
 const T = {
@@ -287,7 +288,8 @@ export default function EncoderPortal({ onLogout }) {
   const [clLoading, setCLL]     = useState(true);
   const [txns,      setTxns]    = useState([]);
   const [txLoad,    setTxLoad]  = useState(false);
-  const [showTx,    setShowTx]  = useState(false);
+  const [showTx,       setShowTx]       = useState(false);
+  const [showCSVImport,setShowCSVImport] = useState(false);
 
   const user = (() => {
     try { return JSON.parse(localStorage.getItem('ml_user') || 'null'); } catch { return null; }
@@ -429,9 +431,12 @@ export default function EncoderPortal({ onLogout }) {
                 </h2>
                 <div style={{ fontSize: 13, color: T.muted }}>{txns.length} records</div>
               </div>
-              <Btn onClick={() => setShowTx(true)} style={isMobile ? { width: '100%', justifyContent: 'center' } : {}}>
-                + Add Transaction
-              </Btn>
+              <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
+                <Btn variant="neutral" size="sm" onClick={() => setShowCSVImport(true)}>📥 Import Bank CSV</Btn>
+                <Btn onClick={() => setShowTx(true)} style={isMobile ? { width: '100%', justifyContent: 'center' } : {}}>
+                  + Add Transaction
+                </Btn>
+              </div>
             </div>
             <div style={{ fontSize: 12, color: T.muted, marginBottom: 12, padding: '6px 10px',
               background: T.accentL, borderRadius: 6, border: `1px solid ${T.accent}20` }}>
@@ -524,6 +529,14 @@ export default function EncoderPortal({ onLogout }) {
           clientId={active?.id}
           onSaved={() => loadTxns()}
           onClose={() => setShowTx(false)}
+        />
+      )}
+
+      {showCSVImport && active && (
+        <CSVImportModal
+          clientId={active.id}
+          onClose={() => setShowCSVImport(false)}
+          onImported={() => loadTxns()}
         />
       )}
     </div>

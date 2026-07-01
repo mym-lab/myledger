@@ -32,6 +32,8 @@ import invoiceRoutes         from './routes/invoices.js';
 import payrollRoutes         from './routes/payroll.js';
 import paymentRoutes         from './routes/payments.js';
 import monitoringRoutes, { trackActivity } from './routes/monitoring.js';
+import importRoutes         from './routes/import.js';
+import narrativeRoutes      from './routes/narrative.js';
 
 
 
@@ -76,6 +78,8 @@ app.use('/api/invoices',         invoiceRoutes);
 app.use('/api/payroll',          payrollRoutes);
 app.use('/api/payments',         paymentRoutes);
 app.use('/api/monitoring',       monitoringRoutes);
+app.use('/api/import',          importRoutes);
+app.use('/api/reports/narrative', narrativeRoutes);
 
 
 
