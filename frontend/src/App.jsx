@@ -16,7 +16,6 @@ import CommandCenter     from './pages/CommandCenter.jsx';
 import AuthScreen        from './pages/AuthScreen.jsx';
 import OnboardingWizard  from './pages/OnboardingWizard.jsx';
 import InvoicePage       from './pages/InvoicePage.jsx';
-import SubscriptionStatus from './SubscriptionStatus';
 
 
 // Returns true if this user has already completed onboarding
@@ -137,10 +136,5 @@ export default function App() {
   }
 
   // ── Default: client self-service ──
-  return (
-    <>
-      <ClientInterface onLogout={handleLogout} />
-      <SubscriptionStatus />
-    </>
-  );
+  return <ClientInterface onLogout={handleLogout} />;
 }

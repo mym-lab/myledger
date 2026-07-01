@@ -262,10 +262,11 @@ export const importBalanceSheet = (clientId, openingDate, entries) =>
   post('/import/balance-sheet', { clientId, openingDate, entries }, true);
 
 // ─── AI Narrative ─────────────────────────────────────────────
-export const getNarrative = (clientId, from, to) => {
+export const getNarrative = (clientId, from, to, force = false) => {
   let url = `/reports/narrative?clientId=${clientId}`;
-  if (from) url += `&from=${from}`;
-  if (to)   url += `&to=${to}`;
+  if (from)  url += `&from=${from}`;
+  if (to)    url += `&to=${to}`;
+  if (force) url += `&force=true`;
   return get(url, true);
 };
 

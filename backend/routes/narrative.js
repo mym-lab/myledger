@@ -127,7 +127,7 @@ Write exactly 3 short sentences in plain English for the business owner. Cover:
 2. The VAT obligation or any amount to set aside for BIR
 3. One practical action to improve cash or collections
 
-Rules: No accounting jargon. Friendly, direct tone. Write in Filipino-English style. No bullet points, just 3 sentences in a paragraph. Keep it under 80 words.`;
+Rules: No accounting jargon. Friendly, direct tone. Plain English only — no Tagalog or Filipino words. No bullet points, just 3 sentences in a paragraph. Keep it under 80 words.`;
 }
 
 // ═══════════════════════════════════════════════════════════════════════════════
@@ -135,7 +135,7 @@ Rules: No accounting jargon. Friendly, direct tone. Write in Filipino-English st
 // ═══════════════════════════════════════════════════════════════════════════════
 router.get('/', async (req, res, next) => {
   try {
-    const { clientId, from, to } = req.query;
+    const { clientId, from, to, force } = req.query;
     if (!clientId) return res.status(400).json({ error: 'clientId is required' });
 
     const clientRow = stmtClientById.get(clientId);
@@ -145,9 +145,9 @@ router.get('/', async (req, res, next) => {
 
     const today = phDate();
 
-    // ── Serve cache if still valid (same PH calendar day) ──────────────────────
+    // ── Serve cache if still valid (same PH calendar day) — unless force=true ──
     const cachedDate = clientRow.narrative_cached_at?.substring(0, 10);
-    if (cachedDate === today && clientRow.narrative_cache) {
+    if (cachedDate === today && clientRow.narrative_cache && force !== 'true') {
       return res.json({
         narrative:  clientRow.narrative_cache,
         cachedAt:   clientRow.narrative_cached_at,

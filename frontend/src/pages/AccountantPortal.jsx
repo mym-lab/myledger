@@ -1204,6 +1204,7 @@ function EditTxModal({ tx, lockedPeriods = [], onSave, onClose }) {
 
   const [form, setForm] = useState({
     date:               origDate,
+    type:               tx.type                || 'expense',
     description:        tx.description         || '',
     category:           tx.category            || '',
     referenceNo:        tx.referenceNo         || '',
@@ -1214,8 +1215,16 @@ function EditTxModal({ tx, lockedPeriods = [], onSave, onClose }) {
     settlement:         tx.settlement          || 'cash',
   });
   const [saving, setSaving] = useState(false);
-  const cats = tx.type === 'income' ? EDIT_INCOME_CATS : EDIT_EXPENSE_CATS;
+  const typeChanged = form.type !== tx.type;
+  // Use form.type (not tx.type) so the category list updates immediately when type is switched
+  const cats = form.type === 'income' ? EDIT_INCOME_CATS : EDIT_EXPENSE_CATS;
   const set  = key => e => setForm(f => ({ ...f, [key]: e.target.value }));
+
+  function handleTypeChange(e) {
+    const newType = e.target.value;
+    // Clear category when type changes to avoid mismatched category/type
+    setForm(f => ({ ...f, type: newType, category: '' }));
+  }
 
   const inp = {
     width: '100%', padding: '9px 12px', borderRadius: 8, border: `1px solid ${T.border}`,
@@ -1235,7 +1244,7 @@ function EditTxModal({ tx, lockedPeriods = [], onSave, onClose }) {
   const newPeriodLocked = newPeriod !== origPeriod && lockedPeriods.some(p => p.period === newPeriod);
 
   return (
-    <ModalShell title={`✎ Edit Transaction — ${tx.type === 'income' ? '🟢 Income' : '🔴 Expense'}`} onClose={onClose}>
+    <ModalShell title={`✎ Edit Transaction — ${form.type === 'income' ? '🟢 Income' : '🔴 Expense'}`} onClose={onClose}>
       {isLocked && (
         <div style={{ background: '#fff3cd', border: '1px solid #ffc107', borderRadius: 8,
           padding: '10px 14px', marginBottom: 16, fontSize: 13, color: '#856404' }}>
@@ -1246,8 +1255,19 @@ function EditTxModal({ tx, lockedPeriods = [], onSave, onClose }) {
         <strong>Note:</strong> Amount and VAT cannot be changed here. To correct the amount, void this transaction and add a new one.
         <div style={{ marginTop: 4 }}>Original: {origDate} · {tx.type} · NET {tx.net != null ? `₱${tx.net.toLocaleString('en-PH', { minimumFractionDigits: 2 })}` : '—'}</div>
       </div>
+
+      {/* Type reclassification warning */}
+      {typeChanged && (
+        <div style={{ background: '#fff8e6', border: '1px solid #f59e0b', borderRadius: 8,
+          padding: '10px 14px', marginBottom: 16, fontSize: 13, color: '#92400e' }}>
+          ⚠️ <strong>Reclassifying:</strong> This will change the transaction from <strong>{tx.type}</strong> to <strong>{form.type}</strong>.
+          VAT amounts stay the same — only the accounting treatment changes (revenue ↔ expense, output ↔ input VAT).
+          The category has been cleared — please re-select the correct one below.
+        </div>
+      )}
+
       <form onSubmit={handleSubmit}>
-        <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '0 16px' }}>
+        <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr', gap: '0 16px' }}>
           <Fld label="Transaction Date *">
             <input style={inp} type="date" required value={form.date}
               onChange={set('date')} max={today} />
@@ -1256,6 +1276,14 @@ function EditTxModal({ tx, lockedPeriods = [], onSave, onClose }) {
                 ⚠️ Target period {newPeriod} is also locked.
               </div>
             )}
+          </Fld>
+          <Fld label="Transaction Type">
+            <select style={{ ...inp, borderColor: typeChanged ? '#f59e0b' : T.border,
+              fontWeight: typeChanged ? 700 : 400 }}
+              value={form.type} onChange={handleTypeChange}>
+              <option value="income">🟢 Income</option>
+              <option value="expense">🔴 Expense</option>
+            </select>
           </Fld>
           <Fld label="Settlement">
             <select style={inp} value={form.settlement} onChange={set('settlement')}>
@@ -1269,8 +1297,9 @@ function EditTxModal({ tx, lockedPeriods = [], onSave, onClose }) {
         </Fld>
 
         <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '0 16px' }}>
-          <Fld label="Category">
-            <select style={inp} value={form.category} onChange={set('category')}>
+          <Fld label={`Category ${typeChanged ? '(re-select for new type)' : ''}`}>
+            <select style={{ ...inp, borderColor: typeChanged && !form.category ? T.red : T.border }}
+              value={form.category} onChange={set('category')}>
               <option value="">— Select —</option>
               {cats.map(c => <option key={c}>{c}</option>)}
             </select>
@@ -1283,7 +1312,7 @@ function EditTxModal({ tx, lockedPeriods = [], onSave, onClose }) {
         <div style={{ paddingTop: 10, borderTop: `1px solid ${T.border}`, marginTop: 4, marginBottom: 4 }}>
           <div style={{ fontSize: 11, fontWeight: 700, color: T.muted, marginBottom: 8,
             textTransform: 'uppercase', letterSpacing: '0.5px' }}>
-            {tx.type === 'income' ? 'Customer Details' : 'Vendor Details'}
+            {form.type === 'income' ? 'Customer Details' : 'Vendor Details'}
           </div>
           <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr', gap: '0 12px' }}>
             <Fld label={tx.type === 'income' ? 'Customer Name' : 'Vendor Name'}>
@@ -2442,7 +2471,14 @@ export default function AccountantPortal({ onLogout }) {
                       {new Date(narrative.cachedAt).toLocaleTimeString('en-PH', { hour: '2-digit', minute: '2-digit' })}
                     </span>
                   )}
-                  <Btn size="sm" variant="ghost" onClick={loadNarrative} disabled={narrativeLoad}>
+                  <Btn size="sm" variant="ghost"
+                    onClick={async () => {
+                      setNarrativeLoad(true);
+                      try { setNarrative(await getNarrative(active.id, undefined, undefined, true)); }
+                      catch (e) { console.error(e); }
+                      finally { setNarrativeLoad(false); }
+                    }}
+                    disabled={narrativeLoad}>
                     {narrativeLoad ? '…' : '↻ Refresh'}
                   </Btn>
                 </div>

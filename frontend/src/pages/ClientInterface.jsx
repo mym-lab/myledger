@@ -5,6 +5,8 @@
 import { useState, useEffect, useRef } from 'react';
 import { useMobile } from '../hooks/useMobile.js';
 import { InvoicesTab } from '../components/InvoiceModal.jsx';
+import CSVImportModal    from '../components/CSVImportModal.jsx';
+import BalanceSheetImport from '../components/BalanceSheetImport.jsx';
 import { printReport, build2307Html } from '../utils/printReport.js';
 import {
   getClients, createClient, updateClient, deleteClient, backupClient,
@@ -19,6 +21,7 @@ import {
   scanReceipt,
   getMyReferrals,
   downloadCSV,
+  getNarrative,
 } from '../api.js';
 
 // ─── Design tokens ───────────────────────────────────────────────────────────
@@ -1306,6 +1309,10 @@ export default function ClientInterface({ onLogout }) {
   const [showAssign,    setShowAssign]    = useState(false);
   const [pendingInvite, setPendingInvite] = useState(null);  // { email, expires_at } or null
   const [showPayment,   setShowPayment]   = useState(false);
+  const [showCSVImport, setShowCSVImport] = useState(false);
+  const [showBSImport,  setShowBSImport]  = useState(false);
+  const [narrative,     setNarrative]     = useState(null);
+  const [narrativeLoad, setNarrativeLoad] = useState(false);
 
   useEffect(() => {
     loadClients();
@@ -1314,7 +1321,7 @@ export default function ClientInterface({ onLogout }) {
 
   useEffect(() => {
     if (!active) return;
-    if (tab === 'Overview')      loadOverview();
+    if (tab === 'Overview')      { loadOverview(); loadNarrative(); }
     if (tab === 'Transactions')  loadTxns();
     if (tab === 'BIR Reminders') loadBIR();
     if (tab === 'Assets')        loadAssets();
@@ -1344,6 +1351,16 @@ export default function ClientInterface({ onLogout }) {
     } catch (e) {
       setPendingInvite(null);
     }
+  }
+
+  async function loadNarrative() {
+    if (!active) return;
+    setNarrativeLoad(true);
+    try {
+      const data = await getNarrative(active.id);
+      setNarrative(data);
+    } catch (e) { console.error('Narrative load failed', e); }
+    finally { setNarrativeLoad(false); }
   }
 
   async function loadOverview() {
@@ -1762,21 +1779,70 @@ export default function ClientInterface({ onLogout }) {
                 </div>
               </Card>
             </UpgradeGate>
+
+            {/* ── AI Narrative — Starter+ ── */}
+            <UpgradeGate tier={tier} required="starter" onUpgrade={openUpgrade}>
+              <Card style={{ marginTop: 20 }}>
+                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 10 }}>
+                  <SectionHead style={{ margin: 0 }}>✨ AI Summary</SectionHead>
+                  <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
+                    {narrative?.cachedAt && (
+                      <span style={{ fontSize: 11, color: T.muted }}>
+                        {narrative.fromCache ? 'Cached · ' : 'Fresh · '}
+                        {new Date(narrative.cachedAt).toLocaleTimeString('en-PH', { hour: '2-digit', minute: '2-digit' })}
+                      </span>
+                    )}
+                    <Btn size="sm" variant="ghost"
+                      onClick={async () => {
+                        setNarrativeLoad(true);
+                        try { setNarrative(await getNarrative(active.id, undefined, undefined, true)); }
+                        catch (e) { console.error(e); }
+                        finally { setNarrativeLoad(false); }
+                      }}
+                      disabled={narrativeLoad}>
+                      {narrativeLoad ? '…' : '↻ Refresh'}
+                    </Btn>
+                  </div>
+                </div>
+                {narrativeLoad && (
+                  <div style={{ fontSize: 13, color: T.muted, fontStyle: 'italic' }}>
+                    Generating summary…
+                  </div>
+                )}
+                {!narrativeLoad && narrative?.narrative && (
+                  <div style={{ fontSize: 14, color: T.text, lineHeight: 1.7,
+                    padding: '12px 16px', background: `${T.accent}08`,
+                    borderRadius: 10, border: `1px solid ${T.accent}20` }}>
+                    {narrative.narrative}
+                  </div>
+                )}
+                {!narrativeLoad && !narrative?.narrative && (
+                  <div style={{ fontSize: 13, color: T.muted, fontStyle: 'italic' }}>
+                    Click Refresh to generate today's summary.
+                  </div>
+                )}
+                <div style={{ fontSize: 11, color: T.muted, marginTop: 8 }}>
+                  Generated once per day by AI · Resets at midnight Philippine time
+                </div>
+              </Card>
+            </UpgradeGate>
           </div>
         )}
 
         {/* ══════════ TRANSACTIONS ══════════ */}
         {tab === 'Transactions' && active && (
           <div>
-            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: txLimit ? 14 : 20 }}>
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: txLimit ? 14 : 20, flexWrap: 'wrap', gap: 10 }}>
               <h2 style={{ margin: 0, fontSize: 22, fontWeight: 600 }}>Transactions</h2>
-              <div style={{ display: 'flex', gap: 10, alignItems: 'center' }}>
+              <div style={{ display: 'flex', gap: 8, alignItems: 'center', flexWrap: 'wrap' }}>
                 {txns.length > 0 && (
                   <Btn size="sm" variant="neutral" onClick={() => {
                     const date = new Date().toISOString().substring(0, 10);
                     downloadCSV(`/transactions?clientId=${active.id}`, `transactions_${date}.csv`);
                   }}>⬇ CSV</Btn>
                 )}
+                <Btn size="sm" variant="ghost" onClick={() => setShowCSVImport(true)}>📥 Import Bank CSV</Btn>
+                <Btn size="sm" variant="ghost" onClick={() => setShowBSImport(true)}>📊 Opening Balances</Btn>
                 {txAtLimit
                   ? <Btn variant="danger" onClick={() => setShowPayment(true)}>Limit reached — Upgrade ↑</Btn>
                   : <Btn onClick={() => setShowTx(true)}>+ Add Transaction</Btn>
@@ -2782,6 +2848,20 @@ export default function ClientInterface({ onLogout }) {
       )}
       {showLapsing && lapsingData && (
         <LapsingModal data={lapsingData} onClose={() => { setShowLapsing(false); setLapsingData(null); }} />
+      )}
+      {showCSVImport && active && (
+        <CSVImportModal
+          clientId={active.id}
+          onClose={() => setShowCSVImport(false)}
+          onImported={() => { loadTxns(); loadOverview(); }}
+        />
+      )}
+      {showBSImport && active && (
+        <BalanceSheetImport
+          clientId={active.id}
+          onClose={() => setShowBSImport(false)}
+          onImported={() => { loadTxns(); loadOverview(); }}
+        />
       )}
     </div>
   );

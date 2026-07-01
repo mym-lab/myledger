@@ -50,7 +50,7 @@ const stmtVoidTx  = db.prepare(
 );
 const stmtEditTx  = db.prepare(`
   UPDATE transactions
-  SET description=@description, category=@category,
+  SET description=@description, category=@category, type=@type,
       reference_no=@reference_no, notes=@notes,
       counterparty_name=@counterparty_name, counterparty_tin=@counterparty_tin,
       counterparty_address=@counterparty_address, settlement=@settlement,
@@ -281,7 +281,11 @@ router.put('/:id', noEncoder, (req, res, next) => {
       counterpartyTin,
       counterpartyAddress,
       settlement,
+      type,
     } = req.body;
+
+    // Validate type if provided
+    const newType = (type === 'income' || type === 'expense') ? type : tx.type;
 
     // Determine new date (fall back to existing)
     const today    = new Date().toISOString().substring(0, 10);
@@ -307,6 +311,7 @@ router.put('/:id', noEncoder, (req, res, next) => {
     stmtEditTx.run({
       id:                  tx.id,
       created_at:          fullDate,
+      type:                newType,
       description:         description          ?? tx.description,
       category:            category             ?? tx.category,
       reference_no:        referenceNo          ?? tx.referenceNo,
@@ -321,7 +326,7 @@ router.put('/:id', noEncoder, (req, res, next) => {
     logAudit({
       clientId: tx.clientId, userId: req.userId,
       action: 'EDIT_TRANSACTION', entity: 'transaction', entityId: tx.id,
-      detail: `Edited: ${JSON.stringify({ date: newDate, description, category, referenceNo, settlement }).replace(/"/g, '')}`,
+      detail: `Edited: ${JSON.stringify({ date: newDate, type: newType, description, category, referenceNo, settlement }).replace(/"/g, '')}`,
     });
 
     res.json({ message: 'Transaction updated', transaction: rowToTx(stmtTxById.get(tx.id)) });
