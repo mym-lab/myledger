@@ -11,7 +11,7 @@ import { printReport, build2307Html } from '../utils/printReport.js';
 import {
   getClients, createClient, updateClient, deleteClient, backupClient,
   getTransactions, createTransaction, voidTransaction,
-  getIncomeReport, getBalanceReport, getCashFlowReport, getBooksReport,
+  getIncomeReport, getBalanceReport, getCashFlowReport, getBooksReport, getCashFlowForecast,
   getAssets, createAsset, deleteAsset, getLapsing,
   getBirDeadlines, getBirVatBalance,
   assignAccountant,
@@ -517,6 +517,114 @@ function MonthlyBarChart({ transactions }) {
     </div>
   );
 }
+// ─── Cash Flow Forecast Chart ──────────────────────────────────────────────────
+function CashFlowForecastChart({ forecast, days, onDaysChange }) {
+  if (!forecast) return <div style={{ color: T.muted, fontSize: 13, padding: '16px 0' }}>No forecast data yet.</div>;
+
+  const weeks = forecast.weeks || [];
+  const W = 640; const H = 210;
+  const PAD = { top: 18, right: 16, bottom: 38, left: 66 };
+  const cW = W - PAD.left - PAD.right;
+  const cH = H - PAD.top  - PAD.bottom;
+
+  if (!weeks.length) return <div style={{ color: T.muted, fontSize: 13 }}>No weekly data.</div>;
+
+  const balances = weeks.map(w => w.runningBalance);
+  const minBal = Math.min(0, ...balances);
+  const maxBal = Math.max(0, ...balances);
+  const range  = maxBal - minBal || 1;
+
+  const sx = (i) => PAD.left + (i / (weeks.length - 1 || 1)) * cW;
+  const sy = (v) => PAD.top + cH - ((v - minBal) / range) * cH;
+
+  const pts   = weeks.map((w, i) => `${sx(i)},${sy(w.runningBalance)}`).join(' ');
+  const zeroY = sy(0);
+
+  const ticks = [0, 0.25, 0.5, 0.75, 1].map(f => ({
+    value: minBal + f * range,
+    y: PAD.top + cH * (1 - f),
+  }));
+
+  const fmt = (n) => {
+    const abs = Math.abs(n || 0); const sign = (n || 0) < 0 ? '-' : '';
+    if (abs >= 1000000) return sign + '₱' + (abs / 1000000).toFixed(1) + 'M';
+    if (abs >= 1000)    return sign + '₱' + (abs / 1000).toFixed(0) + 'k';
+    return sign + '₱' + abs.toFixed(0);
+  };
+
+  const s = forecast.summary?.[String(days)] || {};
+
+  return (
+    <div>
+      <div style={{ display: 'flex', gap: 8, marginBottom: 12 }}>
+        {[30, 60, 90].map(d => (
+          <button key={d} onClick={() => onDaysChange(d)} style={{
+            padding: '4px 14px', borderRadius: 20, border: 'none', cursor: 'pointer',
+            fontWeight: d === days ? 700 : 400, fontSize: 13,
+            background: d === days ? T.accent : T.bg,
+            color:      d === days ? '#fff'   : T.muted,
+          }}>{d}d</button>
+        ))}
+      </div>
+      <svg viewBox={`0 0 ${W} ${H}`} style={{ width: '100%', height: 'auto', overflow: 'visible' }}>
+        {ticks.map((tick, i) => (
+          <g key={i}>
+            <line x1={PAD.left} y1={tick.y} x2={W - PAD.right} y2={tick.y}
+              stroke={T.border} strokeWidth="1" strokeDasharray={tick.value === 0 ? 'none' : '3 3'} />
+            <text x={PAD.left - 5} y={tick.y + 4} textAnchor="end" fontSize="10" fill={T.muted}>
+              {fmt(tick.value)}
+            </text>
+          </g>
+        ))}
+        {minBal < 0 && maxBal > 0 && (
+          <line x1={PAD.left} y1={zeroY} x2={W - PAD.right} y2={zeroY} stroke={T.muted} strokeWidth="1.5" />
+        )}
+        <polygon
+          points={weeks.map((w, i) => `${sx(i)},${sy(Math.max(0, w.runningBalance))}`).join(' ')
+            + ` ${sx(weeks.length - 1)},${zeroY} ${PAD.left},${zeroY}`}
+          fill={T.green} opacity="0.12" />
+        {minBal < 0 && (
+          <polygon
+            points={`${PAD.left},${zeroY} `
+              + weeks.map((w, i) => `${sx(i)},${sy(Math.min(0, w.runningBalance))}`).join(' ')
+              + ` ${sx(weeks.length - 1)},${zeroY}`}
+            fill={T.red} opacity="0.15" />
+        )}
+        <polyline points={pts} fill="none" stroke={T.accent} strokeWidth="2.5" strokeLinejoin="round" />
+        {weeks.map((w, i) => (
+          <g key={i}>
+            <title>{`Wk ${w.week} (${w.weekStart})\nBal: ${fmt(w.runningBalance)}\nAR: ${fmt(w.inflows)}\nExp: ${fmt(w.outflows)}\nTax: ${fmt(w.taxObligations)}`}</title>
+            <circle cx={sx(i)} cy={sy(w.runningBalance)} r="3.5"
+              fill={w.runningBalance >= 0 ? T.green : T.red} stroke="#fff" strokeWidth="1.5" />
+          </g>
+        ))}
+        {weeks.map((w, i) => (i % 2 === 0 || i === weeks.length - 1) && (
+          <text key={i} x={sx(i)} y={H - 4} textAnchor="middle" fontSize="9.5" fill={T.muted}>
+            {w.weekStart.slice(5)}
+          </text>
+        ))}
+      </svg>
+      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(4, 1fr)', gap: 8, marginTop: 12 }}>
+        {[
+          { label: 'Opening',      value: fmt(forecast.openingBalance || 0), color: T.text   },
+          { label: `${days}d In`,  value: fmt(s.inflows  || 0),             color: T.green  },
+          { label: `${days}d Out`, value: fmt(s.outflows || 0),             color: T.red    },
+          { label: `${days}d End`, value: fmt(s.endBalance ?? 0),
+            color: (s.endBalance ?? 0) >= 0 ? T.green : T.red },
+        ].map(c => (
+          <div key={c.label} style={{ background: T.bg, borderRadius: 10, padding: '8px 10px', border: `1px solid ${T.border}` }}>
+            <div style={{ fontSize: 10, color: T.muted, marginBottom: 3 }}>{c.label}</div>
+            <div style={{ fontSize: 14, fontWeight: 700, color: c.color }}>{c.value}</div>
+          </div>
+        ))}
+      </div>
+      <div style={{ fontSize: 11, color: T.muted, marginTop: 8, lineHeight: 1.5 }}>
+        Based on last 90 days of expenses \xb7 AR from pending invoices \xb7 Estimated BIR tax obligations
+      </div>
+    </div>
+  );
+}
+
 
 // ─── VAT Calc Preview ─────────────────────────────────────────────────────────
 function VatCalc({ type, amount, vatType = 'vatable', supplierVatType = 'vat', isOPT = false, optRate = 0.03 }) {
@@ -1345,6 +1453,9 @@ export default function ClientInterface({ onLogout }) {
   const [showBSImport,  setShowBSImport]  = useState(false);
   const [narrative,     setNarrative]     = useState(null);
   const [narrativeLoad, setNarrativeLoad] = useState(false);
+  const [forecast,      setForecast]      = useState(null);
+  const [forecastDays,  setForecastDays]  = useState(90);
+  const [forecastLoad,  setForecastLoad]  = useState(false);
 
   useEffect(() => {
     loadClients();
@@ -1406,6 +1517,7 @@ export default function ClientInterface({ onLogout }) {
       setIncome(inc); setVatBal(vat);
       setOverTxns(txRes.transactions || []);
       setDL(dl.deadlines || []);
+      try { const fc = await getCashFlowForecast(active.id, 90); setForecast(fc); } catch (e) { /* optional */ }
     } catch (e) { console.error(e); }
   }
 
@@ -1811,6 +1923,25 @@ export default function ClientInterface({ onLogout }) {
                 </div>
               </Card>
             </UpgradeGate>
+
+            {/* ── Cash Flow Forecast ── */}
+            <Card style={{ marginTop: 20 }}>
+              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 10 }}>
+                <SectionHead style={{ margin: 0 }}>📈 Cash Flow Forecast</SectionHead>
+                {forecastLoad && <span style={{ fontSize: 12, color: T.muted }}>Loading…</span>}
+              </div>
+              <CashFlowForecastChart
+                forecast={forecast}
+                days={forecastDays}
+                onDaysChange={async (d) => {
+                  setForecastDays(d);
+                  setForecastLoad(true);
+                  try { setForecast(await getCashFlowForecast(active.id, d)); }
+                  catch (e) { console.error(e); }
+                  finally { setForecastLoad(false); }
+                }}
+              />
+            </Card>
 
             {/* ── AI Narrative — Starter+ ── */}
             <UpgradeGate tier={tier} required="starter" onUpgrade={openUpgrade}>

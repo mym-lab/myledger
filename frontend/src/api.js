@@ -96,6 +96,9 @@ export const getCashFlowReport = (clientId, from, to) => {
   if (to)   url += `&to=${to}`;
   return get(url, true);
 };
+export const getCashFlowForecast = (clientId, days = 90) =>
+  get(`/reports/cashflow-forecast?clientId=${clientId}&days=${days}`, true);
+
 export const getSLSP           = (clientId, year, quarter) =>
   get(`/reports/slsp?clientId=${clientId}&year=${year}&quarter=${quarter}`, true);
 

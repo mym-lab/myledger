@@ -12,7 +12,7 @@ import BalanceSheetImport    from '../components/BalanceSheetImport.jsx';
 import {
   getClients, updateClient, getNarrative,
   getTransactions, createTransaction, updateTransaction, voidTransaction,
-  getIncomeReport, getBalanceReport, getCashFlowReport,
+  getIncomeReport, getBalanceReport, getCashFlowReport, getCashFlowForecast,
   getBooksReport, getGeneralJournal, getGeneralLedger,
   getCOA, seedCOA, createAccount, updateAccount, deleteAccount,
   getPeriodLocks, lockPeriod, unlockPeriod,
@@ -383,6 +383,132 @@ function MonthlyBarChart({ transactions }) {
       <div style={{ display: 'flex', gap: 16, marginTop: 6, fontSize: 12, color: T.muted }}>
         <span><span style={{ display: 'inline-block', width: 10, height: 10, background: T.green, borderRadius: 2, marginRight: 4, verticalAlign: 'middle' }}></span>Revenue</span>
         <span><span style={{ display: 'inline-block', width: 10, height: 10, background: T.red, borderRadius: 2, marginRight: 4, verticalAlign: 'middle' }}></span>Expenses</span>
+      </div>
+    </div>
+  );
+}
+
+// ─── Cash Flow Forecast Chart ──────────────────────────────────────────────────
+function CashFlowForecastChart({ forecast, days, onDaysChange }) {
+  if (!forecast) return <div style={{ color: '#888', fontSize: 13, padding: '20px 0' }}>No forecast data.</div>;
+
+  const weeks = forecast.weeks || [];
+  const W     = 680;
+  const H     = 220;
+  const PAD   = { top: 20, right: 20, bottom: 40, left: 72 };
+  const cW    = W - PAD.left - PAD.right;
+  const cH    = H - PAD.top  - PAD.bottom;
+
+  if (!weeks.length) return <div style={{ color: '#888', fontSize: 13 }}>No weekly data.</div>;
+
+  const balances = weeks.map(w => w.runningBalance);
+  const minBal   = Math.min(0, ...balances);
+  const maxBal   = Math.max(0, ...balances);
+  const range    = maxBal - minBal || 1;
+
+  const scaleX = (i) => PAD.left + (i / (weeks.length - 1 || 1)) * cW;
+  const scaleY = (v) => PAD.top + cH - ((v - minBal) / range) * cH;
+
+  const pts = weeks.map((w, i) => `${scaleX(i)},${scaleY(w.runningBalance)}`).join(' ');
+
+  const zeroY = scaleY(0);
+
+  const ticks = [0, 0.25, 0.5, 0.75, 1].map(f => ({
+    value: minBal + f * range,
+    y: PAD.top + cH * (1 - f),
+  }));
+
+  const fmt = (n) => {
+    const abs = Math.abs(n || 0);
+    const sign = (n || 0) < 0 ? '-' : '';
+    if (abs >= 1000000) return sign + '₱' + (abs / 1000000).toFixed(1) + 'M';
+    if (abs >= 1000)    return sign + '₱' + (abs / 1000).toFixed(0)    + 'k';
+    return sign + '₱' + abs.toFixed(0);
+  };
+
+  const summaryKey = String(days);
+  const s = forecast.summary?.[summaryKey] || {};
+
+  return (
+    <div>
+      <div style={{ display: 'flex', gap: 8, marginBottom: 14 }}>
+        {[30, 60, 90].map(d => (
+          <button key={d} onClick={() => onDaysChange(d)}
+            style={{
+              padding: '5px 16px', borderRadius: 20, border: 'none', cursor: 'pointer',
+              fontWeight: d === days ? 700 : 400, fontSize: 13,
+              background: d === days ? '#0f766e' : '#f1f5f9',
+              color:      d === days ? '#fff'    : '#475569',
+            }}>
+            {d}d
+          </button>
+        ))}
+      </div>
+
+      <svg viewBox={`0 0 ${W} ${H}`} style={{ width: '100%', height: 'auto', overflow: 'visible' }}>
+        {ticks.map((tick, i) => (
+          <g key={i}>
+            <line x1={PAD.left} y1={tick.y} x2={W - PAD.right} y2={tick.y}
+              stroke="#e2e8f0" strokeWidth="1" strokeDasharray={tick.value === 0 ? 'none' : '3 3'} />
+            <text x={PAD.left - 6} y={tick.y + 4} textAnchor="end" fontSize="10" fill="#94a3b8">
+              {fmt(tick.value)}
+            </text>
+          </g>
+        ))}
+        {minBal < 0 && maxBal > 0 && (
+          <line x1={PAD.left} y1={zeroY} x2={W - PAD.right} y2={zeroY}
+            stroke="#94a3b8" strokeWidth="1.5" />
+        )}
+        <polygon
+          points={weeks.map((w, i) => `${scaleX(i)},${scaleY(Math.max(0, w.runningBalance))}`).join(' ')
+            + ` ${scaleX(weeks.length - 1)},${zeroY} ${PAD.left},${zeroY}`}
+          fill="#0f766e" opacity="0.12" />
+        {minBal < 0 && (
+          <polygon
+            points={`${PAD.left},${zeroY} `
+              + weeks.map((w, i) => `${scaleX(i)},${scaleY(Math.min(0, w.runningBalance))}`).join(' ')
+              + ` ${scaleX(weeks.length - 1)},${zeroY}`}
+            fill="#ef4444" opacity="0.15" />
+        )}
+        <polyline points={pts} fill="none" stroke="#0f766e" strokeWidth="2.5" strokeLinejoin="round" />
+        {weeks.map((w, i) => (
+          <g key={i}>
+            <title>{`Week ${w.week} (${w.weekStart})
+Balance: ${fmt(w.runningBalance)}
+AR: ${fmt(w.inflows)}
+Expenses: ${fmt(w.outflows)}
+Tax: ${fmt(w.taxObligations)}`}</title>
+            <circle cx={scaleX(i)} cy={scaleY(w.runningBalance)} r="4"
+              fill={w.runningBalance >= 0 ? '#0f766e' : '#ef4444'}
+              stroke="#fff" strokeWidth="1.5" />
+          </g>
+        ))}
+        {weeks.map((w, i) => (i % 2 === 0 || i === weeks.length - 1) && (
+          <text key={i} x={scaleX(i)} y={H - 6} textAnchor="middle" fontSize="9.5" fill="#94a3b8">
+            {w.weekStart.slice(5)}
+          </text>
+        ))}
+      </svg>
+
+      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(4, 1fr)', gap: 10, marginTop: 14 }}>
+        {[
+          { label: 'Opening Balance',     value: fmt(forecast.openingBalance || 0), color: '#0f172a' },
+          { label: `${days}d Inflows`,    value: fmt(s.inflows  || 0),             color: '#0f766e' },
+          { label: `${days}d Outflows`,   value: fmt(s.outflows || 0),             color: '#ef4444' },
+          { label: `${days}d End Balance`,value: fmt(s.endBalance ?? forecast.openingBalance ?? 0),
+            color: (s.endBalance ?? 0) >= 0 ? '#0f766e' : '#ef4444' },
+        ].map(c => (
+          <div key={c.label} style={{ background: '#f8fafc', borderRadius: 10, padding: '10px 12px', border: '1px solid #e2e8f0' }}>
+            <div style={{ fontSize: 10.5, color: '#94a3b8', marginBottom: 4 }}>{c.label}</div>
+            <div style={{ fontSize: 15, fontWeight: 700, color: c.color }}>{c.value}</div>
+          </div>
+        ))}
+      </div>
+
+      <div style={{ fontSize: 11, color: '#94a3b8', marginTop: 10, lineHeight: 1.5 }}>
+        Weekly expense avg: {fmt(forecast.assumptions?.weeklyExpenseAvg || 0)} ·
+        AR pending: {forecast.assumptions?.arPending || 0} invoice(s) ·
+        Tax obligations: {forecast.assumptions?.taxCount || 0}
       </div>
     </div>
   );
@@ -1715,6 +1841,10 @@ export default function AccountantPortal({ onLogout }) {
   const [narrativeLoad, setNarrativeLoad] = useState(false);
   // Cash position
   const [cashPos,       setCashPos]       = useState(null);
+  // Cash flow forecast
+  const [forecast,      setForecast]      = useState(null);
+  const [forecastDays,  setForecastDays]  = useState(90);
+  const [forecastLoad,  setForecastLoad]  = useState(false);
   // BIR Filing Summary
   const now0a = new Date();
   const defaultPeriod = `${now0a.getFullYear()}-${String(now0a.getMonth() + 1).padStart(2, '0')}`;
@@ -1880,6 +2010,11 @@ export default function AccountantPortal({ onLogout }) {
         const dlr = await getBirDeadlines(active.id);
         setDL(dlr.deadlines || []);
       }
+      // Cash flow forecast
+      try {
+        const fc = await getCashFlowForecast(active.id, 90);
+        setForecast(fc);
+      } catch (e) { /* forecast optional */ }
       // Cash position derived from income report
       if (inc) {
         setCashPos({
@@ -2533,6 +2668,25 @@ export default function AccountantPortal({ onLogout }) {
                 </div>
               </Card>
             )}
+
+            {/* ── Cash Flow Forecast ── */}
+            <Card style={{ marginBottom: 20 }}>
+              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 10 }}>
+                <SectionHead style={{ margin: 0 }}>📈 Cash Flow Forecast</SectionHead>
+                {forecastLoad && <span style={{ fontSize: 12, color: '#94a3b8' }}>Loading…</span>}
+              </div>
+              <CashFlowForecastChart
+                forecast={forecast}
+                days={forecastDays}
+                onDaysChange={async (d) => {
+                  setForecastDays(d);
+                  setForecastLoad(true);
+                  try { setForecast(await getCashFlowForecast(active.id, d)); }
+                  catch (e) { console.error(e); }
+                  finally { setForecastLoad(false); }
+                }}
+              />
+            </Card>
 
             {/* ── AI Narrative ── */}
             <Card style={{ marginBottom: 20 }}>
