@@ -423,4 +423,119 @@ router.get('/portfolio', (req, res, next) => {
   } catch (err) { next(err); }
 });
 
+
+// ── GET /api/bir/calendar?year=YYYY&month=MM ─────────────────────────────────
+// Returns all BIR deadlines for all of this accountant's clients in a given month,
+// grouped by ISO date string. Used by the filing calendar view.
+router.get('/calendar', (req, res, next) => {
+  try {
+    const { year, month } = req.query;
+    const y = parseInt(year)  || new Date().getFullYear();
+    const m = parseInt(month) || (new Date().getMonth() + 1);
+
+    // All clients this accountant manages
+    const stmt = req.userRole === 'admin'
+      ? db.prepare('SELECT * FROM clients ORDER BY trade_name')
+      : db.prepare('SELECT * FROM clients WHERE accountant_id=? OR owner_id=? ORDER BY trade_name');
+
+    const rows = req.userRole === 'admin'
+      ? stmt.all()
+      : stmt.all(req.userId, req.userId);
+
+    const clients = rows.map(rowToClient);
+
+    // Generate all deadlines for each client that fall in the target month
+    const byDate = {};  // { 'YYYY-MM-DD': [{clientId, tradeName, form, name, isoDate}] }
+
+    // Helper: compute all BIR deadlines for a month given tax types
+    function deadsInMonth(taxTypes, y, m) {
+      const result = [];
+      const firstDay = new Date(y, m - 1, 1);
+      const lastDay  = new Date(y, m, 0);
+
+      // Monthly forms
+      const monthlyForms = {
+        '2550M': { name: '2550M — Monthly VAT',          day: 20 },
+        '2551M': { name: '2551M — Monthly % Tax',        day: 20 },
+        '1601C': { name: '1601-C — WHT Compensation',    day: 10 },
+        '1550':  { name: '1550 — Doc Stamp Tax',         day: 5  },
+      };
+      for (const [code, { name, day }] of Object.entries(monthlyForms)) {
+        if (!taxTypes.includes(code)) continue;
+        // The 20th of month M is the deadline for the return of month M-1
+        const due = new Date(y, m - 1, day);
+        if (due >= firstDay && due <= lastDay) {
+          result.push({ form: code, name, isoDate: due.toISOString().slice(0, 10) });
+        }
+      }
+
+      // Quarterly forms — due 20th/25th/60th after quarter end
+      const quarterEnds = [
+        { q: 1, endY: y, endM: 3,  endD: 31 },
+        { q: 2, endY: y, endM: 6,  endD: 30 },
+        { q: 3, endY: y, endM: 9,  endD: 30 },
+        { q: 4, endY: y, endM: 12, endD: 31 },
+        // Prior year Q4 (for Jan deadlines)
+        { q: 4, endY: y - 1, endM: 12, endD: 31 },
+      ];
+
+      const quarterlyForms = [
+        { code: '2550Q',  name: '2550Q — Quarterly VAT',     offsetDays: 25 },
+        { code: '2551Q',  name: '2551Q — Quarterly % Tax',   offsetDays: 25 },
+        { code: '1601EQ', name: '1601-EQ — EWT Quarterly',   offsetDays: 25 },
+        { code: '1702Q',  name: '1702Q — Corp IT Quarterly',  offsetDays: 60 },
+        { code: '1701Q',  name: '1701Q — Indiv IT Quarterly', offsetDays: 60 },
+      ];
+
+      for (const { endY, endM, endD } of quarterEnds) {
+        const qEnd = new Date(endY, endM - 1, endD);
+        for (const { code, name, offsetDays } of quarterlyForms) {
+          if (!taxTypes.includes(code)) continue;
+          const due = new Date(qEnd.getTime() + offsetDays * 86400000);
+          if (due >= firstDay && due <= lastDay) {
+            result.push({ form: code, name, isoDate: due.toISOString().slice(0, 10) });
+          }
+        }
+      }
+
+      // Annual forms
+      const annualForms = [
+        { code: '1702', name: '1702 — Annual IT (Corp)',   month: 4, day: 15 },
+        { code: '1701', name: '1701 — Annual IT (Indiv)',  month: 4, day: 15 },
+      ];
+      for (const { code, name, month: fm, day: fd } of annualForms) {
+        if (!taxTypes.includes(code)) continue;
+        const due = new Date(y, fm - 1, fd);
+        if (due >= firstDay && due <= lastDay) {
+          result.push({ form: code, name, isoDate: due.toISOString().slice(0, 10) });
+        }
+      }
+
+      return result;
+    }
+
+    const today = new Date().toISOString().slice(0, 10);
+
+    for (const client of clients) {
+      const taxTypes = client.taxTypes || [];
+      if (!taxTypes.length) continue;
+      const deads = deadsInMonth(taxTypes, y, m);
+      for (const d of deads) {
+        if (!byDate[d.isoDate]) byDate[d.isoDate] = [];
+        byDate[d.isoDate].push({
+          clientId: client.id, tradeName: client.tradeName,
+          form: d.form, name: d.name,
+          daysUntil: Math.ceil((new Date(d.isoDate) - new Date(today)) / 86400000),
+        });
+      }
+    }
+
+    const events = Object.entries(byDate)
+      .sort(([a], [b]) => a.localeCompare(b))
+      .map(([date, items]) => ({ date, items, count: items.length }));
+
+    res.json({ year: y, month: m, events, clientCount: clients.length });
+  } catch (err) { next(err); }
+});
+
 export default router;

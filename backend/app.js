@@ -10,7 +10,7 @@ import { existsSync } from 'fs';
 import { join, dirname } from 'path';
 import { fileURLToPath } from 'url';
 
-import { db, getSetting, setSetting } from './db.js';
+import { db } from './db.js';
 import authRoutes            from './routes/auth.js';
 import clientRoutes          from './routes/clients.js';
 import transactionRoutes     from './routes/transactions.js';
@@ -35,7 +35,6 @@ import paymentRoutes         from './routes/payments.js';
 import monitoringRoutes, { trackActivity } from './routes/monitoring.js';
 import importRoutes         from './routes/import.js';
 import narrativeRoutes      from './routes/narrative.js';
-import receiptsRoutes       from './routes/receipts.js';
 
 
 
@@ -83,7 +82,6 @@ app.use('/api/payments',         paymentRoutes);
 app.use('/api/monitoring',       monitoringRoutes);
 app.use('/api/import',          importRoutes);
 app.use('/api/reports/narrative', narrativeRoutes);
-app.use('/api/receipts',          receiptsRoutes);
 
 
 
@@ -138,48 +136,5 @@ function checkExpiredSubscriptions() {
 }
 checkExpiredSubscriptions();
 setInterval(checkExpiredSubscriptions, 24 * 60 * 60 * 1000);
-
-// ── Daily BIR Reminder Scheduler ──────────────────────────────────────────────
-// Fires at 8:00 AM Philippine time (UTC+8 = 00:00 UTC) each day.
-// Guards with last-sent-date so it never double-sends within the same day.
-async function runDailyReminders() {
-  try {
-    const smtp = getSetting('smtp') || {};
-    if (!smtp.enabled) return; // reminders disabled in settings
-    if (!process.env.RESEND_API_KEY) return;
-
-    const today = new Date().toISOString().slice(0, 10);
-    const lastSent = getSetting('notifications_last_sent');
-    if (lastSent === today) return; // already sent today
-
-    // Dynamically call send-reminders logic (reuse notifications route helper)
-    const port = process.env.PORT || 5000;
-    // Use built-in fetch (Node 18+)
-    const res = await fetch(`http://localhost:${port}/api/notifications/send-reminders`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json', 'x-internal-cron': '1' },
-      body: JSON.stringify({ daysAhead: 7 }),
-    });
-    if (res.ok) {
-      setSetting('notifications_last_sent', today);
-      const data = await res.json();
-      console.log('📅 Daily BIR reminders:', data.message || 'sent');
-    }
-  } catch (e) {
-    console.error('⚠️  Daily reminder scheduler error:', e.message);
-  }
-}
-
-// Check every hour; runs when PH local hour is 8 (UTC 0)
-function scheduleDailyReminders() {
-  const now   = new Date();
-  const utcH  = now.getUTCHours();
-  const utcM  = now.getUTCMinutes();
-  // PH 8 AM = UTC 0:00
-  if (utcH === 0 && utcM < 60) {
-    runDailyReminders();
-  }
-}
-setInterval(scheduleDailyReminders, 60 * 60 * 1000); // check every hour
 
 app.listen(PORT, () => 
