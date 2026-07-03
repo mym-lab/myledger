@@ -1,0 +1,8 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512">
+  <rect width="512" height="512" rx="108" fill="#1d4ed8"/>
+  <rect x="96" y="80" width="300" height="352" rx="18" fill="white" opacity="0.12"/>
+  <rect x="112" y="96" width="288" height="336" rx="14" fill="white"/>
+  <text x="256" y="310" font-family="-apple-system,sans-serif" font-size="220" font-weight="700" fill="#1d4ed8" text-anchor="middle">₱</text>
+  <rect x="140" y="144" width="180" height="14" rx="7" fill="#1d4ed8" opacity="0.2"/>
+  <rect x="140" y="172" width="140" height="14" rx="7" fill="#1d4ed8" opacity="0.15"/>
+</svg>

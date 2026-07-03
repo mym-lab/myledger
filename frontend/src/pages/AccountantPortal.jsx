@@ -8,6 +8,11 @@ import { useState, useEffect, useRef } from 'react';
 import { useMobile } from '../hooks/useMobile.js';
 import { InvoicesTab }       from '../components/InvoiceModal.jsx';
 import CSVImportModal        from '../components/CSVImportModal.jsx';
+import NotificationBell       from '../components/NotificationBell.jsx';
+import GlobalSearch           from '../components/GlobalSearch.jsx';
+import FirmSettings           from '../components/FirmSettings.jsx';
+import TrialBanner            from '../components/TrialBanner.jsx';
+import PricingModal           from '../components/PricingModal.jsx';
 import BalanceSheetImport    from '../components/BalanceSheetImport.jsx';
 import {
   getClients, updateClient, getNarrative,
@@ -38,6 +43,7 @@ import {
   getMyUpgradeRequests,
   getMe,
   getPublicSettings,
+  getTrialStatus,
 } from '../api.js';
 import {
   printReport,
@@ -88,11 +94,13 @@ const TAX_TYPES = [
   { code: '2551Q',  label: '2551Q — Quarterly Percentage Tax (Non-VAT)' },
   { code: '1601C',  label: '1601-C — WHT on Compensation' },
   { code: '1601EQ', label: '1601-EQ — Expanded WHT (Quarterly)' },
+  { code: '1601FQ', label: '1601-FQ — Final WHT (Quarterly)' },
   { code: '1702Q',  label: '1702Q — Quarterly IT (Corp)' },
   { code: '1702',   label: '1702 — Annual IT (Corp)' },
   { code: '1701Q',  label: '1701Q — Quarterly IT (Individual)' },
   { code: '1701',   label: '1701 — Annual IT (Individual)' },
-  { code: '1550',   label: '1550 — Documentary Stamp Tax' },
+  { code: '1550',   label: '1550 — Documentary Stamp Tax (Monthly)' },
+  { code: '2000OT', label: '2000-OT — DST One-Time Transactions' },
 ];
 
 // Default EWT rates — used as fallback if admin hasn't configured custom rates via CommandCenter.
@@ -205,7 +213,7 @@ const ACCT_TIERS = {
   agency:       { label: 'Agency',       color: '#af52de', maxClients: 100, price: 4999 },
 };
 
-function ProLock({ onUpgrade }) {
+function ProLock({ onUpgrade, trialExpired = false }) {
   const isMobile = useMobile();
   const [hovered, setHovered] = React.useState(null);
   const tiers = [
@@ -221,7 +229,15 @@ function ProLock({ onUpgrade }) {
       <div style={{ background: T.surface, borderRadius: 20, padding: '40px 48px', textAlign: 'center',
         boxShadow: T.shadowMd, border: `1px solid ${T.border}`, maxWidth: 500 }}>
         <div style={{ fontSize: 52, marginBottom: 14 }}>🔒</div>
-        <h3 style={{ margin: '0 0 10px', fontSize: 20, fontWeight: 700, color: T.text }}>Paid Plan Feature</h3>
+        {trialExpired && (
+          <div style={{ background: '#fef3c7', border: '1px solid #fcd34d', borderRadius: 8,
+            padding: '8px 14px', marginBottom: 14, fontSize: 13, color: '#92400e' }}>
+            Your 30-day free trial has ended. Choose a plan to continue.
+          </div>
+        )}
+        <h3 style={{ margin: '0 0 10px', fontSize: 20, fontWeight: 700, color: T.text }}>
+          {trialExpired ? 'Trial Ended — Upgrade to Continue' : 'Paid Plan Feature'}
+        </h3>
         <p style={{ margin: '0 0 20px', color: T.muted, fontSize: 14, lineHeight: 1.65 }}>
           This tab is available on any paid plan. Upgrade to unlock Journal Entries,
           Trial Balance, Accounting Books, BIR Returns, Alphalist,
@@ -1301,12 +1317,14 @@ const TAX_TYPES_LIST = [
   { code: '2551Q',  label: '2551Q — Quarterly Percentage Tax (Non-VAT)' },
   { code: '1601C',  label: '1601-C — WHT on Compensation' },
   { code: '1601EQ', label: '1601-EQ — Expanded WHT (Quarterly)' },
+  { code: '1601FQ', label: '1601-FQ — Final WHT (Quarterly)' },
   { code: '1604EQ', label: '1604-EQ — Annual EWT Return' },
   { code: '1702Q',  label: '1702Q — Quarterly IT (Corp)' },
   { code: '1702',   label: '1702 — Annual IT (Corp)' },
   { code: '1701Q',  label: '1701Q — Quarterly IT (Individual)' },
   { code: '1701',   label: '1701 — Annual IT (Individual)' },
-  { code: '1550',   label: '1550 — Documentary Stamp Tax' },
+  { code: '1550',   label: '1550 — Documentary Stamp Tax (Monthly)' },
+  { code: '2000OT', label: '2000-OT — DST One-Time Transactions' },
 ];
 
 const BOOKS_COLUMNS = {
@@ -1693,6 +1711,374 @@ function BusinessSetupTab({ client, onSaved }) {
 }
 
 // ─── Main component ───────────────────────────────────────────────────────────
+
+
+// ─── FWT1601FQCalc — BIR Form 1601-FQ Final Withholding Tax (Quarterly) ───────
+const FWT_ATC = [
+  { atc: 'WF001', description: 'Interest — bank deposits & deposit substitutes',       rate: 0.20, category: 'Interest' },
+  { atc: 'WF002', description: 'Interest — foreign currency deposits',                 rate: 0.15, category: 'Interest' },
+  { atc: 'WF006', description: 'Interest — government securities',                     rate: 0.20, category: 'Interest' },
+  { atc: 'WF050', description: 'Dividends — resident individuals from domestic corps', rate: 0.10, category: 'Dividends' },
+  { atc: 'WF120', description: 'Royalties — books, literary, musical',                 rate: 0.10, category: 'Royalties' },
+  { atc: 'WF121', description: 'Royalties — other (patents, franchises, etc.)',         rate: 0.20, category: 'Royalties' },
+  { atc: 'WF130', description: 'Prizes exceeding ₱10,000',                             rate: 0.20, category: 'Prizes' },
+  { atc: 'WF131', description: 'Other winnings (lotto, sweepstakes, etc.)',             rate: 0.20, category: 'Prizes' },
+  { atc: 'WF200', description: "Informer's reward to BIR",                             rate: 0.10, category: 'Other' },
+  { atc: 'WF300', description: 'Non-resident alien (not engaged in trade/business)',   rate: 0.25, category: 'Non-Resident' },
+  { atc: 'WF310', description: 'Foreign corporation (not engaged in business in PH)',  rate: 0.25, category: 'Non-Resident' },
+];
+
+function FWT1601FQCalc({ birYear, birQuarter }) {
+  const qLabel = { 1: 'Q1 (Jan–Mar)', 2: 'Q2 (Apr–Jun)', 3: 'Q3 (Jul–Sep)', 4: 'Q4 (Oct–Dec)' };
+  const dueMonth = { 1: 'April 30', 2: 'July 31', 3: 'October 31', 4: 'January 31' };
+  const [expanded,  setExpanded]  = React.useState(false);
+  const [entries,   setEntries]   = React.useState(
+    FWT_ATC.map(a => ({ ...a, base: '' }))
+  );
+
+  const setBase = (idx, val) => setEntries(prev =>
+    prev.map((e, i) => i === idx ? { ...e, base: val } : e)
+  );
+
+  const withAmounts = entries.map(e => ({
+    ...e,
+    baseAmt: parseFloat(e.base) || 0,
+    fwtAmt:  Math.round((parseFloat(e.base) || 0) * e.rate * 100) / 100,
+  })).filter(e => e.baseAmt > 0 || e.base !== '');
+
+  const totalBase = withAmounts.reduce((s, e) => s + e.baseAmt, 0);
+  const totalFWT  = withAmounts.reduce((s, e) => s + e.fwtAmt,  0);
+  const hasData   = withAmounts.some(e => e.baseAmt > 0);
+
+  const peso_ = n => '₱' + (n ?? 0).toLocaleString('en-PH', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+  const pct   = r => (r * 100).toFixed(0) + '%';
+  const inp3  = { padding: '6px 10px', borderRadius: 6, border: '1px solid #d1d5db',
+    fontSize: 13, width: 140, fontFamily: 'inherit', textAlign: 'right',
+    background: '#fafafa', outline: 'none' };
+
+  const categories = [...new Set(FWT_ATC.map(a => a.category))];
+
+  return (
+    <Card style={{ marginTop: 28 }}>
+      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center',
+        cursor: 'pointer', userSelect: 'none' }}
+        onClick={() => setExpanded(x => !x)}>
+        <div>
+          <SectionHead style={{ marginBottom: 2 }}>BIR Form 1601-FQ — Final Withholding Tax (Quarterly)</SectionHead>
+          <div style={{ fontSize: 12, color: T.muted }}>
+            Interest, dividends, royalties, prizes — {qLabel[birQuarter]} {birYear}
+          </div>
+        </div>
+        <span style={{ fontSize: 20, color: T.muted }}>{expanded ? '▲' : '▼'}</span>
+      </div>
+
+      {expanded && (
+        <div style={{ marginTop: 18 }}>
+          <div style={{ background: '#eff6ff', borderRadius: 8, padding: '10px 14px',
+            marginBottom: 18, fontSize: 12, color: '#1e40af', lineHeight: 1.6 }}>
+            Enter the <strong>gross income payments</strong> (base) made during the quarter for each FWT type.
+            The system computes the FWT withheld automatically.
+            Due: <strong>{dueMonth[birQuarter] || 'last day of month after quarter'}</strong>.
+          </div>
+
+          {/* Entry table by category */}
+          {categories.map(cat => {
+            const catEntries = entries.map((e, i) => ({ ...e, idx: i })).filter(e => e.category === cat);
+            return (
+              <div key={cat} style={{ marginBottom: 20 }}>
+                <div style={{ fontSize: 11, fontWeight: 700, color: T.muted, textTransform: 'uppercase',
+                  letterSpacing: '0.5px', marginBottom: 8 }}>{cat}</div>
+                <div style={{ background: T.surface, borderRadius: 10, border: '1px solid ' + T.border, overflow: 'hidden' }}>
+                  <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 13 }}>
+                    <thead>
+                      <tr style={{ background: T.bg }}>
+                        <th style={{ padding: '8px 12px', textAlign: 'left', fontWeight: 600,
+                          color: T.muted, fontSize: 11 }}>ATC</th>
+                        <th style={{ padding: '8px 12px', textAlign: 'left', fontWeight: 600,
+                          color: T.muted, fontSize: 11 }}>Description</th>
+                        <th style={{ padding: '8px 12px', textAlign: 'center', fontWeight: 600,
+                          color: T.muted, fontSize: 11 }}>Rate</th>
+                        <th style={{ padding: '8px 12px', textAlign: 'right', fontWeight: 600,
+                          color: T.muted, fontSize: 11 }}>Base (₱)</th>
+                        <th style={{ padding: '8px 12px', textAlign: 'right', fontWeight: 600,
+                          color: T.muted, fontSize: 11 }}>FWT Withheld</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {catEntries.map(e => (
+                        <tr key={e.atc} style={{ borderTop: '1px solid ' + T.border }}>
+                          <td style={{ padding: '8px 12px', fontFamily: 'monospace', fontSize: 12,
+                            color: T.accent, fontWeight: 600 }}>{e.atc}</td>
+                          <td style={{ padding: '8px 12px', color: T.text, fontSize: 12 }}>{e.description}</td>
+                          <td style={{ padding: '8px 12px', textAlign: 'center', color: T.muted, fontWeight: 600 }}>
+                            {pct(e.rate)}
+                          </td>
+                          <td style={{ padding: '8px 12px', textAlign: 'right' }}>
+                            <input
+                              style={inp3}
+                              type="number" min="0" step="1000"
+                              value={e.base}
+                              onChange={ev => setBase(e.idx, ev.target.value)}
+                              placeholder="0.00"
+                            />
+                          </td>
+                          <td style={{ padding: '8px 12px', textAlign: 'right', fontWeight: 600,
+                            color: (parseFloat(e.base) || 0) > 0 ? T.orange : T.muted }}>
+                            {(parseFloat(e.base) || 0) > 0
+                              ? peso_(Math.round((parseFloat(e.base) || 0) * e.rate * 100) / 100)
+                              : '—'}
+                          </td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              </div>
+            );
+          })}
+
+          {/* Total */}
+          {hasData && (
+            <div style={{ background: '#f0fdf4', border: '1px solid #86efac', borderRadius: 10,
+              padding: '16px 20px', display: 'flex', justifyContent: 'space-between',
+              alignItems: 'center', flexWrap: 'wrap', gap: 12, marginTop: 8 }}>
+              <div>
+                <div style={{ fontSize: 12, color: '#6e6e73', marginBottom: 4 }}>
+                  Total FWT Payable — {qLabel[birQuarter]} {birYear}
+                </div>
+                <div style={{ fontSize: 28, fontWeight: 700, color: '#166534' }}>
+                  {peso_(totalFWT)}
+                </div>
+                <div style={{ fontSize: 11, color: '#6e6e73', marginTop: 2 }}>
+                  On total base income payments of {peso_(totalBase)}
+                </div>
+              </div>
+              <div style={{ textAlign: 'right' }}>
+                <div style={{ fontSize: 11, color: '#6e6e73', marginBottom: 4 }}>Filing deadline</div>
+                <div style={{ fontWeight: 600, color: '#166534' }}>{dueMonth[birQuarter]}</div>
+                <div style={{ fontSize: 11, color: '#6e6e73', marginTop: 4 }}>
+                  BIR Form 1601-FQ. Remit via eBIR or bank.
+                </div>
+              </div>
+            </div>
+          )}
+
+          <div style={{ marginTop: 14, fontSize: 11, color: T.muted, lineHeight: 1.6,
+            background: T.bg, borderRadius: 8, padding: '10px 12px' }}>
+            ℹ️ Enter payments made to payees during the quarter. FWT is withheld at source and remitted to BIR.
+            Separate return required per quarter. Cross-reference with payee records for BIR 1604-CF (annual).
+          </div>
+        </div>
+      )}
+    </Card>
+  );
+}
+
+// ─── DST2000OT Calculator (BIR Form 2000-OT) ─────────────────────────────────
+const DST_SCHEDULES = [
+  {
+    code: 'real_property',
+    label: 'Sale / Transfer of Real Property',
+    notes: 'RA 9243 — based on consideration or zonal value, whichever is higher',
+    tiers: [
+      { upto: 1000,      rate: 0,    fixed: 15    },  // ₱15 per ₱1k
+    ],
+    compute: (amt) => Math.floor(amt / 1000) * 15,
+    rateLabel: '₱15 per ₱1,000 of consideration',
+  },
+  {
+    code: 'lease',
+    label: 'Lease Agreement / Rental Contract',
+    notes: 'First ₱2,000: ₱6. Each additional ₱1,000 per year: ₱1',
+    compute: (amt, years = 1) => {
+      const annual = amt * years;
+      if (annual <= 2000) return 6;
+      return 6 + Math.ceil((annual - 2000) / 1000);
+    },
+    rateLabel: '₱6 on first ₱2,000 + ₱1 per ₱1,000 thereafter (annual)',
+    hasYears: true,
+  },
+  {
+    code: 'promissory',
+    label: 'Promissory Note / Loan Agreement',
+    notes: 'On principal — ₱1 for every ₱200 or fraction thereof',
+    compute: (amt) => Math.ceil(amt / 200),
+    rateLabel: '₱1 per ₱200 of principal (0.5%)',
+  },
+  {
+    code: 'shares',
+    label: 'Sale / Transfer of Shares of Stock',
+    notes: 'Listed: 60 centavos per ₱200 par value; Unlisted: ₱1.50 per ₱200',
+    compute: (amt, _, isListed = false) => {
+      const rate = isListed ? 0.60 : 1.50;
+      return Math.ceil(amt / 200) * rate;
+    },
+    rateLabel: '₱0.60 (listed) / ₱1.50 (unlisted) per ₱200 par value',
+    hasListed: true,
+  },
+  {
+    code: 'mortgage',
+    label: 'Real Estate Mortgage',
+    notes: '₱20 + ₱10 per ₱5,000 or fraction thereof',
+    compute: (amt) => 20 + Math.ceil(amt / 5000) * 10,
+    rateLabel: '₱20 + ₱10 per ₱5,000 of obligation',
+  },
+  {
+    code: 'insurance',
+    label: 'Life Insurance Policy',
+    notes: 'Sliding scale on face value',
+    compute: (amt) => {
+      if (amt <= 100000)    return 0;
+      if (amt <= 300000)    return 20;
+      if (amt <= 500000)    return 50;
+      if (amt <= 750000)    return 100;
+      if (amt <= 1000000)   return 150;
+      return 200 + Math.floor((amt - 1000000) / 1000000) * 100;
+    },
+    rateLabel: 'Sliding scale (₱0 ≤ ₱100k; ₱20 ≤ ₱300k; ₱50 ≤ ₱500k; etc.)',
+  },
+  {
+    code: 'charter_party',
+    label: 'Charter Party / Freight Shipment',
+    notes: '₱10 if ≤ ₱1,000; + ₱5 per ₱1,000 or fraction thereafter',
+    compute: (amt) => amt <= 1000 ? 10 : 10 + Math.ceil((amt - 1000) / 1000) * 5,
+    rateLabel: '₱10 + ₱5 per ₱1,000 above first ₱1,000',
+  },
+];
+
+function DST2000OTCalc() {
+  const [docType,   setDocType]   = React.useState('real_property');
+  const [amount,    setAmount]    = React.useState('');
+  const [years,     setYears]     = React.useState('1');
+  const [isListed,  setIsListed]  = React.useState(false);
+  const [expanded,  setExpanded]  = React.useState(false);
+
+  const schedule = DST_SCHEDULES.find(s => s.code === docType) || DST_SCHEDULES[0];
+  const amt  = parseFloat(amount) || 0;
+  const yrs  = parseFloat(years)  || 1;
+
+  let dst = 0;
+  if (amt > 0) {
+    try { dst = schedule.compute(amt, yrs, isListed); } catch {}
+  }
+  const peso_  = n => '₱' + (n ?? 0).toLocaleString('en-PH', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+  const inp2 = { width: '100%', padding: '9px 12px', borderRadius: 8,
+    border: '1px solid #d1d5db', fontSize: 14, fontFamily: 'inherit',
+    outline: 'none', boxSizing: 'border-box', background: '#fafafa' };
+
+  return (
+    <Card style={{ marginTop: 28 }}>
+      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center',
+        cursor: 'pointer', userSelect: 'none' }}
+        onClick={() => setExpanded(x => !x)}>
+        <div>
+          <SectionHead style={{ marginBottom: 2 }}>BIR Form 2000-OT — Documentary Stamp Tax</SectionHead>
+          <div style={{ fontSize: 12, color: T.muted }}>
+            One-time transactions: real property, leases, promissory notes, shares
+          </div>
+        </div>
+        <span style={{ fontSize: 20, color: T.muted }}>{expanded ? '▲' : '▼'}</span>
+      </div>
+
+      {expanded && (
+        <div style={{ marginTop: 18 }}>
+          <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 16, marginBottom: 16 }}>
+            <Fld label="Document / Transaction Type">
+              <select style={inp2} value={docType} onChange={e => setDocType(e.target.value)}>
+                {DST_SCHEDULES.map(s => <option key={s.code} value={s.code}>{s.label}</option>)}
+              </select>
+            </Fld>
+            <Fld label={docType === 'lease' ? 'Contract Amount (Annual Rent)' : 'Consideration / Amount (₱)'}>
+              <input style={inp2} type="number" min="0" step="1000"
+                value={amount} onChange={e => setAmount(e.target.value)}
+                placeholder="e.g. 1000000" />
+            </Fld>
+          </div>
+
+          {schedule.hasYears && (
+            <Fld label="Lease Term (years)">
+              <input style={{ ...inp2, maxWidth: 160 }} type="number" min="1" step="1"
+                value={years} onChange={e => setYears(e.target.value)} />
+            </Fld>
+          )}
+          {schedule.hasListed && (
+            <div style={{ marginBottom: 16, display: 'flex', alignItems: 'center', gap: 10 }}>
+              <input type="checkbox" id="isListed" checked={isListed}
+                onChange={e => setIsListed(e.target.checked)} style={{ width: 16, height: 16 }} />
+              <label htmlFor="isListed" style={{ fontSize: 13, cursor: 'pointer' }}>
+                Listed on the Philippine Stock Exchange (PSE)
+              </label>
+            </div>
+          )}
+
+          {/* Rate info */}
+          <div style={{ background: '#eff6ff', borderRadius: 8, padding: '10px 14px',
+            marginBottom: 16, fontSize: 12, color: '#1e40af', lineHeight: 1.6 }}>
+            <strong>Rate:</strong> {schedule.rateLabel}
+            {schedule.notes && <><br /><span style={{ color: '#6e6e73' }}>{schedule.notes}</span></>}
+          </div>
+
+          {/* Result */}
+          {amt > 0 && (
+            <div style={{ background: '#f0fdf4', border: '1px solid #86efac', borderRadius: 10,
+              padding: '16px 20px', display: 'flex', justifyContent: 'space-between',
+              alignItems: 'center', flexWrap: 'wrap', gap: 12 }}>
+              <div>
+                <div style={{ fontSize: 12, color: '#6e6e73', marginBottom: 4 }}>
+                  DST Payable — {schedule.label}
+                </div>
+                <div style={{ fontSize: 28, fontWeight: 700, color: '#166534' }}>
+                  {peso_(dst)}
+                </div>
+                <div style={{ fontSize: 11, color: '#6e6e73', marginTop: 2 }}>
+                  On consideration of {peso_(amt)}
+                  {schedule.hasYears ? ` over ${yrs} year${yrs !== 1 ? 's' : ''}` : ''}
+                </div>
+              </div>
+              <div style={{ textAlign: 'right' }}>
+                <div style={{ fontSize: 11, color: '#6e6e73', marginBottom: 4 }}>Filing deadline</div>
+                <div style={{ fontWeight: 600, color: '#166534' }}>5th day of the following month</div>
+                <div style={{ fontSize: 11, color: '#6e6e73', marginTop: 4 }}>
+                  Use BIR Form 2000-OT. Attach to notarized document.
+                </div>
+              </div>
+            </div>
+          )}
+
+          {/* All schedules table */}
+          <details style={{ marginTop: 18 }}>
+            <summary style={{ cursor: 'pointer', fontSize: 12, fontWeight: 600, color: T.muted,
+              userSelect: 'none', marginBottom: 10 }}>
+              View all DST schedules (RA 9243 / TRAIN Law)
+            </summary>
+            <div style={{ overflowX: 'auto' }}>
+              <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 12 }}>
+                <thead>
+                  <tr style={{ background: T.bg }}>
+                    {['Document Type', 'Rate / Basis', 'Notes'].map(h => (
+                      <th key={h} style={{ padding: '8px 12px', textAlign: 'left', fontWeight: 600,
+                        color: T.muted, borderBottom: '1px solid ' + T.border }}>{h}</th>
+                    ))}
+                  </tr>
+                </thead>
+                <tbody>
+                  {DST_SCHEDULES.map((s, i) => (
+                    <tr key={s.code} style={{ background: i % 2 === 0 ? T.surface : '#fafafa' }}>
+                      <td style={{ padding: '8px 12px', fontWeight: 500, color: T.text }}>{s.label}</td>
+                      <td style={{ padding: '8px 12px', color: '#374151' }}>{s.rateLabel}</td>
+                      <td style={{ padding: '8px 12px', color: T.muted, fontStyle: 'italic' }}>{s.notes || '—'}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          </details>
+        </div>
+      )}
+    </Card>
+  );
+}
+
 export default function AccountantPortal({ onLogout }) {
   const isMobile = useMobile();
   const [sidebarOpen, setSidebarOpen] = useState(false);
@@ -1701,12 +2087,17 @@ export default function AccountantPortal({ onLogout }) {
   const [accountantTier, setAccountantTier] = useState(storedUser?.accountantTier || 'free');
   const [meData, setMeData]                 = useState(storedUser);
   const tierInfo       = ACCT_TIERS[accountantTier] || ACCT_TIERS.free;
-  const isPro          = accountantTier !== 'free';   // any paid tier unlocks features
-  const isAgency       = accountantTier === 'agency';
+  // During active trial → full professional access regardless of stored tier
+  const isPro    = accountantTier !== 'free' || (trialStatus?.isTrialActive ?? false);
+  const isAgency = accountantTier === 'agency' || (trialStatus?.isTrialActive ?? false);
   const maxClients     = tierInfo.maxClients;          // number = hard limit per tier
+  const [showFirmSettings, setShowFirmSettings] = useState(false);
+  const [showPricing,     setShowPricing]     = useState(false);
+  const [trialStatus,     setTrialStatus]     = useState(null);
   const firmName       = isAgency && meData?.firmName    ? meData.firmName    : null;
   const accentOverride = isAgency && meData?.accentColor ? meData.accentColor : null;
   // Dynamic accent: agency accountants with a custom color override T.accent site-wide in header/badges
+  const firmLogoData   = isAgency && meData?.firmLogo    ? meData.firmLogo    : null;
   const brandAccent    = accentOverride || T.accent;
 
   const [tab,       setTab]     = useState('Dashboard');
@@ -1891,6 +2282,8 @@ export default function AccountantPortal({ onLogout }) {
         }
       } catch { /* ignore */ }
     }).catch(() => { /* network hiccup — keep showing stored tier */ });
+    // Fetch trial status for banner + pricing modal
+    getTrialStatus().then(t => { if (t) setTrialStatus(t); }).catch(() => {});
   }, []);
 
   async function loadMyUpgradeReqs() {
@@ -2391,6 +2784,18 @@ export default function AccountantPortal({ onLogout }) {
     <div style={{ minHeight: '100vh', background: T.bg,
       fontFamily: '-apple-system, BlinkMacSystemFont, "SF Pro Display", "Helvetica Neue", sans-serif', color: T.text }}>
 
+      {/* Trial Banner */}
+      <TrialBanner onUpgradeClick={() => setShowPricing(true)} />
+
+      {/* Pricing Modal */}
+      {showPricing && (
+        <PricingModal
+          onClose={() => setShowPricing(false)}
+          userRole="accountant"
+          trialStatus={trialStatus}
+        />
+      )}
+
       {/* Header */}
       <div style={{ background: 'rgba(255,255,255,0.88)', backdropFilter: 'blur(20px)',
         borderBottom: `1px solid ${T.border}`, position: 'sticky', top: 0, zIndex: 100 }}>
@@ -2399,13 +2804,19 @@ export default function AccountantPortal({ onLogout }) {
           <div style={{ padding: '0 16px', display: 'flex', alignItems: 'center',
             justifyContent: 'space-between', height: 52 }}>
             <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
-              <span style={{ fontWeight: 700, fontSize: 16, color: firmName ? brandAccent : T.text }}>
-                {firmName || 'MyLedger'}
-              </span>
+              {firmLogoData
+                ? <img src={firmLogoData} alt="Logo" style={{ height: 26, maxWidth: 80, objectFit: 'contain' }} />
+                : <span style={{ fontWeight: 700, fontSize: 16, color: firmName ? brandAccent : T.text }}>
+                    {firmName || 'MyLedger'}
+                  </span>
+              }
               <span style={{ background: brandAccent, color: '#fff', fontSize: 10, fontWeight: 600,
                 padding: '2px 7px', borderRadius: 5 }}>ACCT</span>
             </div>
-            <Btn variant="neutral" size="sm" onClick={onLogout}>Sign out</Btn>
+            <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
+              <NotificationBell accentColor={brandAccent} />
+              <Btn variant="neutral" size="sm" onClick={onLogout}>Sign out</Btn>
+            </div>
           </div>
         ) : (
           /* ── Desktop header ── */
@@ -2413,9 +2824,12 @@ export default function AccountantPortal({ onLogout }) {
             display: 'flex', alignItems: 'center', justifyContent: 'space-between', height: 56 }}>
             <div style={{ display: 'flex', alignItems: 'center', gap: 14 }}>
               <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
-                {firmName ? (
+                {firmName || firmLogoData ? (
                   <>
-                    <span style={{ fontWeight: 700, fontSize: 16, color: brandAccent }}>{firmName}</span>
+                    {firmLogoData
+                      ? <img src={firmLogoData} alt="Logo" style={{ height: 28, maxWidth: 100, objectFit: 'contain' }} />
+                      : <span style={{ fontWeight: 700, fontSize: 16, color: brandAccent }}>{firmName}</span>
+                    }
                     <span style={{ background: brandAccent, color: '#fff', fontSize: 11, fontWeight: 600,
                       padding: '2px 8px', borderRadius: 6 }}>ACCOUNTANT</span>
                   </>
@@ -2479,11 +2893,23 @@ export default function AccountantPortal({ onLogout }) {
               )}
             </div>
             <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
+              <button onClick={() => setShowFirmSettings(true)}
+                title="Firm branding settings"
+                style={{ background: 'none', border: '1px solid #e2e8f0', borderRadius: 8,
+                  padding: '5px 10px', cursor: 'pointer', fontSize: 14, color: '#6e6e73',
+                  fontFamily: 'inherit' }}>
+                🎨
+              </button>
+              {/* Global search: professional+ or active trial */}
+              {(accountantTier === 'professional' || accountantTier === 'firm' || accountantTier === 'agency' || trialStatus?.isTrialActive) && (
+                <GlobalSearch accentColor={brandAccent} clients={clients} />
+              )}
               {active && (
                 <Btn variant="ghost" size="sm" onClick={handleBackup} title={`Download JSON backup of ${active.tradeName}`}>
                   ⬇ Backup
                 </Btn>
               )}
+              <NotificationBell accentColor={brandAccent} />
               <Btn variant="neutral" size="sm" onClick={onLogout}>Sign out</Btn>
             </div>
           </div>
@@ -3032,7 +3458,7 @@ export default function AccountantPortal({ onLogout }) {
 
         {/* ════════════ JOURNAL ENTRIES ════════════ */}
         {tab === 'Journal Entries' && active && (
-          !isPro ? <ProLock onUpgrade={(tier) => { setUpgradeTarget(tier || 'solo'); setShowUpgrade(true); }} /> : <div>
+          !isPro ? <ProLock onUpgrade={(tier) => { setUpgradeTarget(tier || 'solo'); setShowUpgrade(true); }} trialExpired={trialStatus?.isExpired ?? false} /> : <div>
             <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 20 }}>
               <h2 style={{ margin: 0, fontSize: 22, fontWeight: 600 }}>Journal Entries — {active.tradeName}</h2>
               <Btn onClick={() => setShowJE(true)}>+ New Journal Entry</Btn>
@@ -3124,7 +3550,7 @@ export default function AccountantPortal({ onLogout }) {
 
         {/* ════════════ TRIAL BALANCE ════════════ */}
         {tab === 'Trial Balance' && active && (
-          !isPro ? <ProLock onUpgrade={(tier) => { setUpgradeTarget(tier || 'solo'); setShowUpgrade(true); }} /> : <div>
+          !isPro ? <ProLock onUpgrade={(tier) => { setUpgradeTarget(tier || 'solo'); setShowUpgrade(true); }} trialExpired={trialStatus?.isExpired ?? false} /> : <div>
             <h2 style={{ margin: '0 0 8px', fontSize: 22, fontWeight: 600 }}>Trial Balance — {active.tradeName}</h2>
             <div style={{ fontSize: 13, color: T.muted, marginBottom: 20 }}>
               Synthetic trial balance derived from all transactions and manual journal entries.
@@ -3197,7 +3623,7 @@ export default function AccountantPortal({ onLogout }) {
 
         {/* ════════════ BIR RETURNS ════════════ */}
         {tab === 'BIR Returns' && active && (
-          !isPro ? <ProLock onUpgrade={(tier) => { setUpgradeTarget(tier || 'solo'); setShowUpgrade(true); }} /> : (() => {
+          !isPro ? <ProLock onUpgrade={(tier) => { setUpgradeTarget(tier || 'solo'); setShowUpgrade(true); }} trialExpired={trialStatus?.isExpired ?? false} /> : (() => {
             const isOPT      = active.taxRegime === 'opt';
             const isSoleProp = active.type === 'Sole Proprietor' || active.type === 'Individual';
             const isCorp     = !isSoleProp;
@@ -3212,9 +3638,9 @@ export default function AccountantPortal({ onLogout }) {
             const formGroups  = [
               { label: 'Income Tax', forms: itForms },
               { label: isOPT ? 'Percentage Tax' : 'VAT Returns', forms: vatForms },
-              { label: 'Withholding Tax', forms: ['1601-EQ', '1604-EQ'] },
+              { label: 'Withholding Tax', forms: ['1601-EQ', '1601FQ', '1604-EQ'] },
             ];
-            const allForms    = [...itForms, ...vatForms, '1601-EQ', '1604-EQ'];
+            const allForms    = [...itForms, ...vatForms, '1601-EQ', '1604-EQ', '1601FQ'];
 
             // Normalise the current selection
             const is1601EQ    = birType === '1601-EQ';
@@ -3224,7 +3650,7 @@ export default function AccountantPortal({ onLogout }) {
             const effectiveBirType = allForms.includes(birType) ? birType
               : (isSoleProp ? (active.taxOption === '8percent' ? '1701A' : '1701') : '1702');
 
-            const isQuarterly = ['2550Q', '2551Q', '1601-EQ', '1702Q'].includes(effectiveBirType);
+            const isQuarterly = ['2550Q', '2551Q', '1601-EQ', '1702Q', '1601FQ'].includes(effectiveBirType);
             const isAnnual    = ['1701', '1701A', '1702', '1604-EQ'].includes(effectiveBirType);
             const monthNames  = ['','January','February','March','April','May','June','July','August','September','October','November','December'];
             const qLabels     = { 1: 'Q1 (Jan–Mar)', 4: 'Q2 (Apr–Jun)', 7: 'Q3 (Jul–Sep)', 10: 'Q4 (Oct–Dec)' };
@@ -3965,6 +4391,11 @@ export default function AccountantPortal({ onLogout }) {
                     </div>
                   );
                 })()}
+
+                {/* ── 2000-OT DST Calculator ── */}
+                <DST2000OTCalc />
+                {/* ── 1601-FQ Final WHT Quarterly ── */}
+                <FWT1601FQCalc birYear={birYear} birQuarter={itQuarter} />
               </div>
             );
           })()
@@ -3972,7 +4403,7 @@ export default function AccountantPortal({ onLogout }) {
 
         {/* ════════════ ALPHALIST ════════════ */}
         {tab === 'Alphalist' && active && (
-  !isPro ? <ProLock onUpgrade={(tier) => { setUpgradeTarget(tier || 'solo'); setShowUpgrade(true); }} /> : <div>
+  !isPro ? <ProLock onUpgrade={(tier) => { setUpgradeTarget(tier || 'solo'); setShowUpgrade(true); }} trialExpired={trialStatus?.isExpired ?? false} /> : <div>
     <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: 4 }}>
       <h2 style={{ margin: 0, fontSize: 22, fontWeight: 600 }}>Alphalist of Payees — {active.tradeName}</h2>
       <div style={{ display: 'flex', gap: 8 }}>
@@ -4160,7 +4591,7 @@ export default function AccountantPortal({ onLogout }) {
 
         {/* ════════════ AUDIT LOG ════════════ */}
         {tab === 'Audit Log' && active && (
-          !isPro ? <ProLock onUpgrade={(tier) => { setUpgradeTarget(tier || 'solo'); setShowUpgrade(true); }} /> : <div>
+          !isPro ? <ProLock onUpgrade={(tier) => { setUpgradeTarget(tier || 'solo'); setShowUpgrade(true); }} trialExpired={trialStatus?.isExpired ?? false} /> : <div>
             <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 20 }}>
               <h2 style={{ margin: 0, fontSize: 22, fontWeight: 600 }}>Audit Log — {active.tradeName}</h2>
               <Btn size="sm" variant="ghost" onClick={loadAudit}>↻ Refresh</Btn>
@@ -4208,7 +4639,7 @@ export default function AccountantPortal({ onLogout }) {
 
         {/* ════════════ PERIOD LOCK ════════════ */}
         {tab === 'Period Lock' && active && (
-          !isPro ? <ProLock onUpgrade={(tier) => { setUpgradeTarget(tier || 'solo'); setShowUpgrade(true); }} /> : <div style={{ maxWidth: 640 }}>
+          !isPro ? <ProLock onUpgrade={(tier) => { setUpgradeTarget(tier || 'solo'); setShowUpgrade(true); }} trialExpired={trialStatus?.isExpired ?? false} /> : <div style={{ maxWidth: 640 }}>
             <h2 style={{ margin: '0 0 6px', fontSize: 22, fontWeight: 600 }}>Period Locking — {active.tradeName}</h2>
             <p style={{ color: T.muted, fontSize: 13, marginBottom: 24 }}>
               Locked periods block new transactions and voids. Required for CAS compliance.
@@ -4260,7 +4691,7 @@ export default function AccountantPortal({ onLogout }) {
 
         {/* ════════════ COA ════════════ */}
         {tab === 'COA' && active && (
-          !isPro ? <ProLock onUpgrade={(tier) => { setUpgradeTarget(tier || 'solo'); setShowUpgrade(true); }} /> : <div>
+          !isPro ? <ProLock onUpgrade={(tier) => { setUpgradeTarget(tier || 'solo'); setShowUpgrade(true); }} trialExpired={trialStatus?.isExpired ?? false} /> : <div>
             <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 20, flexWrap: 'wrap', gap: 12 }}>
               <h2 style={{ margin: 0, fontSize: 22, fontWeight: 600 }}>Chart of Accounts — {active.tradeName}</h2>
               <div style={{ display: 'flex', gap: 10 }}>
@@ -4367,7 +4798,7 @@ export default function AccountantPortal({ onLogout }) {
 
         {/* ════════════ GENERAL JOURNAL ════════════ */}
         {tab === 'General Journal' && active && (
-          !isPro ? <ProLock onUpgrade={(tier) => { setUpgradeTarget(tier || 'solo'); setShowUpgrade(true); }} /> : <div>
+          !isPro ? <ProLock onUpgrade={(tier) => { setUpgradeTarget(tier || 'solo'); setShowUpgrade(true); }} trialExpired={trialStatus?.isExpired ?? false} /> : <div>
             <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 20, flexWrap: 'wrap', gap: 12 }}>
               <h2 style={{ margin: 0, fontSize: 22, fontWeight: 600 }}>General Journal — {active.tradeName}</h2>
               <div style={{ display: 'flex', gap: 10, alignItems: 'center', flexWrap: 'wrap' }}>
@@ -4437,7 +4868,7 @@ export default function AccountantPortal({ onLogout }) {
 
         {/* ════════════ GENERAL LEDGER ════════════ */}
         {tab === 'General Ledger' && active && (
-          !isPro ? <ProLock onUpgrade={(tier) => { setUpgradeTarget(tier || 'solo'); setShowUpgrade(true); }} /> : <div>
+          !isPro ? <ProLock onUpgrade={(tier) => { setUpgradeTarget(tier || 'solo'); setShowUpgrade(true); }} trialExpired={trialStatus?.isExpired ?? false} /> : <div>
             <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 20, flexWrap: 'wrap', gap: 12 }}>
               <h2 style={{ margin: 0, fontSize: 22, fontWeight: 600 }}>General Ledger — {active.tradeName}</h2>
               <div style={{ display: 'flex', gap: 10, alignItems: 'center', flexWrap: 'wrap' }}>
@@ -4518,7 +4949,7 @@ export default function AccountantPortal({ onLogout }) {
 
         {/* ════════════ INCOME STATEMENT ════════════ */}
         {tab === 'Income Statement' && active && (
-          !isPro ? <ProLock onUpgrade={(tier) => { setUpgradeTarget(tier || 'solo'); setShowUpgrade(true); }} /> : <div>
+          !isPro ? <ProLock onUpgrade={(tier) => { setUpgradeTarget(tier || 'solo'); setShowUpgrade(true); }} trialExpired={trialStatus?.isExpired ?? false} /> : <div>
             <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 22 }}>
               <h2 style={{ margin: 0, fontSize: 22, fontWeight: 600 }}>Income Statement — {active.tradeName}</h2>
               {income && (
@@ -4624,7 +5055,7 @@ export default function AccountantPortal({ onLogout }) {
 
         {/* ════════════ BALANCE SHEET ════════════ */}
         {tab === 'Balance Sheet' && active && (
-          !isPro ? <ProLock onUpgrade={(tier) => { setUpgradeTarget(tier || 'solo'); setShowUpgrade(true); }} /> : <div>
+          !isPro ? <ProLock onUpgrade={(tier) => { setUpgradeTarget(tier || 'solo'); setShowUpgrade(true); }} trialExpired={trialStatus?.isExpired ?? false} /> : <div>
             <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 22 }}>
               <h2 style={{ margin: 0, fontSize: 22, fontWeight: 600 }}>Statement of Financial Position — {active.tradeName}</h2>
               {balance && (
@@ -4746,7 +5177,7 @@ export default function AccountantPortal({ onLogout }) {
 
         {/* ════════════ BOOKS ════════════ */}
         {tab === 'Books' && active && (
-          !isPro ? <ProLock onUpgrade={(tier) => { setUpgradeTarget(tier || 'solo'); setShowUpgrade(true); }} /> : <div>
+          !isPro ? <ProLock onUpgrade={(tier) => { setUpgradeTarget(tier || 'solo'); setShowUpgrade(true); }} trialExpired={trialStatus?.isExpired ?? false} /> : <div>
             <h2 style={{ margin: '0 0 8px', fontSize: 22, fontWeight: 600 }}>Accounting Books — {active.tradeName}</h2>
             <div style={{ fontSize: 13, color: T.muted, marginBottom: 20 }}>
               Philippine SLSP-format subsidiary books derived from transactions. Use these to verify entries and check for adjustments needed.
@@ -4907,7 +5338,7 @@ export default function AccountantPortal({ onLogout }) {
 
         {/* ════════════ CASH FLOW ════════════ */}
         {tab === 'Cash Flow' && active && (
-          !isPro ? <ProLock onUpgrade={(tier) => { setUpgradeTarget(tier || 'solo'); setShowUpgrade(true); }} /> : <div>
+          !isPro ? <ProLock onUpgrade={(tier) => { setUpgradeTarget(tier || 'solo'); setShowUpgrade(true); }} trialExpired={trialStatus?.isExpired ?? false} /> : <div>
             <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 8 }}>
               <h2 style={{ margin: 0, fontSize: 22, fontWeight: 600 }}>Cash Flow Statement — {active.tradeName}</h2>
               {cfReport && (
@@ -5027,7 +5458,7 @@ export default function AccountantPortal({ onLogout }) {
 
         {/* ════════════ ASSETS ════════════ */}
         {tab === 'Assets' && active && (
-          !isPro ? <ProLock onUpgrade={(tier) => { setUpgradeTarget(tier || 'solo'); setShowUpgrade(true); }} /> : <div>
+          !isPro ? <ProLock onUpgrade={(tier) => { setUpgradeTarget(tier || 'solo'); setShowUpgrade(true); }} trialExpired={trialStatus?.isExpired ?? false} /> : <div>
             <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 20 }}>
               <div>
                 <h2 style={{ margin: '0 0 4px', fontSize: 22, fontWeight: 600 }}>Fixed Assets — {active.tradeName}</h2>
@@ -5116,7 +5547,7 @@ export default function AccountantPortal({ onLogout }) {
 
         {/* ════════════ SLSP ════════════ */}
         {tab === 'SLSP' && active && (
-          !isPro ? <ProLock onUpgrade={(tier) => { setUpgradeTarget(tier || 'solo'); setShowUpgrade(true); }} /> : <div>
+          !isPro ? <ProLock onUpgrade={(tier) => { setUpgradeTarget(tier || 'solo'); setShowUpgrade(true); }} trialExpired={trialStatus?.isExpired ?? false} /> : <div>
             <h2 style={{ margin: '0 0 4px', fontSize: 22, fontWeight: 600 }}>SLSP — {active.tradeName}</h2>
             <div style={{ fontSize: 13, color: T.muted, marginBottom: 24 }}>
               Summary List of Sales &amp; Purchases — BIR VAT Relief format. Export CSV for eBIRForms submission.
@@ -5260,7 +5691,7 @@ export default function AccountantPortal({ onLogout }) {
 
         {/* ════════════ CONTACTS ════════════ */}
         {tab === 'Contacts' && active && (
-          !isPro ? <ProLock onUpgrade={(tier) => { setUpgradeTarget(tier || 'solo'); setShowUpgrade(true); }} /> : <div>
+          !isPro ? <ProLock onUpgrade={(tier) => { setUpgradeTarget(tier || 'solo'); setShowUpgrade(true); }} trialExpired={trialStatus?.isExpired ?? false} /> : <div>
             <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 22 }}>
               <div>
                 <h2 style={{ margin: '0 0 4px', fontSize: 22, fontWeight: 600 }}>Contacts — {active.tradeName}</h2>
@@ -6482,6 +6913,14 @@ export default function AccountantPortal({ onLogout }) {
         )}
 
       </div>
+
+      {showFirmSettings && (
+        <FirmSettings
+          user={meData}
+          onClose={() => setShowFirmSettings(false)}
+          onSaved={data => setMeData(prev => ({ ...prev, ...data }))}
+        />
+      )}
 
       {/* CSV Import Modal */}
       {showCSVImport && active && (

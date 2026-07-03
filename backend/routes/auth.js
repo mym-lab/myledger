@@ -5,6 +5,8 @@ import jwt from 'jsonwebtoken';
 import { v4 as uuid } from 'uuid';
 import { randomBytes } from 'crypto';
 import { db, rowToUser } from '../db.js';
+import { getTrialStatus } from '../lib/trial.js';
+import { requireTier }   from '../middleware/tierGuard.js';
 import { authenticate } from '../middleware/auth.js';
 import { recordReferral } from './referrals.js';
 import { sendEmail } from '../email.js';
@@ -14,8 +16,8 @@ const JWT_SECRET = process.env.JWT_SECRET || 'myledger-dev-secret-change-in-prod
 
 const stmtFindByEmail  = db.prepare('SELECT * FROM users WHERE email = ?');
 const stmtInsertUser   = db.prepare(`
-  INSERT INTO users (id, email, name, company, role, password_hash, accountant_tier, firm_name, accent_color, created_at)
-  VALUES (@id, @email, @name, @company, @role, @password_hash, @accountant_tier, @firm_name, @accent_color, @created_at)
+  INSERT INTO users (id, email, name, company, role, password_hash, accountant_tier, firm_name, accent_color, trial_started_at, trial_tier, trial_drip_sent, created_at)
+  VALUES (@id, @email, @name, @company, @role, @password_hash, @accountant_tier, @firm_name, @accent_color, @trial_started_at, @trial_tier, @trial_drip_sent, @created_at)
 `);
 
 // POST /api/auth/signup
@@ -44,12 +46,18 @@ router.post('/signup', async (req, res, next) => {
     const id              = uuid();
     const password_hash   = await bcrypt.hash(password, 10);
     const accountant_tier = role === 'accountant' ? 'free' : '';
+    const now             = new Date().toISOString();
+    // Every new signup gets a 30-day free trial at 'professional' tier
+    const trial_tier      = role === 'accountant' ? 'professional' : 'professional';
 
     stmtInsertUser.run({
       id, email, name, company, role,
       password_hash, accountant_tier,
       firm_name: null, accent_color: null,
-      created_at: new Date().toISOString(),
+      trial_started_at: now,
+      trial_tier,
+      trial_drip_sent: '[]',
+      created_at: now,
     });
 
     // Record referral if signup came via a referral link
@@ -229,6 +237,52 @@ router.post('/reset-password', async (req, res, next) => {
       .run(password_hash, user.id);
 
     res.json({ message: 'Password reset successfully. You can now log in.' });
+  } catch (err) { next(err); }
+});
+
+// GET /api/auth/trial-status — current trial state for the logged-in user
+router.get('/trial-status', authenticate, (req, res) => {
+  const row  = db.prepare('SELECT * FROM users WHERE id = ?').get(req.userId);
+  if (!row) return res.status(404).json({ error: 'User not found' });
+  const user = rowToUser(row);
+  res.json(getTrialStatus(user));
+});
+
+// ── Runtime migration: add firm_logo if missing ──────────────────────────────
+try {
+  db.exec("ALTER TABLE users ADD COLUMN firm_logo TEXT");
+} catch { /* column already exists */ }
+
+// PUT /api/auth/profile — update firm branding (agency tier only)
+router.put('/profile', authenticate, requireTier('agency'), (req, res, next) => {
+  try {
+    const { firmName, accentColor, firmLogo } = req.body;
+
+    // Validate accent color: must be a valid hex or null
+    if (accentColor && !/^#[0-9a-fA-F]{6}$/.test(accentColor)) {
+      return res.status(400).json({ error: 'Invalid accent color — use a 6-digit hex like #1d4ed8' });
+    }
+
+    // firmLogo: base64 data URI, max ~300KB
+    if (firmLogo && firmLogo.length > 400000) {
+      return res.status(400).json({ error: 'Logo too large — keep it under 300KB' });
+    }
+
+    db.prepare(`
+      UPDATE users SET
+        firm_name    = COALESCE(?, firm_name),
+        accent_color = ?,
+        firm_logo    = ?
+      WHERE id = ?
+    `).run(firmName || null, accentColor || null, firmLogo || null, req.userId);
+
+    const updated = db.prepare('SELECT * FROM users WHERE id = ?').get(req.userId);
+    const user    = rowToUser(updated);
+    res.json({
+      firmName:    user.firmName,
+      accentColor: user.accentColor,
+      firmLogo:    user.firmLogo,
+    });
   } catch (err) { next(err); }
 });
 

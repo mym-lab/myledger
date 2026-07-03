@@ -32,16 +32,20 @@ db.exec('PRAGMA temp_store = MEMORY;');   // temp tables in RAM
 // ── Schema creation ───────────────────────────────────────────────────────────
 db.exec(`
 CREATE TABLE IF NOT EXISTS users (
-  id              TEXT PRIMARY KEY,
-  email           TEXT UNIQUE NOT NULL,
-  name            TEXT,
-  company         TEXT,
-  role            TEXT NOT NULL DEFAULT 'client',
-  password_hash   TEXT NOT NULL,
-  accountant_tier TEXT NOT NULL DEFAULT 'free',
-  firm_name       TEXT,
-  accent_color    TEXT,
-  created_at      TEXT NOT NULL
+  id               TEXT PRIMARY KEY,
+  email            TEXT UNIQUE NOT NULL,
+  name             TEXT,
+  company          TEXT,
+  role             TEXT NOT NULL DEFAULT 'client',
+  password_hash    TEXT NOT NULL,
+  accountant_tier  TEXT NOT NULL DEFAULT 'free',
+  firm_name        TEXT,
+  accent_color     TEXT,
+  firm_logo        TEXT,
+  trial_started_at TEXT,
+  trial_tier       TEXT NOT NULL DEFAULT 'professional',
+  trial_drip_sent  TEXT NOT NULL DEFAULT '[]',
+  created_at       TEXT NOT NULL
 );
 
 CREATE TABLE IF NOT EXISTS clients (
@@ -335,6 +339,14 @@ catch (_) { /* column already exists */ }
 try { db.exec("ALTER TABLE clients ADD COLUMN is_msme INTEGER NOT NULL DEFAULT 0"); }
 catch (_) { /* column already exists */ }
 
+// ── v10+ Trial system ─────────────────────────────────────────────────────────
+try { db.exec("ALTER TABLE users ADD COLUMN trial_started_at TEXT"); }
+catch (_) { /* column already exists */ }
+try { db.exec("ALTER TABLE users ADD COLUMN trial_tier TEXT NOT NULL DEFAULT 'professional'"); }
+catch (_) { /* column already exists */ }
+try { db.exec("ALTER TABLE users ADD COLUMN trial_drip_sent TEXT NOT NULL DEFAULT '[]'"); }
+catch (_) { /* column already exists */ }
+
 // ── v10+ Payroll / 1601-C ─────────────────────────────────────────────────────
 try { db.exec(`
   CREATE TABLE IF NOT EXISTS employees (
@@ -416,9 +428,12 @@ export function rowToUser(r) {
     id: r.id, email: r.email, name: r.name, company: r.company,
     role: r.role, passwordHash: r.password_hash,
     accountantTier: r.accountant_tier,
-    firmName: r.firm_name, accentColor: r.accent_color,
+    firmName: r.firm_name, accentColor: r.accent_color, firmLogo: r.firm_logo,
     referralCode:    r.referral_code    || null,
     referralBalance: r.referral_balance || 0,
+    trialStartedAt:  r.trial_started_at || null,
+    trialTier:       r.trial_tier       || 'professional',
+    trialDripSent:   JSON.parse(r.trial_drip_sent || '[]'),
     createdAt: r.created_at,
   };
 }

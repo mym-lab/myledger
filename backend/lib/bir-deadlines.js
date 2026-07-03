@@ -61,6 +61,10 @@ export function getUpcomingDeadlines(taxTypes = [], ref = new Date()) {
         dt   = nextMonthlyDate(now, 5);
         name = 'BIR Form 1550 — Documentary Stamp Tax';
         break;
+      case '2000OT':
+        dt   = nextMonthlyDate(now, 5);
+        name = 'BIR Form 2000-OT — Documentary Stamp Tax (One-Time)';
+        break;
       case '2551M':
         dt   = nextMonthlyDate(now, 20);
         name = 'BIR Form 2551M — Monthly Percentage Tax';
@@ -76,6 +80,10 @@ export function getUpcomingDeadlines(taxTypes = [], ref = new Date()) {
       case '1601EQ':
         dt   = nextQuarterlyDate(now, 25);
         name = 'BIR Form 1601-EQ — Expanded WHT';
+        break;
+      case '1601FQ':
+        dt   = nextQuarterlyDate(now, 30);
+        name = 'BIR Form 1601-FQ — Final WHT (Quarterly)';
         break;
       case '1702Q':
         dt   = nextQuarterlyDate(now, 60);

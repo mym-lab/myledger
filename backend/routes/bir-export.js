@@ -15,10 +15,12 @@
 import { Router }          from 'express';
 import { db, rowToClient, rowToTx } from '../db.js';
 import { authenticate, noEncoder } from '../middleware/auth.js';
+import { requireTier } from '../middleware/tierGuard.js';
 
 const router = Router();
 router.use(authenticate);
 router.use(noEncoder);
+router.use(requireTier('solo')); // eBIR XML export: solo+ only
 
 const round  = n => Math.round((n || 0) * 100) / 100;
 const sum    = (arr, key) => arr.reduce((s, t) => s + (t[key] || 0), 0);

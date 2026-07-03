@@ -4,6 +4,7 @@ import { v4 as uuid } from 'uuid';
 import { db, rowToClient, rowToTx, withTransaction, getSetting } from '../db.js';
 import { sendEmail } from '../email.js';
 import { authenticate, noEncoder } from '../middleware/auth.js';
+import { requireClientSlot } from '../middleware/tierGuard.js';
 
 const router = Router();
 router.use(authenticate);
@@ -72,8 +73,8 @@ router.get('/', (req, res, next) => {
   } catch (err) { next(err); }
 });
 
-// POST /api/clients
-router.post('/', (req, res, next) => {
+// POST /api/clients — enforces client-count limit per tier
+router.post('/', requireClientSlot(), (req, res, next) => {
   try {
     const {
       tradeName, tin, type, address = '', businessType = '',

@@ -367,3 +367,19 @@ export async function downloadCSV(path, filename) {
   document.body.removeChild(a);
   URL.revokeObjectURL(url);
 }
+
+export const getNotifications = () => get('/notifications');
+
+export const globalSearch = (params = {}) => {
+  const qs = new URLSearchParams(Object.fromEntries(
+    Object.entries(params).filter(([, v]) => v !== '' && v != null)
+  )).toString();
+  return get(`/search${qs ? '?' + qs : ''}`);
+};
+
+export const updateProfile = (data) => apiFetch('/auth/profile', {
+  method: 'PUT',
+  body: JSON.stringify(data),
+});
+
+export const getTrialStatus = () => get('/auth/trial-status');

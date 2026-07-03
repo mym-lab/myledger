@@ -10,7 +10,7 @@ import { existsSync } from 'fs';
 import { join, dirname } from 'path';
 import { fileURLToPath } from 'url';
 
-import { db } from './db.js';
+import { db, getSetting, setSetting } from './db.js';
 import authRoutes            from './routes/auth.js';
 import clientRoutes          from './routes/clients.js';
 import transactionRoutes     from './routes/transactions.js';
@@ -35,6 +35,10 @@ import paymentRoutes         from './routes/payments.js';
 import monitoringRoutes, { trackActivity } from './routes/monitoring.js';
 import importRoutes         from './routes/import.js';
 import narrativeRoutes      from './routes/narrative.js';
+import receiptsRoutes       from './routes/receipts.js';
+import searchRoutes         from './routes/search.js';
+import { getTrialStatus, DRIP_MILESTONES } from './lib/trial.js';
+import { getDripEmail }    from './lib/drip-emails.js';
 
 
 
@@ -70,6 +74,7 @@ app.use('/api/upgrade-requests', upgradeRequestsRoutes);
 app.use('/api/assets',           assetsRoutes);
 app.use('/api/contacts',         contactsRoutes);
 app.use('/api/notifications',    notificationsRoutes);
+app.use('/api/search',           searchRoutes);
 app.use('/api/coa',              coaRoutes);
 app.use('/api/periods',          periodsRoutes);
 app.use('/api/audit',            auditRoutes);
@@ -82,6 +87,7 @@ app.use('/api/payments',         paymentRoutes);
 app.use('/api/monitoring',       monitoringRoutes);
 app.use('/api/import',          importRoutes);
 app.use('/api/reports/narrative', narrativeRoutes);
+app.use('/api/receipts',          receiptsRoutes);
 
 
 
@@ -136,5 +142,108 @@ function checkExpiredSubscriptions() {
 }
 checkExpiredSubscriptions();
 setInterval(checkExpiredSubscriptions, 24 * 60 * 60 * 1000);
+
+// ── Daily BIR Reminder Scheduler ──────────────────────────────────────────────
+// Fires at 8:00 AM Philippine time (UTC+8 = 00:00 UTC) each day.
+// Guards with last-sent-date so it never double-sends within the same day.
+async function runDailyReminders() {
+  try {
+    const smtp = getSetting('smtp') || {};
+    if (!smtp.enabled) return; // reminders disabled in settings
+    if (!process.env.RESEND_API_KEY) return;
+
+    const today = new Date().toISOString().slice(0, 10);
+    const lastSent = getSetting('notifications_last_sent');
+    if (lastSent === today) return; // already sent today
+
+    // Dynamically call send-reminders logic (reuse notifications route helper)
+    const port = process.env.PORT || 5000;
+    // Use built-in fetch (Node 18+)
+    const res = await fetch(`http://localhost:${port}/api/notifications/send-reminders`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', 'x-internal-cron': '1' },
+      body: JSON.stringify({ daysAhead: 7 }),
+    });
+    if (res.ok) {
+      setSetting('notifications_last_sent', today);
+      const data = await res.json();
+      console.log('📅 Daily BIR reminders:', data.message || 'sent');
+    }
+  } catch (e) {
+    console.error('⚠️  Daily reminder scheduler error:', e.message);
+  }
+}
+
+// Check every hour; runs when PH local hour is 8 (UTC 0)
+function scheduleDailyReminders() {
+  const now   = new Date();
+  const utcH  = now.getUTCHours();
+  const utcM  = now.getUTCMinutes();
+  // PH 8 AM = UTC 0:00
+  if (utcH === 0 && utcM < 60) {
+    runDailyReminders();
+  }
+}
+setInterval(scheduleDailyReminders, 60 * 60 * 1000); // check every hour
+
+// ── Trial Drip Email Scheduler ────────────────────────────────────────────────
+// Runs once daily (same 8AM PH window). Sends tips to trial users on
+// days 3, 7, 14, and 29. Guards per-user so each day only sends once.
+async function runTrialDrip() {
+  try {
+    if (!process.env.RESEND_API_KEY) return;
+
+    const today = new Date().toISOString().slice(0, 10);
+    const lastSent = getSetting('trial_drip_last_sent');
+    if (lastSent === today) return; // already processed today
+
+    const { sendEmail } = await import('./email.js');
+
+    // Fetch all users who have an active or recently-expired trial
+    const users = db.prepare(`
+      SELECT * FROM users
+      WHERE trial_started_at IS NOT NULL
+        AND role IN ('accountant', 'client', 'encoder')
+    `).all();
+
+    let sent = 0;
+    for (const row of users) {
+      const { rowToUser } = await import('./db.js');
+      const user = rowToUser(row);
+      const { daysElapsed } = getTrialStatus(user);
+      const alreadySent = new Set(user.trialDripSent);
+
+      for (const milestone of DRIP_MILESTONES) {
+        if (daysElapsed >= milestone && !alreadySent.has(milestone)) {
+          const email = getDripEmail(milestone, user);
+          if (!email) continue;
+
+          const result = await sendEmail({ to: user.email, ...email });
+          if (result.sent) {
+            alreadySent.add(milestone);
+            db.prepare('UPDATE users SET trial_drip_sent=? WHERE id=?')
+              .run(JSON.stringify([...alreadySent]), user.id);
+            sent++;
+            console.log(`📧 Trial drip day ${milestone} → ${user.email}`);
+          }
+          break; // only send one milestone per user per run
+        }
+      }
+    }
+
+    setSetting('trial_drip_last_sent', today);
+    if (sent > 0) console.log(`📧 Trial drip: ${sent} email(s) sent`);
+  } catch (e) {
+    console.error('⚠️  Trial drip scheduler error:', e.message);
+  }
+}
+
+function scheduleTrialDrip() {
+  const now  = new Date();
+  const utcH = now.getUTCHours();
+  // Same window as BIR reminders — 8AM PH = UTC 0:00
+  if (utcH === 0) runTrialDrip();
+}
+setInterval(scheduleTrialDrip, 60 * 60 * 1000);
 
 app.listen(PORT, () => 

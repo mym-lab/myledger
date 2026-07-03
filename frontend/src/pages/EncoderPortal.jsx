@@ -47,7 +47,7 @@ const fmtDt = d => new Date(d).toLocaleDateString('en-PH', { month: 'short', day
 
 const inp = {
   width: '100%', padding: '9px 12px', borderRadius: 8, border: `1px solid ${T.border}`,
-  fontSize: 14, color: T.text, background: '#fafafa', boxSizing: 'border-box',
+  fontSize: 16, color: T.text, background: '#fafafa', boxSizing: 'border-box',
   outline: 'none', fontFamily: 'inherit',
 };
 
@@ -394,7 +394,7 @@ export default function EncoderPortal({ onLogout }) {
         )}
       </div>
 
-      <div style={{ maxWidth: 1100, margin: '0 auto', padding: isMobile ? '20px 16px 48px' : '32px 24px 56px' }}>
+      <div style={{ maxWidth: 1100, margin: '0 auto', padding: isMobile ? '20px 16px 100px' : '32px 24px 56px' }}>
 
         {/* Mobile: client selector */}
         {isMobile && clients.length > 0 && (
@@ -450,9 +450,71 @@ export default function EncoderPortal({ onLogout }) {
                 background: T.surface, borderRadius: T.radius, border: `1px solid ${T.border}` }}>
                 <div style={{ fontSize: 48, marginBottom: 14 }}>🧾</div>
                 <div style={{ fontWeight: 500, marginBottom: 6 }}>No transactions yet</div>
-                <div style={{ fontSize: 13 }}>Click "+ Add Transaction" to get started.</div>
+                <div style={{ fontSize: 13 }}>Tap "+ Add Transaction" to get started.</div>
+              </div>
+            ) : isMobile ? (
+              /* ── Mobile: Card list (no horizontal scroll) ── */
+              <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
+                {txns.map(t => (
+                  <div key={t.id} style={{
+                    background: T.surface, borderRadius: 12, border: `1px solid ${T.border}`,
+                    padding: '12px 14px', opacity: t.voided ? 0.55 : 1,
+                    boxShadow: '0 1px 4px rgba(0,0,0,0.05)',
+                  }}>
+                    <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: 6 }}>
+                      <div style={{ display: 'flex', gap: 6, alignItems: 'center', flexWrap: 'wrap' }}>
+                        {t.voided
+                          ? <span style={{ background: '#f0f0f0', color: T.muted, padding: '2px 8px', borderRadius: 6, fontSize: 11, fontWeight: 600 }}>VOID</span>
+                          : <span style={{ background: t.type === 'income' ? '#e3f7ed' : '#fff0f0',
+                              color: t.type === 'income' ? '#1a7a40' : T.red,
+                              padding: '2px 8px', borderRadius: 6, fontSize: 11, fontWeight: 700 }}>
+                              {t.type.toUpperCase()}
+                            </span>
+                        }
+                        {t.category && <span style={{ fontSize: 11, color: T.muted, background: T.bg, padding: '2px 7px', borderRadius: 6 }}>{t.category}</span>}
+                      </div>
+                      <span style={{ fontSize: 11, color: T.muted }}>{fmtDt(t.createdAt)}</span>
+                    </div>
+                    <div style={{ fontSize: 14, fontWeight: 500, color: T.text, marginBottom: 4,
+                      textDecoration: t.voided ? 'line-through' : 'none' }}>
+                      {t.description}
+                    </div>
+                    {t.voided && t.voidReason && (
+                      <div style={{ fontSize: 11, color: T.red, marginBottom: 4 }}>Void: {t.voidReason}</div>
+                    )}
+                    <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                      <div style={{ display: 'flex', gap: 12 }}>
+                        <div>
+                          <div style={{ fontSize: 10, color: T.muted, marginBottom: 1 }}>NET</div>
+                          <div style={{ fontSize: 14, fontWeight: 700, color: t.type === 'income' ? T.green : T.red }}>
+                            {t.type === 'income' ? '+' : '-'}{peso(t.net)}
+                          </div>
+                        </div>
+                        <div>
+                          <div style={{ fontSize: 10, color: T.muted, marginBottom: 1 }}>VAT</div>
+                          <div style={{ fontSize: 12, color: T.orange }}>{peso(t.vat)}</div>
+                        </div>
+                        <div>
+                          <div style={{ fontSize: 10, color: T.muted, marginBottom: 1 }}>GROSS</div>
+                          <div style={{ fontSize: 12, color: T.muted }}>{peso(t.gross)}</div>
+                        </div>
+                      </div>
+                      {!t.voided && (
+                        <button onClick={() => voidTx(t.id)}
+                          style={{ background: '#fff0f0', border: 'none', cursor: 'pointer',
+                            color: T.red, fontSize: 12, padding: '6px 12px', borderRadius: 8, fontWeight: 600 }}>
+                          ⊘ Void
+                        </button>
+                      )}
+                    </div>
+                    {t.referenceNo && (
+                      <div style={{ fontSize: 11, color: T.muted, marginTop: 4 }}>Ref: {t.referenceNo}</div>
+                    )}
+                  </div>
+                ))}
               </div>
             ) : (
+              /* ── Desktop: Full table ── */
               <div style={{ background: T.surface, borderRadius: T.radius, border: `1px solid ${T.border}`,
                 boxShadow: T.shadow, overflow: 'hidden' }}>
                 <div style={{ overflowX: 'auto' }}>
@@ -514,4 +576,44 @@ export default function EncoderPortal({ onLogout }) {
                           </td>
                         </tr>
                       ))}
-                    </t
+                    </tbody>
+                  </table>
+                </div>
+              </div>
+            )}
+
+            {showTx && (
+              <TxModal
+                clientId={active.id}
+                onSaved={() => { setShowTx(false); loadTxns(); }}
+                onClose={() => setShowTx(false)}
+              />
+            )}
+            {showCSVImport && (
+              <CSVImportModal
+                client={active}
+                onClose={() => setShowCSVImport(false)}
+                onImported={() => { setShowCSVImport(false); loadTxns(); }}
+              />
+            )}
+          </div>
+        )}
+      </div>
+
+      {/* Mobile FAB — sticky Add Transaction button */}
+      {isMobile && active && (
+        <button
+          onClick={() => setShowTx(true)}
+          style={{
+            position: 'fixed', bottom: 24, right: 20, zIndex: 200,
+            background: T.accent, color: '#fff', border: 'none',
+            borderRadius: '50%', width: 56, height: 56, fontSize: 28,
+            boxShadow: '0 4px 16px rgba(224,112,0,0.5)', cursor: 'pointer',
+            display: 'flex', alignItems: 'center', justifyContent: 'center',
+          }}
+          aria-label="Add transaction"
+        >＋</button>
+      )}
+    </div>
+  );
+}
