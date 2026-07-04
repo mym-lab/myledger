@@ -3706,6 +3706,7 @@ export default function AccountantPortal({ onLogout }) {
                       accentColor: brandAccent,
                     });
                   }}>⬇ Export PDF</Btn>
+                  </div>
                 </div>
                 <div style={{ fontSize: 13, color: T.muted, marginBottom: 24 }}>
                   {isSoleProp
