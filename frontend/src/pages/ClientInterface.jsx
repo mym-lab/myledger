@@ -1463,6 +1463,8 @@ export default function ClientInterface({ onLogout }) {
   const [forecast,      setForecast]      = useState(null);
   const [forecastDays,  setForecastDays]  = useState(90);
   const [forecastLoad,  setForecastLoad]  = useState(false);
+  const [cashPos,       setCashPos]       = useState(null);
+  const [overviewErr,   setOverviewErr]   = useState('');
   const [receiptTx,     setReceiptTx]     = useState(null);
   const [receiptList,   setReceiptList]   = useState([]);
   const [receiptLoad,   setReceiptLoad]   = useState(false);
@@ -1519,6 +1521,7 @@ export default function ClientInterface({ onLogout }) {
   }
 
   async function loadOverview() {
+    setOverviewErr('');
     try {
       const [inc, vat, txRes, dl] = await Promise.all([
         getIncomeReport(active.id),
@@ -1529,8 +1532,19 @@ export default function ClientInterface({ onLogout }) {
       setIncome(inc); setVatBal(vat);
       setOverTxns(txRes.transactions || []);
       setDL(dl.deadlines || []);
+      // Cash Position — derived from income + VAT balance
+      if (inc) {
+        setCashPos({
+          cash:       (inc.grossRevenue || inc.revenue * 1.12 || 0) - (inc.grossExpenses || inc.expenses * 1.12 || 0),
+          netProfit:  inc.profit || 0,
+          vatPayable: Math.max(0, (vat?.outputVAT || 0) - (vat?.inputVAT || 0)),
+        });
+      }
       try { const fc = await getCashFlowForecast(active.id, 90); setForecast(fc); } catch (e) { /* optional */ }
-    } catch (e) { console.error(e); }
+    } catch (e) {
+      console.error('Overview load failed:', e);
+      setOverviewErr(e.message || 'Failed to load dashboard data. Please refresh.');
+    }
   }
 
   async function loadTxns() {
@@ -1651,7 +1665,7 @@ export default function ClientInterface({ onLogout }) {
       await deleteClient(active.id);
       const rest = clients.filter(c => c.id !== active.id);
       setClients(rest); setActive(rest[0] || null);
-      setTxns([]); setIncome(null); setVatBal(null); setDL([]); setOverTxns([]);
+      setTxns([]); setIncome(null); setVatBal(null); setDL([]); setOverTxns([]); setCashPos(null); setOverviewErr('');
     } catch (e) { alert(e.message); }
     setShowDeleteConfirm(false);
     setDeleteConfirmText('');
@@ -1792,7 +1806,7 @@ export default function ClientInterface({ onLogout }) {
                   <span style={{ color: T.border, fontSize: 18 }}>|</span>
                   <select value={active?.id || ''} onChange={e => {
                     const c = clients.find(x => x.id === e.target.value);
-                    setActive(c); setTxns([]); setIncome(null); setVatBal(null); setDL([]); setOverTxns([]);
+                    setActive(c); setTxns([]); setIncome(null); setVatBal(null); setDL([]); setOverTxns([]); setCashPos(null); setOverviewErr('');
                   }} style={{ border: 'none', background: 'transparent', fontSize: 14, fontWeight: 600,
                     color: T.text, cursor: 'pointer', outline: 'none', fontFamily: 'inherit' }}>
                     {clients.map(c => <option key={c.id} value={c.id}>{c.tradeName}</option>)}
@@ -1824,7 +1838,7 @@ export default function ClientInterface({ onLogout }) {
           <div style={{ marginBottom: 16 }}>
             <select value={active?.id || ''} onChange={e => {
               const c = clients.find(x => x.id === e.target.value);
-              setActive(c); setTxns([]); setIncome(null); setVatBal(null); setDL([]); setOverTxns([]);
+              setActive(c); setTxns([]); setIncome(null); setVatBal(null); setDL([]); setOverTxns([]); setCashPos(null); setOverviewErr('');
             }} style={{ ...inp, fontWeight: 600 }}>
               {clients.map(c => <option key={c.id} value={c.id}>{c.tradeName}</option>)}
             </select>
@@ -1889,6 +1903,14 @@ export default function ClientInterface({ onLogout }) {
               <span style={{ fontSize: 13, color: T.muted }}>TIN {active.tin} · {active.type}</span>
             </div>
 
+            {/* Error banner */}
+            {overviewErr && (
+              <div style={{ background: '#fff5f5', border: '1px solid #fca5a5', borderRadius: 10,
+                padding: '10px 16px', marginBottom: 16, fontSize: 13, color: '#b91c1c' }}>
+                ⚠️ {overviewErr}
+              </div>
+            )}
+
             {/* P&L cards */}
             <div style={{ display: 'flex', gap: 14, flexWrap: 'wrap', marginBottom: 20 }}>
               <MetricCard label="Net Revenue"  value={income ? peso(income.revenue)  : '—'} sub="VAT-exclusive" color={T.green} />
@@ -1896,6 +1918,7 @@ export default function ClientInterface({ onLogout }) {
               <MetricCard label="Net Profit"   value={income ? peso(income.profit)   : '—'}
                 sub={income ? (income.profit >= 0 ? 'Profitable ✓' : 'Net loss') : ''}
                 color={!income ? T.text : income.profit >= 0 ? T.accent : T.red} />
+              <MetricCard label="Output VAT"   value={vatBal ? peso(vatBal.outputVAT) : '—'} sub="Payable to BIR" color={T.orange} />
               <MetricCard label="Total Transactions" value={overTxns.length} sub="recorded" color={T.text} />
             </div>
 
@@ -1974,6 +1997,32 @@ export default function ClientInterface({ onLogout }) {
                 </div>
               </Card>
             </UpgradeGate>
+
+            {/* ── Cash Position — Starter+ ── */}
+            {cashPos && (
+              <UpgradeGate tier={tier} required="starter" onUpgrade={openUpgrade}>
+                <Card style={{ marginTop: 20 }}>
+                  <SectionHead>💵 Cash Position</SectionHead>
+                  <div style={{ display: 'flex', gap: 16, flexWrap: 'wrap' }}>
+                    {[
+                      { label: 'Estimated Cash (this period)', value: cashPos.cash,       color: cashPos.cash >= 0 ? T.green : T.red },
+                      { label: 'Net Profit / Loss',            value: cashPos.netProfit,  color: cashPos.netProfit >= 0 ? T.accent : T.red },
+                      { label: 'VAT to Remit to BIR',         value: cashPos.vatPayable, color: cashPos.vatPayable > 0 ? T.orange : T.green },
+                    ].map(m => (
+                      <div key={m.label} style={{ flex: 1, minWidth: 160, padding: '12px 16px',
+                        background: T.bg, borderRadius: 10, border: `1px solid ${T.border}` }}>
+                        <div style={{ fontSize: 11, color: T.muted, marginBottom: 5 }}>{m.label}</div>
+                        <div style={{ fontSize: 20, fontWeight: 700, color: m.color }}>{peso(m.value)}</div>
+                      </div>
+                    ))}
+                  </div>
+                  <div style={{ fontSize: 11.5, color: T.muted, marginTop: 10 }}>
+                    Cash estimate = gross income received − gross expenses paid this period.
+                    Set aside the VAT amount before the 20th for BIR remittance.
+                  </div>
+                </Card>
+              </UpgradeGate>
+            )}
 
             {/* ── Cash Flow Forecast ── */}
             <Card style={{ marginTop: 20 }}>

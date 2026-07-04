@@ -55,10 +55,12 @@ export function userMeetsTier(user, minTier) {
     return userRank >= reqRank;
   }
 
-  // client / encoder: check accountant_tier (encoder inherits from accountant)
-  // For client-owned records, subscription_tier is on the client record, not user —
-  // so client-side gating happens in the route handler or frontend.
-  // This guard is primarily used for accountant-role routes.
+  // client / encoder: bypass accountant tier guard entirely.
+  // Their route-level access is already gated by canAccess() (ownerId / accountantId / encoderIds).
+  // Client subscription tiers are enforced per-route or on the frontend, not via this middleware.
+  if (user.role === 'client' || user.role === 'encoder') return true;
+
+  // Fallback for any other role — treat as free
   const userRank = ACCOUNTANT_TIER_RANK[user.accountantTier] ??
                    CLIENT_TIER_RANK[user.accountantTier] ?? 0;
   const reqRank  = ACCOUNTANT_TIER_RANK[minTier] ??
