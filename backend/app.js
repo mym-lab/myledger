@@ -246,4 +246,14 @@ function scheduleTrialDrip() {
 }
 setInterval(scheduleTrialDrip, 60 * 60 * 1000);
 
-app.listen(PORT, () => 
+app.listen(PORT, () => {
+  console.log(`
+✅  MyLedger ${isProd ? 'PRODUCTION' : 'dev'} server → http://localhost:${PORT}`);
+  if (!isProd) {
+    console.log(`    Frontend dev server  → http://localhost:3000`);
+  } else {
+    console.log(`    Serving frontend from ${frontendDist}`);
+  }
+  console.log(`    Health : GET /api/health
+`);
+});
