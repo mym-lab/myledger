@@ -215,7 +215,7 @@ const ACCT_TIERS = {
 
 function ProLock({ onUpgrade, trialExpired = false }) {
   const isMobile = useMobile();
-  const [hovered, setHovered] = React.useState(null);
+  const [hovered, setHovered] = useState(null);
   const tiers = [
     { tier: 'solo',         label: 'Solo',         price: '₱599',   clients: '5 clients',              color: '#0071e3', note: null },
     { tier: 'professional', label: 'Professional', price: '₱1,499', clients: '15 clients',             color: '#ff9500', note: null },
@@ -1316,7 +1316,7 @@ const TAB_GROUPS = [
   { label: '📝 Data Entry',  tabs: ['Transactions', 'Invoices', 'Contacts'] },
   { label: '📒 Books',       tabs: ['Journal Entries', 'Trial Balance', 'Books', 'General Journal', 'General Ledger', 'COA', 'Assets'] },
   { label: '📈 Reports',     tabs: ['Income Statement', 'Balance Sheet', 'Cash Flow', 'Compare'] },
-  { label: '🏛 BIR & Tax',   tabs: ['BIR Returns', 'BIR Reminders', 'Filing Calendar', 'Payroll', 'Alphalist', 'SLSP'] },
+  { label: '🏛 BIR & Tax',   tabs: ['BIR Reminders', 'Filing Calendar', 'BIR Returns', 'Payroll', 'Alphalist', 'SLSP'] },
   { label: '⚙️ Settings',    tabs: ['Period Lock', 'Audit Log', 'Business Setup', 'Referral'] },
 ];
 
@@ -1741,8 +1741,8 @@ const FWT_ATC = [
 function FWT1601FQCalc({ birYear, birQuarter }) {
   const qLabel = { 1: 'Q1 (Jan–Mar)', 2: 'Q2 (Apr–Jun)', 3: 'Q3 (Jul–Sep)', 4: 'Q4 (Oct–Dec)' };
   const dueMonth = { 1: 'April 30', 2: 'July 31', 3: 'October 31', 4: 'January 31' };
-  const [expanded,  setExpanded]  = React.useState(false);
-  const [entries,   setEntries]   = React.useState(
+  const [expanded,  setExpanded]  = useState(false);
+  const [entries,   setEntries]   = useState(
     FWT_ATC.map(a => ({ ...a, base: '' }))
   );
 
@@ -1957,11 +1957,11 @@ const DST_SCHEDULES = [
 ];
 
 function DST2000OTCalc() {
-  const [docType,   setDocType]   = React.useState('real_property');
-  const [amount,    setAmount]    = React.useState('');
-  const [years,     setYears]     = React.useState('1');
-  const [isListed,  setIsListed]  = React.useState(false);
-  const [expanded,  setExpanded]  = React.useState(false);
+  const [docType,   setDocType]   = useState('real_property');
+  const [amount,    setAmount]    = useState('');
+  const [years,     setYears]     = useState('1');
+  const [isListed,  setIsListed]  = useState(false);
+  const [expanded,  setExpanded]  = useState(false);
 
   const schedule = DST_SCHEDULES.find(s => s.code === docType) || DST_SCHEDULES[0];
   const amt  = parseFloat(amount) || 0;
