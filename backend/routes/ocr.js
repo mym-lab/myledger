@@ -7,13 +7,56 @@
 
 import { Router } from 'express';
 import multer from 'multer';
-import { GoogleAuth } from 'google-auth-library';
 import { authenticate } from '../middleware/auth.js';
 
-// GoogleAuth reads GOOGLE_APPLICATION_CREDENTIALS automatically (ADC)
-const googleAuth = new GoogleAuth({
-  scopes: ['https://www.googleapis.com/auth/cloud-vision'],
-});
+// Vision API auth strategy:
+//   1. GOOGLE_VISION_KEY env var → API key (easiest for Railway — just paste the key)
+//   2. GOOGLE_APPLICATION_CREDENTIALS env var → ADC service-account JSON (legacy)
+//   3. Neither → return 503 with setup instructions
+//
+// To set up in Railway:
+//   Dashboard → your service → Variables → add GOOGLE_VISION_KEY = <your API key>
+//   Get it from: console.cloud.google.com → APIs → Cloud Vision → Credentials
+async function callVisionAPI(base64Image) {
+  const apiKey = process.env.GOOGLE_VISION_KEY;
+
+  if (apiKey) {
+    // Simple API-key mode — no service account file needed
+    const res = await fetch(
+      `https://vision.googleapis.com/v1/images:annotate?key=${apiKey}`,
+      {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          requests: [{ image: { content: base64Image }, features: [{ type: 'DOCUMENT_TEXT_DETECTION' }] }],
+        }),
+      }
+    );
+    const data = await res.json();
+    if (!res.ok || data.error) throw new Error(data.error?.message || `Vision API HTTP ${res.status}`);
+    return data;
+  }
+
+  if (process.env.GOOGLE_APPLICATION_CREDENTIALS) {
+    // ADC fallback — requires service-account JSON file on the server
+    const { GoogleAuth } = await import('google-auth-library');
+    const auth   = new GoogleAuth({ scopes: ['https://www.googleapis.com/auth/cloud-vision'] });
+    const client = await auth.getClient();
+    const { token } = await client.getAccessToken();
+    const res = await fetch('https://vision.googleapis.com/v1/images:annotate', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${token}` },
+      body: JSON.stringify({
+        requests: [{ image: { content: base64Image }, features: [{ type: 'DOCUMENT_TEXT_DETECTION' }] }],
+      }),
+    });
+    const data = await res.json();
+    if (!res.ok || data.error) throw new Error(data.error?.message || `Vision API HTTP ${res.status}`);
+    return data;
+  }
+
+  throw new Error('NOT_CONFIGURED');
+}
 
 const router = Router();
 router.use(authenticate);
@@ -127,47 +170,21 @@ router.post('/receipt', upload.single('receipt'), async (req, res, next) => {
       return res.status(400).json({ error: 'No image uploaded. Use form field name "receipt".' });
     }
 
-    if (!process.env.GOOGLE_APPLICATION_CREDENTIALS) {
-      return res.status(503).json({
-        error: 'Google Application Credentials not configured',
-        hint:  'Set GOOGLE_APPLICATION_CREDENTIALS=./service-account.json in backend/.env',
-      });
-    }
-
     const base64 = req.file.buffer.toString('base64');
 
-    // Get a short-lived access token via ADC (Service Account JSON)
-    console.log('🔐 Getting ADC token, credentials path:', process.env.GOOGLE_APPLICATION_CREDENTIALS);
-    const authClient  = await googleAuth.getClient();
-    const { token }   = await authClient.getAccessToken();
-    console.log('✅ Token obtained:', token ? 'yes' : 'NO TOKEN');
-
-    const visionRes = await fetch(
-      'https://vision.googleapis.com/v1/images:annotate',
-      {
-        method:  'POST',
-        headers: {
-          'Content-Type':  'application/json',
-          'Authorization': `Bearer ${token}`,
-        },
-        body: JSON.stringify({
-          requests: [{
-            image:    { content: base64 },
-            features: [{ type: 'DOCUMENT_TEXT_DETECTION' }],
-          }],
-        }),
+    let visionData;
+    try {
+      visionData = await callVisionAPI(base64);
+    } catch (err) {
+      if (err.message === 'NOT_CONFIGURED') {
+        return res.status(503).json({
+          error: 'OCR not configured',
+          hint:  'Add GOOGLE_VISION_KEY to Railway environment variables. ' +
+                 'Get your key from console.cloud.google.com → APIs & Services → Credentials.',
+        });
       }
-    );
-
-    const visionData = await visionRes.json();
-
-    if (!visionRes.ok || visionData.error) {
-      const details = visionData.error?.message || `HTTP ${visionRes.status}`;
-      console.error('❌ Vision API error:', details, JSON.stringify(visionData.error));
-      return res.status(422).json({
-        error:   'Google Vision API error',
-        details,
-      });
+      console.error('❌ Vision API error:', err.message);
+      return res.status(422).json({ error: 'Google Vision API error', details: err.message });
     }
 
     const fullText = visionData.responses?.[0]?.fullTextAnnotation?.text;

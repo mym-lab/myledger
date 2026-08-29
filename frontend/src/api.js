@@ -2,35 +2,56 @@
 const BASE = '/api';
 const getToken = () => localStorage.getItem('ml_token');
 
+// Network timeout: abort after 20 seconds so slow PH connections don't hang forever
+const FETCH_TIMEOUT_MS = 20_000;
+
 async function request(method, path, body = null, auth = false) {
   const headers = {};
   if (body) headers['Content-Type'] = 'application/json';
   if (auth) headers['Authorization'] = `Bearer ${getToken()}`;
-  const res  = await fetch(BASE + path, { method, headers, body: body ? JSON.stringify(body) : null });
+
+  const controller = new AbortController();
+  const timeoutId  = setTimeout(() => controller.abort(), FETCH_TIMEOUT_MS);
+
+  let res;
+  try {
+    res = await fetch(BASE + path, {
+      method, headers,
+      body: body ? JSON.stringify(body) : null,
+      signal: controller.signal,
+    });
+  } catch (err) {
+    clearTimeout(timeoutId);
+    if (err.name === 'AbortError') {
+      throw new Error('Network timeout — check your connection and try again.');
+    }
+    throw new Error('Network error — check your connection and try again.');
+  }
+  clearTimeout(timeoutId);
+
   const data = await res.json().catch(() => ({}));
-  // Token expired or invalidated server-side → clear session and reload to login
-  // Exception: if the token was just issued (< 30 s ago) don't auto-redirect —
-  // it means something else is wrong (e.g. JWT_SECRET mismatch on the server).
-  // In that case just throw so the UI can surface the error instead of boot-looping.
-  if (res.status === 401 || res.status === 403) {
+
+  // 401 = token expired or invalid → clear session and redirect to login
+  // 403 = valid token but not authorized for this resource → do NOT log out;
+  //       let the UI handle it (show error, blur the feature, etc.)
+  if (res.status === 401) {
     const tok = localStorage.getItem('ml_token');
     let justIssued = false;
     try {
       const payload = JSON.parse(atob(tok.split('.')[1]));
-      // iat (issued-at) is in seconds
       justIssued = payload.iat && (Date.now() / 1000 - payload.iat) < 30;
     } catch { /* ignore */ }
 
     if (!justIssued) {
       localStorage.removeItem('ml_token');
       localStorage.removeItem('ml_user');
-      // Small delay so any in-flight UI can settle before the reload
       setTimeout(() => {
         window.location.href = window.location.pathname.startsWith('/admin') ? '/admin' : '/';
       }, 300);
     }
     throw new Error(data?.error || 'Session expired. Please sign in again.');
   }
+
   if (!res.ok) throw new Error(data.error || `Request failed (${res.status})`);
   return data;
 }
