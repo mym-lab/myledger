@@ -1310,6 +1310,16 @@ function computeIncomeTax(transactions, client, year, quarter /* null = annual *
 
 const TABS = ['Dashboard', 'Transactions', 'Invoices', 'Journal Entries', 'Trial Balance', 'Books', 'General Journal', 'General Ledger', 'COA', 'Period Lock', 'Audit Log', 'BIR Returns', 'Payroll', 'Alphalist', 'SLSP', 'Income Statement', 'Balance Sheet', 'Cash Flow', 'Assets', 'Contacts', 'BIR Reminders', 'Filing Calendar', 'Compare', 'Portfolio', 'Business Setup', 'Referral'];
 
+// Grouped navigation — replaces the flat 26-tab bar with 6 category groups
+const TAB_GROUPS = [
+  { label: '📊 Overview',    tabs: ['Dashboard', 'Portfolio'] },
+  { label: '📝 Data Entry',  tabs: ['Transactions', 'Invoices', 'Contacts'] },
+  { label: '📒 Books',       tabs: ['Journal Entries', 'Trial Balance', 'Books', 'General Journal', 'General Ledger', 'COA', 'Assets'] },
+  { label: '📈 Reports',     tabs: ['Income Statement', 'Balance Sheet', 'Cash Flow', 'Compare'] },
+  { label: '🏛 BIR & Tax',   tabs: ['BIR Returns', 'BIR Reminders', 'Filing Calendar', 'Payroll', 'Alphalist', 'SLSP'] },
+  { label: '⚙️ Settings',    tabs: ['Period Lock', 'Audit Log', 'Business Setup', 'Referral'] },
+];
+
 const TAX_TYPES_LIST = [
   { code: '2550M',  label: '2550M — Monthly VAT Return' },
   { code: '2550Q',  label: '2550Q — Quarterly VAT Return' },
@@ -2932,28 +2942,68 @@ export default function AccountantPortal({ onLogout }) {
           </div>
         )}
 
-        {/* Tab bar */}
-        <div style={{ display: 'flex', gap: 4, marginBottom: 28, background: T.surface, padding: 4,
-          borderRadius: 10, boxShadow: T.shadow, flexWrap: 'wrap',
-          overflowX: isMobile ? 'auto' : 'visible' }}>
-          {TABS.map(t => {
-            const locked = !isPro && PRO_TABS.has(t);
-            const isActive = tab === t;
-            return (
-              <button key={t} onClick={() => setTab(t)} style={{
-                padding: '7px 18px', borderRadius: 7, border: 'none', cursor: 'pointer',
-                fontSize: 14, fontWeight: 500, fontFamily: 'inherit', transition: 'all .15s',
-                background: isActive ? (locked ? '#888' : T.accent) : locked ? '#f0f0f0' : 'transparent',
-                color: isActive ? '#fff' : locked ? '#aaa' : T.muted,
-                display: 'flex', alignItems: 'center', gap: 5,
-                opacity: locked && !isActive ? 0.7 : 1,
-              }}>
-                {locked && <span style={{ fontSize: 10 }}>🔒</span>}
-                {t}
-              </button>
-            );
-          })}
-        </div>
+        {/* ── Grouped navigation ─────────────────────────────────────────────
+             Top row  : 6 category pills   (~36 px, never wraps on desktop)
+             Sub-tab  : tabs in active group only (~34 px, max 7 items)
+             Total    : ~70 px vs the previous ~180 px wrapping mess        */}
+        {(() => {
+          const activeGroup = TAB_GROUPS.find(g => g.tabs.includes(tab)) || TAB_GROUPS[0];
+          return (
+            <div style={{ marginBottom: 24 }}>
+
+              {/* Category row */}
+              <div style={{ display: 'flex', gap: 3, flexWrap: 'wrap', background: T.surface,
+                padding: 4, borderRadius: '10px 10px 0 0', boxShadow: T.shadow }}>
+                {TAB_GROUPS.map(g => {
+                  const isActive = g === activeGroup;
+                  return (
+                    <button key={g.label}
+                      onClick={() => {
+                        // Jump to first unlocked tab in this group (or first tab if all locked)
+                        const first = g.tabs.find(t => isPro || !PRO_TABS.has(t)) || g.tabs[0];
+                        setTab(first);
+                      }}
+                      style={{ padding: '8px 18px', borderRadius: 7, border: 'none',
+                        cursor: 'pointer', fontSize: 13, fontWeight: 700,
+                        fontFamily: 'inherit', transition: 'all .15s', whiteSpace: 'nowrap',
+                        background: isActive ? T.accent : 'transparent',
+                        color: isActive ? '#fff' : T.muted,
+                        borderBottom: isActive ? `2px solid ${T.accent}` : '2px solid transparent',
+                      }}>
+                      {g.label}
+                    </button>
+                  );
+                })}
+              </div>
+
+              {/* Sub-tab row — only active group's tabs */}
+              <div style={{ display: 'flex', gap: 3, flexWrap: 'wrap', padding: '6px 8px',
+                background: `${T.accent}06`, borderRadius: '0 0 10px 10px',
+                border: `1px solid ${T.accent}18`, borderTop: 'none',
+                boxShadow: '0 3px 10px rgba(0,0,0,0.04)' }}>
+                {activeGroup.tabs.map(t => {
+                  const locked  = !isPro && PRO_TABS.has(t);
+                  const isActive = tab === t;
+                  return (
+                    <button key={t} onClick={() => setTab(t)}
+                      style={{ padding: '5px 14px', borderRadius: 6, border: 'none',
+                        cursor: 'pointer', fontSize: 13, fontWeight: isActive ? 600 : 400,
+                        fontFamily: 'inherit', transition: 'all .15s', whiteSpace: 'nowrap',
+                        background: isActive ? T.accent : 'transparent',
+                        color: isActive ? '#fff' : locked ? '#bbb' : T.text,
+                        display: 'flex', alignItems: 'center', gap: 4,
+                        opacity: locked && !isActive ? 0.65 : 1,
+                      }}>
+                      {locked && <span style={{ fontSize: 9 }}>🔒</span>}
+                      {t}
+                    </button>
+                  );
+                })}
+              </div>
+
+            </div>
+          );
+        })()}
 
         {/* ── Tier upgraded success toast ── */}
         {tierUpgradedMsg && (
