@@ -1289,6 +1289,262 @@ function LapsingModal({ data, onClose }) {
   );
 }
 
+
+
+// ─── Install Settings Button (for Business Setup tab) ────────────────────────
+function InstallSettingsButton({ T }) {
+  const [platform,       setPlatform]       = useState('');
+  const [deferredPrompt, setDeferredPrompt] = useState(null);
+  const [installed,      setInstalled]      = useState(false);
+  const [expanded,       setExpanded]       = useState(false);
+  const [dismissed,      setDismissed]      = useState(
+    !!localStorage.getItem('ml_install_dismissed')
+  );
+
+  useEffect(() => {
+    if (window.matchMedia('(display-mode: standalone)').matches || window.navigator.standalone) {
+      setInstalled(true);
+      return;
+    }
+    const ua = navigator.userAgent;
+    const isIOS     = /iPad|iPhone|iPod/.test(ua) && !window.MSStream;
+    const isAndroid = /Android/.test(ua);
+    const isMac     = /Macintosh/.test(ua) && !isIOS;
+    const isChrome  = /Chrome/.test(ua) && !/Edg/.test(ua);
+    const isEdge    = /Edg/.test(ua);
+    const isSafari  = /Safari/.test(ua) && !isChrome && !isEdge && !/CriOS|FxiOS/.test(ua);
+
+    if (isIOS && isSafari)  { setPlatform('ios');        return; }
+    if (isMac && isSafari)  { setPlatform('mac-safari'); return; }
+
+    const handler = (e) => {
+      e.preventDefault();
+      setDeferredPrompt(e);
+      setPlatform(isAndroid ? 'android' : 'desktop');
+    };
+    window.addEventListener('beforeinstallprompt', handler);
+    return () => window.removeEventListener('beforeinstallprompt', handler);
+  }, []);
+
+  const handleInstall = async () => {
+    if (deferredPrompt) {
+      deferredPrompt.prompt();
+      const { outcome } = await deferredPrompt.userChoice;
+      if (outcome === 'accepted') setInstalled(true);
+    }
+  };
+
+  const showBanner = () => {
+    localStorage.removeItem('ml_install_dismissed');
+    setDismissed(false);
+    // Trigger re-check of InstallPrompt by refreshing
+    window.location.reload();
+  };
+
+  const instructions = {
+    ios: ['Tap the Share button (box with arrow) in Safari', 'Scroll down and tap "Add to Home Screen"', 'Tap "Add" to confirm'],
+    'mac-safari': ['Click the Share button in the Safari toolbar', 'Choose "Add to Dock"', 'Click "Add" to confirm'],
+  };
+
+  if (installed) {
+    return (
+      <div style={{ display: 'flex', alignItems: 'center', gap: 10, color: '#22c55e', fontWeight: 600, fontSize: 14 }}>
+        <span style={{ fontSize: 20 }}>✅</span> MyLedger is already installed on this device.
+      </div>
+    );
+  }
+
+  const steps = instructions[platform];
+
+  return (
+    <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
+      {/* Native install button (Chrome/Edge/Android) */}
+      {deferredPrompt && (
+        <div>
+          <Btn onClick={handleInstall} style={{ gap: 8 }}>
+            📲 Install MyLedger
+          </Btn>
+          <div style={{ fontSize: 12, color: T.muted, marginTop: 6 }}>
+            Installs as a standalone app on this device — no App Store required.
+          </div>
+        </div>
+      )}
+
+      {/* Manual steps for iOS / macOS Safari */}
+      {steps && (
+        <div>
+          <div
+            style={{ fontSize: 14, color: T.accent, cursor: 'pointer', fontWeight: 500 }}
+            onClick={() => setExpanded(v => !v)}
+          >
+            {expanded ? '▾ Hide' : '▸ Show'} install steps for this device
+          </div>
+          {expanded && (
+            <ol style={{ margin: '10px 0 0 18px', padding: 0, fontSize: 13, color: T.text, lineHeight: 1.8 }}>
+              {steps.map((s, i) => <li key={i}>{s}</li>)}
+            </ol>
+          )}
+        </div>
+      )}
+
+      {/* No prompt and no manual steps = browser doesn't support PWA install */}
+      {!deferredPrompt && !steps && (
+        <div style={{ fontSize: 13, color: T.muted }}>
+          Your current browser does not support direct install. Try opening MyLedger in Chrome, Edge, or Safari.
+        </div>
+      )}
+
+      {/* Re-show install banner if it was dismissed */}
+      {dismissed && (
+        <div style={{ marginTop: 4, fontSize: 13, color: T.muted }}>
+          You dismissed the install banner. <span style={{ color: T.accent, cursor: 'pointer', textDecoration: 'underline' }}
+            onClick={showBanner}>Show it again</span>
+        </div>
+      )}
+    </div>
+  );
+}
+
+// ─── PWA Install Prompt ───────────────────────────────────────────────────────
+function InstallPrompt() {
+  const [show,           setShow]           = useState(false);
+  const [platform,       setPlatform]       = useState('');
+  const [deferredPrompt, setDeferredPrompt] = useState(null);
+  const [expanded,       setExpanded]       = useState(false);
+
+  useEffect(() => {
+    if (localStorage.getItem('ml_install_dismissed')) return;
+    if (window.matchMedia('(display-mode: standalone)').matches) return;
+    if (window.navigator.standalone) return;
+
+    const ua = navigator.userAgent;
+    const isIOS     = /iPad|iPhone|iPod/.test(ua) && !window.MSStream;
+    const isAndroid = /Android/.test(ua);
+    const isMac     = /Macintosh/.test(ua) && !isIOS;
+    const isChrome  = /Chrome/.test(ua) && !/Edg/.test(ua);
+    const isEdge    = /Edg/.test(ua);
+    const isSafari  = /Safari/.test(ua) && !isChrome && !isEdge && !/CriOS|FxiOS/.test(ua);
+
+    if (isIOS && isSafari)  { setPlatform('ios');        setShow(true); return; }
+    if (isMac && isSafari)  { setPlatform('mac-safari'); setShow(true); return; }
+
+    const handler = (e) => {
+      e.preventDefault();
+      setDeferredPrompt(e);
+      setPlatform(isAndroid ? 'android' : 'desktop');
+      setShow(true);
+    };
+    window.addEventListener('beforeinstallprompt', handler);
+    return () => window.removeEventListener('beforeinstallprompt', handler);
+  }, []);
+
+  const dismiss = () => {
+    localStorage.setItem('ml_install_dismissed', '1');
+    setShow(false);
+  };
+
+  const handleInstall = async () => {
+    if (deferredPrompt) {
+      deferredPrompt.prompt();
+      const { outcome } = await deferredPrompt.userChoice;
+      if (outcome === 'accepted') dismiss();
+    }
+  };
+
+  if (!show) return null;
+
+  const instructions = {
+    ios: [
+      'Tap the Share button (box with arrow) in Safari',
+      'Scroll down and tap "Add to Home Screen"',
+      'Tap "Add" to confirm',
+    ],
+    'mac-safari': [
+      'Click the Share button in the Safari toolbar',
+      'Choose "Add to Dock"',
+      'Click "Add" to confirm',
+    ],
+    android: null,
+    desktop: null,
+  };
+
+  const steps = instructions[platform];
+
+  return (
+    <div style={{
+      background: 'linear-gradient(135deg, #1e3a5f 0%, #0f2744 100%)',
+      border: '1px solid #2a5298',
+      borderRadius: 12,
+      padding: '14px 18px',
+      marginBottom: 16,
+      display: 'flex',
+      alignItems: 'flex-start',
+      gap: 14,
+      boxShadow: '0 2px 12px rgba(0,0,0,0.3)',
+    }}>
+      <span style={{ fontSize: 28, flexShrink: 0 }}>📲</span>
+      <div style={{ flex: 1 }}>
+        <div style={{ fontWeight: 700, color: '#e8f0fe', fontSize: 15, marginBottom: 4 }}>
+          Install MyLedger for quick access
+        </div>
+        {steps ? (
+          <>
+            <div
+              style={{ color: '#93b4e8', fontSize: 13, cursor: 'pointer', userSelect: 'none' }}
+              onClick={() => setExpanded(v => !v)}
+            >
+              {expanded ? '▾ Hide steps' : '▸ Show how to install'}
+            </div>
+            {expanded && (
+              <ol style={{ margin: '8px 0 0 18px', padding: 0, color: '#c8daf5', fontSize: 13, lineHeight: 1.7 }}>
+                {steps.map((s, i) => <li key={i}>{s}</li>)}
+              </ol>
+            )}
+          </>
+        ) : (
+          <div style={{ color: '#93b4e8', fontSize: 13, marginTop: 2 }}>
+            Add it to your home screen for a faster, app-like experience.
+          </div>
+        )}
+        {!steps && (
+          <button
+            onClick={handleInstall}
+            style={{
+              marginTop: 10,
+              background: '#2a5298',
+              color: '#fff',
+              border: 'none',
+              borderRadius: 8,
+              padding: '7px 18px',
+              fontSize: 13,
+              fontWeight: 600,
+              cursor: 'pointer',
+            }}
+          >
+            Install App
+          </button>
+        )}
+      </div>
+      <button
+        onClick={dismiss}
+        style={{
+          background: 'transparent',
+          border: 'none',
+          color: '#7a9cc8',
+          fontSize: 18,
+          cursor: 'pointer',
+          padding: '0 4px',
+          lineHeight: 1,
+          flexShrink: 0,
+        }}
+        title="Dismiss"
+      >
+        ✕
+      </button>
+    </div>
+  );
+}
+
 const TABS = ['Overview', 'Transactions', 'Invoices', 'Income Statement', 'Balance Sheet', 'Cash Flow', 'Books', 'Assets', 'BIR Reminders', 'Referral', 'Business Setup'];
 // Minimum tier required per tab (undefined = always accessible)
 const TAB_TIER = {
@@ -1643,6 +1899,7 @@ export default function ClientInterface({ onLogout }) {
 
       {/* Trial Banner */}
       <TrialBanner onUpgradeClick={() => setShowPricing(true)} />
+      <InstallPrompt />
 
       {/* Pricing Modal */}
       {showPricing && (
@@ -3058,6 +3315,15 @@ export default function ClientInterface({ onLogout }) {
               )}
             </Card>
           </div>
+
+            {/* ── Install MyLedger App ── */}
+            <Card style={{ marginTop: 20 }}>
+              <SectionHead>Install MyLedger App</SectionHead>
+              <div style={{ fontSize: 14, color: T.muted, marginBottom: 14 }}>
+                Add MyLedger to your home screen or desktop for faster access — no App Store needed.
+              </div>
+              <InstallSettingsButton T={T} />
+            </Card>
         )}
 
       </div>
