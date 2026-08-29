@@ -3314,7 +3314,6 @@ export default function ClientInterface({ onLogout }) {
                 </>
               )}
             </Card>
-          </div>
 
             {/* ── Install MyLedger App ── */}
             <Card style={{ marginTop: 20 }}>
@@ -3324,6 +3323,7 @@ export default function ClientInterface({ onLogout }) {
               </div>
               <InstallSettingsButton T={T} />
             </Card>
+          </div>
         )}
 
       </div>
