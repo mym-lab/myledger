@@ -13,8 +13,12 @@ export function authenticate(req, res, next) {
     req.userId   = decoded.userId;
     req.userRole = decoded.role || 'client';   // 'client' | 'accountant' | 'encoder'
     next();
-  } catch {
-    res.status(403).json({ error: 'Invalid or expired token' });
+  } catch (err) {
+    // 401 = token invalid or expired → client must re-authenticate
+    // (403 is reserved for valid token + insufficient role, handled by noEncoder/requireAdmin)
+    const msg = err.name === 'TokenExpiredError' ? 'Session expired. Please sign in again.'
+              : 'Invalid token. Please sign in again.';
+    res.status(401).json({ error: msg });
   }
 }
 
