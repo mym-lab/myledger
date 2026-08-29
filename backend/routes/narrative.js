@@ -38,11 +38,11 @@ function canAccess(client, userId) {
          (client.encoderIds || []).includes(userId);
 }
 
-// Philippine time date string "2026-07-01"
-function phDate() {
+// Philippine time month string "2026-07" — cache resets once per calendar month, not daily
+function phMonth() {
   const now = new Date();
   const ph  = new Date(now.getTime() + 8 * 60 * 60 * 1000);
-  return ph.toISOString().substring(0, 10);
+  return ph.toISOString().substring(0, 7);
 }
 
 function peso(n) {
@@ -143,11 +143,12 @@ router.get('/', async (req, res, next) => {
     if (!client || !canAccess(client, req.userId))
       return res.status(404).json({ error: 'Client not found' });
 
-    const today = phDate();
+    const thisMonth = phMonth();
 
-    // ── Serve cache if still valid (same PH calendar day) — unless force=true ──
-    const cachedDate = clientRow.narrative_cached_at?.substring(0, 10);
-    if (cachedDate === today && clientRow.narrative_cache && force !== 'true') {
+    // ── Serve cache if still valid (same PH calendar month) — unless force=true ──
+    // Summary is generated once per month so it reflects a meaningful period, not a mid-day snapshot.
+    const cachedMonth = clientRow.narrative_cached_at?.substring(0, 7);
+    if (cachedMonth === thisMonth && clientRow.narrative_cache && force !== 'true') {
       return res.json({
         narrative:  clientRow.narrative_cache,
         cachedAt:   clientRow.narrative_cached_at,

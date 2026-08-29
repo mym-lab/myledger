@@ -1431,14 +1431,14 @@ export default function ClientInterface({ onLogout }) {
     }
   }
 
+  // Silent cache-only load — never triggers AI generation on tab open.
+  // The user explicitly generates/refreshes via the button.
   async function loadNarrative() {
     if (!active) return;
-    setNarrativeLoad(true);
     try {
       const data = await getNarrative(active.id);
       setNarrative(data);
-    } catch (e) { console.error('Narrative load failed', e); }
-    finally { setNarrativeLoad(false); }
+    } catch (e) { /* silent — narrative is optional */ }
   }
 
   async function loadOverview() {
@@ -1968,12 +1968,11 @@ export default function ClientInterface({ onLogout }) {
             <UpgradeGate tier={tier} required="starter" onUpgrade={openUpgrade}>
               <Card style={{ marginTop: 20 }}>
                 <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 10 }}>
-                  <SectionHead style={{ margin: 0 }}>✨ AI Summary</SectionHead>
+                  <SectionHead style={{ margin: 0 }}>✨ Month-End AI Summary</SectionHead>
                   <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
                     {narrative?.cachedAt && (
                       <span style={{ fontSize: 11, color: T.muted }}>
-                        {narrative.fromCache ? 'Cached · ' : 'Fresh · '}
-                        {new Date(narrative.cachedAt).toLocaleTimeString('en-PH', { hour: '2-digit', minute: '2-digit' })}
+                        Generated {new Date(narrative.cachedAt).toLocaleDateString('en-PH', { month: 'short', day: 'numeric', year: 'numeric' })}
                       </span>
                     )}
                     <Btn size="sm" variant="ghost"
@@ -1984,7 +1983,7 @@ export default function ClientInterface({ onLogout }) {
                         finally { setNarrativeLoad(false); }
                       }}
                       disabled={narrativeLoad}>
-                      {narrativeLoad ? '…' : '↻ Refresh'}
+                      {narrativeLoad ? '…' : '↻ Generate'}
                     </Btn>
                   </div>
                 </div>
@@ -2002,11 +2001,11 @@ export default function ClientInterface({ onLogout }) {
                 )}
                 {!narrativeLoad && !narrative?.narrative && (
                   <div style={{ fontSize: 13, color: T.muted, fontStyle: 'italic' }}>
-                    Click Refresh to generate today's summary.
+                    No summary yet this month. Click Generate at month-end for an AI review of your financials.
                   </div>
                 )}
                 <div style={{ fontSize: 11, color: T.muted, marginTop: 8 }}>
-                  Generated once per day by AI · Resets at midnight Philippine time
+                  Updated once per month · Click Generate at month-end to refresh
                 </div>
               </Card>
             </UpgradeGate>
