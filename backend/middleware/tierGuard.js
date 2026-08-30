@@ -19,10 +19,11 @@ import { getTrialStatus } from '../lib/trial.js';
 
 const ACCOUNTANT_TIER_RANK = {
   free:         0,
-  solo:         1,
-  professional: 2,
-  firm:         3,
-  agency:       4,
+  starter:      1,   // NEW — ₱249/mo, 5 clients
+  solo:         2,
+  professional: 3,
+  firm:         4,
+  agency:       5,
 };
 
 const CLIENT_TIER_RANK = {
@@ -93,6 +94,7 @@ export function requireTier(minTier, { exemptRoles = ['admin'] } = {}) {
     // Determine friendly upgrade message
     const trial     = getTrialStatus(user);
     const tierLabel = {
+      starter:      'Starter (₱249/mo)',
       solo:         'Solo (₱599/mo)',
       professional: 'Professional (₱1,499/mo)',
       firm:         'Firm (₱2,999/mo)',
@@ -136,7 +138,8 @@ export function requireClientSlot() {
 
     const CLIENT_LIMITS = {
       free:         1,
-      solo:         5,
+      starter:      5,   // NEW — entry-level accountant tier
+      solo:         10,  // bumped from 5 to differentiate from starter
       professional: 15,
       firm:         Infinity,
       agency:       Infinity,

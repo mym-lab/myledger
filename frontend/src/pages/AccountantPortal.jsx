@@ -207,17 +207,19 @@ const PRO_TABS = new Set([
 // Accountant tier definitions
 const ACCT_TIERS = {
   free:         { label: 'Free',         color: '#6e6e73', maxClients: 1,    price: 0    },
-  solo:         { label: 'Solo',         color: '#0071e3', maxClients: 5,    price: 599  },
+  starter:      { label: 'Starter',      color: '#5ac8fa', maxClients: 5,    price: 249  },
+  solo:         { label: 'Solo',         color: '#0071e3', maxClients: 10,   price: 599  },
   professional: { label: 'Professional', color: '#ff9500', maxClients: 15,   price: 1499 },
-  firm:         { label: 'Firm',         color: '#34c759', maxClients: 50,  price: 2999 },
-  agency:       { label: 'Agency',       color: '#af52de', maxClients: 100, price: 4999 },
+  firm:         { label: 'Firm',         color: '#34c759', maxClients: 50,   price: 2999 },
+  agency:       { label: 'Agency',       color: '#af52de', maxClients: 100,  price: 4999 },
 };
 
 function ProLock({ onUpgrade, trialExpired = false }) {
   const isMobile = useMobile();
   const [hovered, setHovered] = useState(null);
   const tiers = [
-    { tier: 'solo',         label: 'Solo',         price: '₱599',   clients: '5 clients',              color: '#0071e3', note: null },
+    { tier: 'starter',      label: 'Starter',      price: '₱249',   clients: '5 clients',              color: '#5ac8fa', note: 'Best entry point' },
+    { tier: 'solo',         label: 'Solo',         price: '₱599',   clients: '10 clients',             color: '#0071e3', note: null },
     { tier: 'professional', label: 'Professional', price: '₱1,499', clients: '15 clients',             color: '#ff9500', note: null },
     { tier: 'firm',         label: 'Firm',         price: '₱2,999', clients: '50 clients',             color: '#34c759', note: null },
     { tier: 'agency',       label: 'Agency',       price: '₱4,999', clients: '100 clients',            color: '#af52de',
@@ -278,7 +280,7 @@ function ProLock({ onUpgrade, trialExpired = false }) {
           ))}
         </div>
         {onUpgrade ? (
-          <button onClick={() => onUpgrade('solo')}
+          <button onClick={() => onUpgrade('starter')}
             style={{ width: '100%', padding: '12px 16px', borderRadius: 10, border: 'none',
               background: T.accent, color: '#fff', fontSize: 14, fontWeight: 700,
               cursor: 'pointer', fontFamily: 'inherit' }}>

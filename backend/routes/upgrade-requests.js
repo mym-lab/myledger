@@ -18,9 +18,12 @@ const router = Router();
 // ── Prepared statements ───────────────────────────────────────────────────────
 const stmtClientById    = db.prepare('SELECT * FROM clients WHERE id = ?');
 const stmtUserById      = db.prepare('SELECT * FROM users WHERE id = ?');
+// Runtime migration: add billing_cycle to existing upgrade_requests table
+try { db.exec("ALTER TABLE upgrade_requests ADD COLUMN billing_cycle TEXT NOT NULL DEFAULT 'monthly'"); } catch { /* already exists */ }
+
 const stmtInsertUpgrade = db.prepare(`
-  INSERT INTO upgrade_requests (id, client_id, user_id, target_tier, method, ref_no, amount, status, request_type, created_at)
-  VALUES (@id, @client_id, @user_id, @target_tier, @method, @ref_no, @amount, @status, @request_type, @created_at)
+  INSERT INTO upgrade_requests (id, client_id, user_id, target_tier, method, ref_no, amount, status, request_type, created_at, billing_cycle)
+  VALUES (@id, @client_id, @user_id, @target_tier, @method, @ref_no, @amount, @status, @request_type, @created_at, @billing_cycle)
 `);
 const stmtAllUpgrades   = db.prepare('SELECT * FROM upgrade_requests ORDER BY created_at DESC');
 const stmtMyUpgrades    = db.prepare('SELECT * FROM upgrade_requests WHERE user_id=? ORDER BY created_at DESC');
@@ -128,7 +131,7 @@ function enrichUpgrade(req) {
 // POST /api/upgrade-requests
 router.post('/', authenticate, (req, res, next) => {
   try {
-    const { clientId, targetTier, method, refNo, amount, requestType = 'client' } = req.body;
+    const { clientId, targetTier, method, refNo, amount, requestType = 'client', billingCycle = 'monthly' } = req.body;
 
     if (!targetTier || !method || !refNo)
       return res.status(400).json({ error: 'targetTier, method and refNo are required' });
@@ -144,15 +147,16 @@ router.post('/', authenticate, (req, res, next) => {
     const id = uuid();
     stmtInsertUpgrade.run({
       id,
-      client_id:    requestType === 'client' ? clientId : null,
-      user_id:      req.userId,
-      target_tier:  targetTier,
+      client_id:     requestType === 'client' ? clientId : null,
+      user_id:       req.userId,
+      target_tier:   targetTier,
       method,
-      ref_no:       refNo,
-      amount:       Number(amount) || 0,
-      status:       'pending',
-      request_type: requestType,
-      created_at:   new Date().toISOString(),
+      ref_no:        refNo,
+      amount:        Number(amount) || 0,
+      status:        'pending',
+      request_type:  requestType,
+      created_at:    new Date().toISOString(),
+      billing_cycle: billingCycle,
     });
 
     const upgradeRequest = enrichUpgrade(rowToUpgrade(stmtUpgradeById.get(id)));
@@ -275,7 +279,8 @@ router.put('/:id/approve', authenticate, (req, res, next) => {
       if (user?.email) {
         const prices     = getSetting('accountantTierPrices') || {};
         const priceHint  = prices[r.targetTier] ? `₱${Number(prices[r.targetTier]).toLocaleString()}/mo` : '';
-        const expiresAt  = new Date(Date.now() + 30 * 24 * 60 * 60 * 1000);
+        const daysValid  = (r.billing_cycle || r.billingCycle) === 'annual' ? 365 : 30;
+        const expiresAt  = new Date(Date.now() + daysValid * 24 * 60 * 60 * 1000);
         const expiresStr = expiresAt.toLocaleDateString('en-PH', { year: 'numeric', month: 'long', day: 'numeric' });
         sendEmail({
           to: user.email,
@@ -300,7 +305,8 @@ router.put('/:id/approve', authenticate, (req, res, next) => {
     }
 
     // Client upgrade
-    const expiresAt = new Date(Date.now() + 30 * 24 * 60 * 60 * 1000).toISOString();
+    const clientDays = (r.billing_cycle || r.billingCycle) === 'annual' ? 365 : 30;
+    const expiresAt = new Date(Date.now() + clientDays * 24 * 60 * 60 * 1000).toISOString();
     stmtUpdateUpgrade.run({ id: req.params.id, status: 'approved', resolved_at: resolvedAt });
     stmtUpdateClientTier.run(r.targetTier, expiresAt, r.clientId);
 

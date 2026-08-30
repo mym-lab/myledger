@@ -31,11 +31,14 @@ const TIER_PRICES_CLIENT = {
 };
 const TIER_PRICES_ACCT = {
   free:         0,
+  starter:      249,   // NEW — entry-level accountant tier
   solo:         599,
   professional: 1499,
   firm:         2999,
   agency:       4999,
 };
+
+const ANNUAL_DISCOUNT = 0.20;  // 20% off when paying annually
 
 // ── PayMongo API helper ───────────────────────────────────────────────────────
 async function paymongoRequest(method, path, body) {
@@ -89,9 +92,10 @@ function buildReceiptHtml({ recipientName, planLabel, planPrice, paymentMethod, 
 }
 
 // ── Apply tier upgrade (called by webhook) ────────────────────────────────────
-function applyUpgrade({ userId, clientId, targetTier, requestType, amount, refNo, paymentMethod }) {
+function applyUpgrade({ userId, clientId, targetTier, requestType, amount, refNo, paymentMethod, billingCycle = 'monthly' }) {
   const resolvedAt = new Date().toISOString();
-  const expiresAt  = new Date(Date.now() + 30 * 24 * 60 * 60 * 1000).toISOString();
+  const daysValid  = billingCycle === 'annual' ? 365 : 30;
+  const expiresAt  = new Date(Date.now() + daysValid * 24 * 60 * 60 * 1000).toISOString();
   const appUrl     = process.env.APP_URL || 'https://app.kaimanco.com';
   const tierLabel  = targetTier.charAt(0).toUpperCase() + targetTier.slice(1);
   const user       = stmtUserById.get(userId);
@@ -156,11 +160,14 @@ try {
     amount        REAL NOT NULL,
     status        TEXT NOT NULL DEFAULT 'pending',
     checkout_url  TEXT,
-    created_at    TEXT NOT NULL
+    created_at    TEXT NOT NULL,
+    billing_cycle TEXT NOT NULL DEFAULT 'monthly'
   )`);
+  // Runtime migration: add billing_cycle to existing tables
+  try { db.exec("ALTER TABLE paymongo_links ADD COLUMN billing_cycle TEXT NOT NULL DEFAULT 'monthly'"); } catch { /* already exists */ }
 } catch { /* already exists */ }
 
-const stmtInsertLink  = db.prepare(`INSERT INTO paymongo_links VALUES (@id,@userId,@clientId,@targetTier,@requestType,@amount,@status,@checkoutUrl,@createdAt)`);
+const stmtInsertLink  = db.prepare(`INSERT INTO paymongo_links (id,user_id,client_id,target_tier,request_type,amount,status,checkout_url,created_at,billing_cycle) VALUES (@id,@userId,@clientId,@targetTier,@requestType,@amount,@status,@checkoutUrl,@createdAt,@billingCycle)`);
 const stmtGetLink     = db.prepare('SELECT * FROM paymongo_links WHERE id=?');
 const stmtMarkPaid    = db.prepare('UPDATE paymongo_links SET status=? WHERE id=?');
 
@@ -171,30 +178,37 @@ const stmtMarkPaid    = db.prepare('UPDATE paymongo_links SET status=? WHERE id=
 // ══════════════════════════════════════════════════════════════════════════════
 router.post('/paymongo/create-link', authenticate, async (req, res, next) => {
   try {
-    const { clientId, targetTier, requestType = 'client' } = req.body;
+    const { clientId, targetTier, requestType = 'client', billingCycle = 'monthly' } = req.body;
     if (!targetTier) return res.status(400).json({ error: 'targetTier required' });
 
     // Determine amount
     const prices    = requestType === 'accountant' ? TIER_PRICES_ACCT : TIER_PRICES_CLIENT;
     const adminPrices = getSetting('accountantTierPrices') || {};
     const priceFromAdmin = adminPrices[targetTier];
-    const amountPHP = priceFromAdmin ? Number(priceFromAdmin) : (prices[targetTier] || 0);
-    if (amountPHP <= 0) return res.status(400).json({ error: 'Free tier has no payment' });
+    const monthlyPHP = priceFromAdmin ? Number(priceFromAdmin) : (prices[targetTier] || 0);
+    if (monthlyPHP <= 0) return res.status(400).json({ error: 'Free tier has no payment' });
+
+    // Annual: 12 months × 80% (20% discount), rounded to whole peso
+    const amountPHP = billingCycle === 'annual'
+      ? Math.round(monthlyPHP * 12 * (1 - ANNUAL_DISCOUNT))
+      : monthlyPHP;
 
     const tierLabel  = targetTier.charAt(0).toUpperCase() + targetTier.slice(1);
     const typeLabel  = requestType === 'accountant' ? 'Accountant' : 'Client';
+    const cycleLabel = billingCycle === 'annual' ? '1 year (20% off)' : '1 month';
     const appUrl     = process.env.APP_URL || 'https://app.kaimanco.com';
 
     const linkData = await paymongoRequest('POST', '/links', {
       data: {
         attributes: {
           amount:      amountPHP * 100,   // centavos
-          description: `MyLedger ${tierLabel} ${typeLabel} Plan — 1 month`,
+          description: `MyLedger ${tierLabel} ${typeLabel} Plan — ${cycleLabel}`,
           remarks:     JSON.stringify({
             userId:      req.userId,
             clientId:    clientId || null,
             targetTier,
             requestType,
+            billingCycle,
           }),
           redirect: {
             success: `${appUrl}/?payment=success&tier=${targetTier}`,
@@ -209,18 +223,19 @@ router.post('/paymongo/create-link', authenticate, async (req, res, next) => {
 
     // Persist so webhook can retrieve metadata
     stmtInsertLink.run({
-      id:          linkId,
-      userId:      req.userId,
-      clientId:    clientId || null,
+      id:           linkId,
+      userId:       req.userId,
+      clientId:     clientId || null,
       targetTier,
       requestType,
-      amount:      amountPHP,
-      status:      'pending',
+      amount:       amountPHP,
+      status:       'pending',
       checkoutUrl,
-      createdAt:   new Date().toISOString(),
+      createdAt:    new Date().toISOString(),
+      billingCycle: billingCycle,
     });
 
-    res.json({ linkId, checkoutUrl, amount: amountPHP });
+    res.json({ linkId, checkoutUrl, amount: amountPHP, billingCycle, monthlyPrice: monthlyPHP });
   } catch (err) { next(err); }
 });
 
@@ -286,13 +301,14 @@ router.post(
 
         // Apply the upgrade
         applyUpgrade({
-          userId:      linkRow.user_id,
-          clientId:    linkRow.client_id,
-          targetTier:  linkRow.target_tier,
-          requestType: linkRow.request_type,
-          amount:      paidAmount || linkRow.amount,
-          refNo:       paymentId,
+          userId:       linkRow.user_id,
+          clientId:     linkRow.client_id,
+          targetTier:   linkRow.target_tier,
+          requestType:  linkRow.request_type,
+          amount:       paidAmount || linkRow.amount,
+          refNo:        paymentId,
           paymentMethod: payMethod,
+          billingCycle: linkRow.billing_cycle || 'monthly',
         });
 
         stmtMarkPaid.run('paid', linkRow.id);
@@ -335,13 +351,14 @@ router.get('/paymongo/status/:linkId', authenticate, async (req, res, next) => {
           // Payment came through but webhook missed — apply now
           const paidAmount = (live.data.attributes.amount || 0) / 100;
           applyUpgrade({
-            userId:      linkRow.user_id,
-            clientId:    linkRow.client_id,
-            targetTier:  linkRow.target_tier,
-            requestType: linkRow.request_type,
-            amount:      paidAmount,
-            refNo:       linkId,
+            userId:       linkRow.user_id,
+            clientId:     linkRow.client_id,
+            targetTier:   linkRow.target_tier,
+            requestType:  linkRow.request_type,
+            amount:       paidAmount,
+            refNo:        linkId,
             paymentMethod: 'paymongo',
+            billingCycle: linkRow.billing_cycle || 'monthly',
           });
           stmtMarkPaid.run('paid', linkId);
           return res.json({ status: 'paid', tier: linkRow.target_tier });

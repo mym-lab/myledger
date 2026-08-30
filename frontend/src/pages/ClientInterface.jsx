@@ -230,15 +230,19 @@ function PaymentModal({ clientId, currentTier, settings, onClose, onUpgradeSucce
   const upgradeable = tiersWithPrice.filter(t => t.value !== 'free' &&
     (TIER_RANK[t.value] ?? 0) > (TIER_RANK[currentTier] ?? 0));
 
-  const [selTier,    setSelTier]    = useState(upgradeable[0]?.value || 'starter');
-  const [step,       setStep]       = useState(1);     // 1=pick tier, 2=pick method, 'manual'=transfer details, 3=done
-  const [method,     setMethod]     = useState(null);  // 'maya' | 'gcash'
-  const [refNo,      setRefNo]      = useState('');
-  const [submitting, setSubmitting] = useState(false);
+  const [selTier,      setSelTier]      = useState(upgradeable[0]?.value || 'starter');
+  const [billingCycle, setBillingCycle] = useState('monthly'); // 'monthly' | 'annual'
+  const [step,         setStep]         = useState(1);   // 1=pick tier, 2=pick method, 'manual'=transfer details, 3=done
+  const [method,       setMethod]       = useState(null);  // 'maya' | 'gcash'
+  const [refNo,        setRefNo]        = useState('');
+  const [submitting,   setSubmitting]   = useState(false);
 
-  const tierObj = tiersWithPrice.find(t => t.value === selTier);
-  const acct    = method ? { ...payAccts[method], type: method === 'maya' ? 'Maya' : 'GCash' } : null;
-  const methodColor = method === 'maya' ? '#00a8e0' : '#007dff';
+  const tierObj      = tiersWithPrice.find(t => t.value === selTier);
+  const monthlyPrice = tierObj?.price || 0;
+  const annualPrice  = Math.round(monthlyPrice * 12 * 0.80);
+  const displayPrice = billingCycle === 'annual' ? annualPrice : monthlyPrice;
+  const acct         = method ? { ...payAccts[method], type: method === 'maya' ? 'Maya' : 'GCash' } : null;
+  const methodColor  = method === 'maya' ? '#00a8e0' : '#007dff';
 
   function goMethod(m) {
     setMethod(m);
@@ -252,9 +256,28 @@ function PaymentModal({ clientId, currentTier, settings, onClose, onUpgradeSucce
       {/* ── Step 1: Pick tier ── */}
       {step === 1 && (
         <div>
-          <p style={{ fontSize: 14, color: T.muted, marginBottom: 18 }}>
-            Choose the plan that fits your business. Billed monthly.
-          </p>
+          {/* Billing cycle toggle */}
+          <div style={{ display: 'flex', justifyContent: 'center', marginBottom: 18 }}>
+            <div style={{ display: 'inline-flex', background: T.border, borderRadius: 10, padding: 3, gap: 2 }}>
+              {['monthly', 'annual'].map(cycle => (
+                <button key={cycle} onClick={() => setBillingCycle(cycle)}
+                  style={{
+                    padding: '7px 20px', borderRadius: 8, border: 'none', cursor: 'pointer',
+                    fontFamily: 'inherit', fontSize: 13, fontWeight: 600, transition: 'all .15s',
+                    background: billingCycle === cycle ? T.accent : 'transparent',
+                    color: billingCycle === cycle ? '#fff' : T.muted,
+                  }}>
+                  {cycle === 'monthly' ? 'Monthly' : '🎉 Annual — Save 20%'}
+                </button>
+              ))}
+            </div>
+          </div>
+          {billingCycle === 'annual' && (
+            <div style={{ background: '#f0fdf4', border: '1px solid #bbf7d0', borderRadius: 8,
+              padding: '8px 14px', fontSize: 13, color: '#166534', marginBottom: 12, textAlign: 'center' }}>
+              Annual plan saves you <strong>2 months free</strong>. Billed once per year.
+            </div>
+          )}
           <div style={{ display: 'flex', flexDirection: 'column', gap: 12, marginBottom: 24 }}>
             {upgradeable.map(t => (
               <div key={t.value} onClick={() => setSelTier(t.value)}
@@ -266,9 +289,23 @@ function PaymentModal({ clientId, currentTier, settings, onClose, onUpgradeSucce
                   <div style={{ fontWeight: 700, fontSize: 15, color: t.color }}>{t.label}</div>
                   <div style={{ fontSize: 13, color: T.muted, marginTop: 3 }}>{t.desc}</div>
                 </div>
-                <div style={{ textAlign: 'right', minWidth: 90 }}>
-                  <div style={{ fontSize: 22, fontWeight: 700, color: t.color }}>₱{t.price}</div>
-                  <div style={{ fontSize: 12, color: T.muted }}>/month</div>
+                <div style={{ textAlign: 'right', minWidth: 110 }}>
+                  {billingCycle === 'annual' ? (
+                    <>
+                      <div style={{ fontSize: 22, fontWeight: 700, color: t.color }}>
+                        ₱{Math.round(t.price * 12 * 0.8).toLocaleString()}
+                      </div>
+                      <div style={{ fontSize: 11, color: T.muted }}>/year (20% off)</div>
+                      <div style={{ fontSize: 11, color: T.muted, textDecoration: 'line-through' }}>
+                        ₱{(t.price * 12).toLocaleString()} regular
+                      </div>
+                    </>
+                  ) : (
+                    <>
+                      <div style={{ fontSize: 22, fontWeight: 700, color: t.color }}>₱{t.price}</div>
+                      <div style={{ fontSize: 12, color: T.muted }}>/month</div>
+                    </>
+                  )}
                 </div>
               </div>
             ))}
@@ -316,7 +353,7 @@ function PaymentModal({ clientId, currentTier, settings, onClose, onUpgradeSucce
             <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-end' }}>
               <div>
                 <div style={{ fontSize: 12, color: T.muted }}>Amount</div>
-                <div style={{ fontSize: 26, fontWeight: 700 }}>₱{tierObj?.price}.00</div>
+                <div style={{ fontSize: 26, fontWeight: 700 }}>₱{displayPrice.toLocaleString()}{billingCycle === 'annual' ? '' : '.00'}</div>
               </div>
               <div style={{ textAlign: 'right' }}>
                 <div style={{ fontSize: 12, color: T.muted }}>Reference No.</div>
@@ -337,7 +374,7 @@ function PaymentModal({ clientId, currentTier, settings, onClose, onUpgradeSucce
               onClick={async () => {
                 setSubmitting(true);
                 try {
-                  if (clientId) await createUpgradeRequest({ clientId, targetTier: selTier, method, refNo, amount: tierObj?.price || 0 });
+                  if (clientId) await createUpgradeRequest({ clientId, targetTier: selTier, method, refNo, amount: displayPrice, billingCycle });
                   setStep(3);
                 } catch { setStep(3); }
                 finally { setSubmitting(false); }
