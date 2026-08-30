@@ -116,7 +116,7 @@ function findAmount(lines, labelRe) {
     const inline = rest.match(/[:\-]?\s*₱?\s*([\d,]+\.?\d*)(?:\s|$)/);
     if (inline) return parseNum(inline[1]);
 
-    // Next 1-2 lines: accept a line that is ONLY a number (possibly with ₱ prefix)
+    // Next 1-2 lines: accept a line that is ONLY a number (possibly with peso prefix)
     for (let j = i + 1; j <= Math.min(i + 2, lines.length - 1); j++) {
       const bare = lines[j].match(/^₱?\s*([\d,]+\.?\d+)$/);
       if (bare) return parseNum(bare[1]);
@@ -165,11 +165,13 @@ function parsePhilippineReceipt(text) {
     /\b(\d{1,2}[-\/\.]\d{1,2}[-\/\.]\d{4})\b/,
     /\b(\d{1,2}[-\/\.]\d{1,2}[-\/\.]\d{2})\b/,
   ];
-  outer: for (const ln of lines) {
+  for (const ln of lines) {
+    let found = false;
     for (const re of datePatterns) {
       const m = ln.match(re);
-      if (m) { date = m[1]; break outer; }
+      if (m) { date = m[1]; found = true; break; }
     }
+    if (found) break;
   }
 
   // ── Amounts ──────────────────────────────────────────────────────────────────
@@ -243,20 +245,6 @@ router.post('/receipt', upload.single('receipt'), async (req, res) => {
     }
 
     const parsed = parsePhilippineReceipt(rawText);
-
-    return res.json({
-      ...parsed,
-      description: parsed.vendor || '',
-      rawText,
-    });
-  } catch (err) {
-    console.error('OCR route error:', err);
-    return res.status(500).json({ error: err.message });
-  }
-});
-
-export default router;
-   const parsed = parsePhilippineReceipt(rawText);
 
     return res.json({
       ...parsed,
