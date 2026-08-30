@@ -94,6 +94,7 @@ router.post('/', (req, res, next) => {
       referenceNo = '', notes = '',
       ewtRate = 0,
       date,           // user-specified transaction date (YYYY-MM-DD) — defaults to today
+      vatOverride,    // optional: manual VAT from invoice (mixed-VAT, service charge, SC/PWD, etc.)
     } = req.body;
 
     if (!clientId)  return res.status(400).json({ error: 'clientId is required' });
@@ -125,7 +126,8 @@ router.post('/', (req, res, next) => {
       const optRate = client.optRate ?? 0.03;
       vatResult = calculateIncomeVAT(amount, vatType, isOPT, optRate);
     } else {
-      vatResult = calculateExpenseVAT(amount, supplierVatType);
+      const parsedVatOverride = vatOverride != null && vatOverride !== '' ? Number(vatOverride) : null;
+      vatResult = calculateExpenseVAT(amount, supplierVatType, parsedVatOverride);
     }
 
     // Resolve account labels

@@ -590,7 +590,7 @@ function CashFlowForecastChart({ forecast, days, onDaysChange }) {
 
 
 // ─── VAT Calc Preview ─────────────────────────────────────────────────────────
-function VatCalc({ type, amount, vatType = 'vatable', supplierVatType = 'vat', isOPT = false, optRate = 0.03 }) {
+function VatCalc({ type, amount, vatType = 'vatable', supplierVatType = 'vat', isOPT = false, optRate = 0.03, vatOverride }) {
   if (!amount || isNaN(amount) || Number(amount) <= 0) return null;
   const n = parseFloat(amount);
   const r = v => Math.round(v * 100) / 100;
@@ -610,6 +610,9 @@ function VatCalc({ type, amount, vatType = 'vatable', supplierVatType = 'vat', i
   } else {
     if (supplierVatType === 'non_vat') {
       gross = n; net = n; msg = 'Non-VAT supplier — no input VAT extracted. NET = GROSS.';
+    } else if (vatOverride != null && vatOverride !== '' && !isNaN(vatOverride) && Number(vatOverride) >= 0) {
+      gross = n; vat = r(Number(vatOverride)); net = r(gross - vat);
+      msg = 'Manual VAT override — using amount from invoice (mixed-VAT / service charge / SC-PWD).';
     } else {
       gross = n; net = r(n / 1.12); vat = r(gross - net);
       msg = 'VAT supplier — extracting 12% input VAT from GROSS.';
@@ -643,6 +646,7 @@ function TxModal({ clientId, client, onSaved, onClose, ewtRates = DEFAULT_EWT_RA
     referenceNo: '', notes: '',
     date: today,
     ewtRate: '0',
+    vatOverride: '',   // manual VAT from invoice (mixed-VAT, SC, service charge)
   };
   const [form,       setForm]       = useState(blank);
   const [saving,     setSaving]     = useState(false);
@@ -665,6 +669,7 @@ function TxModal({ clientId, client, onSaved, onClose, ewtRates = DEFAULT_EWT_RA
         description:      data.description || data.vendor || f.description,
         counterpartyName: data.vendor      || f.counterpartyName,
         counterpartyTin:  data.tin         || f.counterpartyTin,
+        vatOverride:      data.amountVat   ? String(data.amountVat)  : f.vatOverride,
       }));
       const extracted = [
         data.amountGross ? `₱${data.amountGross.toLocaleString()} gross` : null,
@@ -718,6 +723,7 @@ function TxModal({ clientId, client, onSaved, onClose, ewtRates = DEFAULT_EWT_RA
         referenceNo: form.referenceNo, notes: form.notes,
         date: form.date || undefined,
         ewtRate: form.type === 'expense' ? Number(form.ewtRate) : 0,
+        vatOverride: (form.type === 'expense' && form.vatOverride !== '') ? Number(form.vatOverride) : undefined,
       });
       onSaved(); onClose();
     } catch (e) { alert(e.message); setSaving(false); }
@@ -800,10 +806,37 @@ function TxModal({ clientId, client, onSaved, onClose, ewtRates = DEFAULT_EWT_RA
           </Fld>
         )}
 
+        {/* ── Manual VAT Override ── */}
+        {form.type === 'expense' && form.supplierVatType === 'vat' && (
+          <Fld label="Input VAT Amount (from invoice) — optional">
+            <input
+              style={inp}
+              type="number"
+              min="0"
+              step="0.01"
+              value={form.vatOverride}
+              onChange={set('vatOverride')}
+              placeholder={
+                form.amount && !isNaN(form.amount) && Number(form.amount) > 0
+                  ? `Auto: ₱${(Math.round((Number(form.amount) - Math.round(Number(form.amount) / 1.12 * 100) / 100) * 100) / 100).toFixed(2)} — override if invoice shows different amount`
+                  : 'Enter exact VAT from invoice to override auto-calc'
+              }
+            />
+            {form.vatOverride !== '' && !isNaN(form.vatOverride) && Number(form.vatOverride) >= 0 && (
+              <div style={{ fontSize: 11, color: '#7c3aed', marginTop: 3 }}>
+                ✏️ Manual VAT: ₱{Number(form.vatOverride).toLocaleString('en-PH', { minimumFractionDigits: 2 })}
+                {' '}· NET = ₱{(Number(form.amount || 0) - Number(form.vatOverride)).toLocaleString('en-PH', { minimumFractionDigits: 2 })}
+                <span style={{ color: T.muted }}>{' '}— use for mixed-VAT, service charge, SC/PWD invoices</span>
+              </div>
+            )}
+          </Fld>
+        )}
+
         <VatCalc
           type={form.type} amount={form.amount}
           vatType={form.vatType} supplierVatType={form.supplierVatType}
           isOPT={form.type === 'income' && isOPT} optRate={optRate}
+          vatOverride={form.type === 'expense' && form.vatOverride !== '' ? form.vatOverride : undefined}
         />
 
         {/* ── Description + Reference ── */}

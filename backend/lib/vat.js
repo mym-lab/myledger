@@ -43,11 +43,18 @@ export function calculateIncomeVAT(amount, vatType = 'vatable', isOPT = false, o
   };
 }
 
-export function calculateExpenseVAT(amount, supplierVatType = 'vat') {
+export function calculateExpenseVAT(amount, supplierVatType = 'vat', vatOverride = null) {
   if (supplierVatType === 'non_vat') {
     return { net: amount, vat: 0, gross: amount };
   }
-  // VAT supplier — amount is GROSS
+  // VAT supplier — amount is GROSS.
+  // vatOverride: manually entered VAT from invoice — handles mixed-VAT invoices
+  // (service charge, SC/PWD split, partial exemptions, etc.)
+  if (vatOverride != null && vatOverride >= 0) {
+    const vat = round(vatOverride);
+    const net = round(amount - vat);
+    return { net, vat, gross: amount, vatOverridden: true };
+  }
   const net = round(amount / 1.12);
   const vat = round(amount - net);
   return { net, vat, gross: amount };
