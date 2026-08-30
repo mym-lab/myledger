@@ -53,6 +53,17 @@ router.get('/stats', (req, res) => {
   try {
     console.log('📊 GET /api/admin/stats');
 
+    // Last activity per user from tracking table
+    let lastActiveMap = {};
+    try {
+      db.prepare('SELECT user_id, MAX(timestamp) as last_active FROM user_activity GROUP BY user_id')
+        .all().forEach(r => { lastActiveMap[r.user_id] = r.last_active; });
+    } catch { /* user_activity table may not exist in older DBs */ }
+
+    const now = new Date();
+    const sevenDaysAgo  = new Date(+now - 7  * 86400000).toISOString();
+    const thirtyDaysAgo = new Date(+now - 30 * 86400000).toISOString();
+
     const userRows = stmtAllUsers.all();
     const users = userRows.map(r => ({
       id: r.id, email: r.email, name: r.name, company: r.company,
@@ -61,6 +72,7 @@ router.get('/stats', (req, res) => {
       firmName:    r.firm_name    || null,
       accentColor: r.accent_color || null,
       createdAt: r.created_at,
+      lastActive: lastActiveMap[r.id] || null,
     }));
 
     const clientRows = stmtAllClients.all();
@@ -90,6 +102,10 @@ router.get('/stats', (req, res) => {
       totalRevenue:  round(sum(txns.filter(t => t.type === 'income'),  'amount_net')),
       inputVAT:      round(sum(txns.filter(t => t.type === 'expense'), 'amount_vat')),
       outputVAT:     round(sum(txns.filter(t => t.type === 'income'),  'amount_vat')),
+      // Activity metrics
+      newUsersWeek:  users.filter(u => u.createdAt >= sevenDaysAgo).length,
+      newUsersMonth: users.filter(u => u.createdAt >= thirtyDaysAgo).length,
+      activeWeek:    Object.values(lastActiveMap).filter(t => t >= sevenDaysAgo).length,
     };
 
     console.log(`   → ${users.length} users (emails: ${users.map(u=>u.email).join(', ')||'none'}), ${clients.length} clients, ${txns.length} txns`);

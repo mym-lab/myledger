@@ -459,6 +459,44 @@ export default function CommandCenter({ onLogout }) {
     if (t in tierCounts) tierCounts[t]++;
   });
 
+  // ── MRR / Revenue metrics (MyLedger's own subscription revenue, not clients' revenue) ──
+  const prices = {
+    starter:      Number(settings?.pricing?.starter)      || 299,
+    professional: Number(settings?.pricing?.professional) || 499,
+    enterprise:   Number(settings?.pricing?.enterprise)   || 699,
+  };
+  const mrr = tierCounts.starter * prices.starter
+            + tierCounts.professional * prices.professional
+            + tierCounts.enterprise * prices.enterprise;
+  const arr = mrr * 12;
+  const paidCount = tierCounts.starter + tierCounts.professional + tierCounts.enterprise;
+  const totalClientCount = stats?.totalClients || 0;
+  const conversionRate = totalClientCount > 0 ? Math.round((paidCount / totalClientCount) * 100) : 0;
+
+  // Churn risk: free clients older than 14 days who never converted
+  const _fourteenDaysAgo = new Date(Date.now() - 14 * 86400000).toISOString();
+  const churnRisk = (stats?.clients || [])
+    .filter(c => (c.subscriptionTier === 'free' || !c.subscriptionTier) && c.createdAt < _fourteenDaysAgo)
+    .sort((a, b) => a.createdAt.localeCompare(b.createdAt)); // oldest first
+
+  // Recent sign-ups (last 7 days), newest first
+  const _sevenDaysAgo = new Date(Date.now() - 7 * 86400000).toISOString();
+  const recentSignups = (stats?.users || [])
+    .filter(u => u.createdAt >= _sevenDaysAgo)
+    .sort((a, b) => b.createdAt.localeCompare(a.createdAt))
+    .slice(0, 6);
+
+  const _daysAgo = (iso) => Math.floor((Date.now() - new Date(iso)) / 86400000);
+  const _timeAgo = (iso) => {
+    if (!iso) return 'never';
+    const mins = Math.floor((Date.now() - new Date(iso)) / 60000);
+    if (mins < 2)   return 'just now';
+    if (mins < 60)  return `${mins}m ago`;
+    const hrs = Math.floor(mins / 60);
+    if (hrs < 24)   return `${hrs}h ago`;
+    return `${Math.floor(hrs / 24)}d ago`;
+  };
+
   return (
     <div style={{ minHeight: '100vh', background: T.bg,
       fontFamily: '-apple-system, BlinkMacSystemFont, "SF Pro Display", "Helvetica Neue", sans-serif',
@@ -516,61 +554,179 @@ export default function CommandCenter({ onLogout }) {
         {/* ════════════ OVERVIEW ════════════ */}
         {tab === 'Overview' && (
           <div>
-            <h2 style={{ margin: '0 0 22px', fontSize: 22, fontWeight: 600 }}>Platform Overview</h2>
-
-            <div style={{ display: 'flex', gap: 16, flexWrap: 'wrap', marginBottom: 24 }}>
-              <MetricCard label="Total Users"         value={stats?.totalUsers        ?? '—'} color={T.accent} />
-              <MetricCard label="Active Now"          value={activeUsers.length}               color={T.green} sub="last 5 min" />
-              <MetricCard label="Client Businesses"   value={stats?.totalClients      ?? '—'} color={T.blue} />
-              <MetricCard label="Total Transactions"  value={stats?.totalTransactions  ?? '—'} color={T.text} />
-              <MetricCard label="Net Revenue (all)"   value={stats ? peso(stats.totalRevenue) : '—'} sub="VAT-exclusive" color={T.green} />
+            <h2 style={{ margin: '0 0 4px', fontSize: 22, fontWeight: 600 }}>Platform Overview</h2>
+            <div style={{ fontSize: 13, color: T.muted, marginBottom: 22 }}>
+              MyLedger subscription revenue &amp; platform health
             </div>
 
-            {/* Subscription breakdown */}
+            {/* ── Row 1: MyLedger Revenue ── */}
+            <div style={{ fontSize: 11, fontWeight: 700, color: T.muted, textTransform: 'uppercase',
+              letterSpacing: '0.6px', marginBottom: 10 }}>MyLedger Revenue</div>
+            <div style={{ display: 'flex', gap: 16, flexWrap: 'wrap', marginBottom: 24 }}>
+              <MetricCard label="Monthly Recurring Revenue" color={T.green}
+                value={stats ? peso(mrr) : '—'}
+                sub={`ARR: ${stats ? peso(arr) : '—'}`} />
+              <MetricCard label="Paid Subscribers" color={T.accent}
+                value={stats ? paidCount : '—'}
+                sub={`of ${totalClientCount} client businesses`} />
+              <MetricCard label="Conversion Rate" color={conversionRate >= 40 ? T.green : T.orange}
+                value={stats ? `${conversionRate}%` : '—'}
+                sub="free → paid" />
+              <MetricCard label="Total Users" color={T.blue}
+                value={stats?.totalUsers ?? '—'}
+                sub={stats ? `+${stats.newUsersWeek} this week` : 'loading…'} />
+            </div>
+
+            {/* ── Row 2: Activity ── */}
+            <div style={{ fontSize: 11, fontWeight: 700, color: T.muted, textTransform: 'uppercase',
+              letterSpacing: '0.6px', marginBottom: 10 }}>User Activity</div>
+            <div style={{ display: 'flex', gap: 16, flexWrap: 'wrap', marginBottom: 24 }}>
+              <MetricCard label="Active Now" color={activeUsers.length > 0 ? T.green : T.muted}
+                value={activeUsers.length} sub="last 5 min" />
+              <MetricCard label="Active This Week" color={T.blue}
+                value={stats?.activeWeek ?? '—'} sub="unique users" />
+              <MetricCard label="New Sign-Ups This Month" color={T.text}
+                value={stats?.newUsersMonth ?? '—'} sub={`${stats?.newUsersWeek ?? '—'} this week`} />
+              <MetricCard label="Total Transactions" color={T.text}
+                value={stats?.totalTransactions ?? '—'} sub="all time" />
+            </div>
+
+            {/* ── Subscription Revenue Breakdown ── */}
             <Card style={{ marginBottom: 20 }}>
-              <SectionHead>Subscription Breakdown</SectionHead>
-              <div style={{ display: 'flex', gap: 20, flexWrap: 'wrap' }}>
-                {Object.entries(tierCounts).map(([tier, count]) => (
-                  <div key={tier} style={{ flex: 1, minWidth: 100, textAlign: 'center',
-                    background: `${TIER_COLORS[tier]}10`, borderRadius: 10, padding: '14px 12px',
-                    border: `1px solid ${TIER_COLORS[tier]}30` }}>
-                    <div style={{ fontSize: 28, fontWeight: 700, color: TIER_COLORS[tier] }}>{count}</div>
-                    <div style={{ fontSize: 13, fontWeight: 600, color: TIER_COLORS[tier],
-                      textTransform: 'capitalize', marginTop: 4 }}>{tier}</div>
-                    {settings?.pricing?.[tier] && (
-                      <div style={{ fontSize: 11, color: T.muted, marginTop: 3 }}>
-                        ₱{settings.pricing[tier]}/mo
+              <SectionHead>Subscription Revenue Breakdown</SectionHead>
+              <div style={{ display: 'flex', gap: 16, flexWrap: 'wrap' }}>
+                {Object.entries(tierCounts).map(([tier, count]) => {
+                  const price = prices[tier] || 0;
+                  const tMrr  = count * price;
+                  return (
+                    <div key={tier} style={{ flex: 1, minWidth: 110, textAlign: 'center',
+                      background: `${TIER_COLORS[tier]}10`, borderRadius: 10, padding: '16px 12px',
+                      border: `1px solid ${TIER_COLORS[tier]}30` }}>
+                      <div style={{ fontSize: 30, fontWeight: 700, color: TIER_COLORS[tier] }}>{count}</div>
+                      <div style={{ fontSize: 13, fontWeight: 600, color: TIER_COLORS[tier],
+                        textTransform: 'capitalize', marginTop: 4 }}>{tier}</div>
+                      {tier !== 'free' && price > 0 && (
+                        <div style={{ fontSize: 11, color: T.muted, marginTop: 3 }}>₱{price}/mo each</div>
+                      )}
+                      {tier !== 'free' && tMrr > 0 && (
+                        <div style={{ fontSize: 12, fontWeight: 600, color: T.green,
+                          marginTop: 8, background: '#f0fdf4', borderRadius: 6, padding: '3px 8px' }}>
+                          ₱{tMrr.toLocaleString()}/mo
+                        </div>
+                      )}
+                      {tier === 'free' && (
+                        <div style={{ fontSize: 11, color: T.muted, marginTop: 8 }}>no revenue</div>
+                      )}
+                    </div>
+                  );
+                })}
+              </div>
+              {mrr > 0 && (
+                <div style={{ marginTop: 16, paddingTop: 14, borderTop: `1px solid ${T.border}`,
+                  display: 'flex', gap: 28, flexWrap: 'wrap' }}>
+                  <div>
+                    <div style={{ fontSize: 11, color: T.muted }}>Total MRR</div>
+                    <div style={{ fontSize: 20, fontWeight: 700, color: T.green }}>{peso(mrr)}</div>
+                  </div>
+                  <div>
+                    <div style={{ fontSize: 11, color: T.muted }}>Projected ARR</div>
+                    <div style={{ fontSize: 20, fontWeight: 700, color: T.text }}>{peso(arr)}</div>
+                  </div>
+                  <div>
+                    <div style={{ fontSize: 11, color: T.muted }}>Avg Revenue per Paid Client</div>
+                    <div style={{ fontSize: 20, fontWeight: 700, color: T.text }}>
+                      {paidCount > 0 ? peso(mrr / paidCount) : '—'}
+                    </div>
+                  </div>
+                </div>
+              )}
+            </Card>
+
+            {/* ── Recent Sign-Ups ── */}
+            {recentSignups.length > 0 && (
+              <Card style={{ marginBottom: 20 }}>
+                <SectionHead>Recent Sign-Ups — Last 7 Days</SectionHead>
+                <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
+                  {recentSignups.map(u => {
+                    const biz = (stats?.clients || []).find(c => c.ownerId === u.id);
+                    return (
+                      <div key={u.id} style={{ display: 'flex', alignItems: 'center', gap: 12,
+                        padding: '10px 14px', background: '#fafafa', borderRadius: 8,
+                        border: `1px solid ${T.border}` }}>
+                        <div style={{ width: 36, height: 36, borderRadius: '50%',
+                          background: T.accent + '18', flexShrink: 0,
+                          display: 'flex', alignItems: 'center', justifyContent: 'center',
+                          fontSize: 15, fontWeight: 700, color: T.accent }}>
+                          {(u.name || u.email || '?')[0].toUpperCase()}
+                        </div>
+                        <div style={{ flex: 1, minWidth: 0 }}>
+                          <div style={{ fontWeight: 600, fontSize: 13, color: T.text,
+                            overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                            {u.name || u.email}
+                          </div>
+                          <div style={{ fontSize: 11, color: T.muted }}>
+                            {u.email}
+                            {biz ? ` · ${biz.tradeName}` : ''}
+                            {' · '}{u.role}
+                          </div>
+                        </div>
+                        <div style={{ textAlign: 'right', flexShrink: 0 }}>
+                          <div style={{ fontSize: 11, color: T.muted }}>{fmt(u.createdAt)}</div>
+                          {biz && (
+                            <span style={{ fontSize: 10, fontWeight: 600, textTransform: 'capitalize',
+                              background: (TIER_COLORS[biz.subscriptionTier || 'free']) + '18',
+                              color: TIER_COLORS[biz.subscriptionTier || 'free'],
+                              padding: '2px 8px', borderRadius: 10, marginTop: 3, display: 'inline-block' }}>
+                              {biz.subscriptionTier || 'free'}
+                            </span>
+                          )}
+                        </div>
                       </div>
-                    )}
-                  </div>
-                ))}
-              </div>
-            </Card>
+                    );
+                  })}
+                </div>
+              </Card>
+            )}
 
-            {/* VAT summary */}
-            <Card style={{ marginBottom: 20 }}>
-              <SectionHead>Platform-Wide VAT Summary</SectionHead>
-              <div style={{ display: 'flex', gap: 36, flexWrap: 'wrap' }}>
-                <div>
-                  <div style={{ fontSize: 12, color: T.muted }}>Total Input VAT (assets)</div>
-                  <div style={{ fontSize: 22, fontWeight: 600, color: T.green }}>{peso(totalInputVAT)}</div>
+            {/* ── Churn Watch ── */}
+            {churnRisk.length > 0 && (
+              <Card style={{ marginBottom: 20, borderColor: T.orange + '40' }}>
+                <SectionHead>⚠️ Churn Watch — Free Clients 14+ Days (Not Converted)</SectionHead>
+                <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
+                  {churnRisk.slice(0, 5).map(c => {
+                    const owner = (stats?.users || []).find(u => u.id === c.ownerId);
+                    return (
+                      <div key={c.id} style={{ display: 'flex', alignItems: 'center', gap: 12,
+                        padding: '10px 14px', background: '#fffbf0', borderRadius: 8,
+                        border: `1px solid ${T.orange}20` }}>
+                        <div style={{ flex: 1, minWidth: 0 }}>
+                          <div style={{ fontWeight: 600, fontSize: 13, color: T.text }}>{c.tradeName}</div>
+                          <div style={{ fontSize: 11, color: T.muted }}>
+                            {owner?.email || '—'} · {c.txCount} txn{c.txCount !== 1 ? 's' : ''}
+                            {' · '}joined {_daysAgo(c.createdAt)} days ago
+                            {owner?.lastActive ? ` · active ${_timeAgo(owner.lastActive)}` : ' · never active'}
+                          </div>
+                        </div>
+                        <button onClick={() => setTab('Clients')}
+                          style={{ fontSize: 11, padding: '5px 13px', borderRadius: 6,
+                            border: `1px solid ${T.orange}`, background: 'transparent',
+                            color: T.orange, cursor: 'pointer', fontWeight: 600,
+                            fontFamily: 'inherit', whiteSpace: 'nowrap' }}>
+                          View →
+                        </button>
+                      </div>
+                    );
+                  })}
+                  {churnRisk.length > 5 && (
+                    <div style={{ fontSize: 12, color: T.muted, textAlign: 'center', paddingTop: 4 }}>
+                      +{churnRisk.length - 5} more — see Clients tab
+                    </div>
+                  )}
                 </div>
-                <div>
-                  <div style={{ fontSize: 12, color: T.muted }}>Total Output VAT (liabilities)</div>
-                  <div style={{ fontSize: 22, fontWeight: 600, color: T.orange }}>{peso(totalOutputVAT)}</div>
-                </div>
-                <div>
-                  <div style={{ fontSize: 12, color: T.muted }}>Net VAT across all clients</div>
-                  <div style={{ fontSize: 22, fontWeight: 600, color: netVAT >= 0 ? T.red : T.green }}>
-                    {peso(Math.abs(netVAT))}
-                    <span style={{ fontSize: 12, fontWeight: 400, marginLeft: 8, color: T.muted }}>
-                      {netVAT >= 0 ? 'net payable' : 'net credit'}
-                    </span>
-                  </div>
-                </div>
-              </div>
-            </Card>
+              </Card>
+            )}
 
+            {/* ── Alerts row ── */}
             {/* Pending upgrade requests notice */}
             {upgradeReqs.filter(r => r.status === 'pending').length > 0 && (
               <div onClick={() => setTab('Upgrade Requests')}
