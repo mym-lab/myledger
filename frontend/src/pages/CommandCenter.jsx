@@ -465,11 +465,24 @@ export default function CommandCenter({ onLogout }) {
     professional: Number(settings?.pricing?.professional) || 499,
     enterprise:   Number(settings?.pricing?.enterprise)   || 699,
   };
-  const mrr = tierCounts.starter * prices.starter
-            + tierCounts.professional * prices.professional
-            + tierCounts.enterprise * prices.enterprise;
+  // Count annual vs monthly per tier — annual subscribers pay 0.8× monthly (20% off)
+  const annualCounts  = { free: 0, starter: 0, professional: 0, enterprise: 0 };
+  const monthlyCounts = { free: 0, starter: 0, professional: 0, enterprise: 0 };
+  (stats?.clients || []).forEach(c => {
+    const t = c.subscriptionTier || 'free';
+    if (!(t in annualCounts)) return;
+    if (c.billingCycle === 'annual') annualCounts[t]++;
+    else monthlyCounts[t]++;
+  });
+  // MRR = monthly clients × full price + annual clients × (price × 0.8)
+  const mrr = ['starter', 'professional', 'enterprise'].reduce((sum, t) => {
+    return sum
+      + monthlyCounts[t] * prices[t]
+      + annualCounts[t]  * prices[t] * 0.8;
+  }, 0);
   const arr = mrr * 12;
   const paidCount = tierCounts.starter + tierCounts.professional + tierCounts.enterprise;
+  const annualCount = annualCounts.starter + annualCounts.professional + annualCounts.enterprise;
   const totalClientCount = stats?.totalClients || 0;
   const conversionRate = totalClientCount > 0 ? Math.round((paidCount / totalClientCount) * 100) : 0;
 
@@ -596,8 +609,10 @@ export default function CommandCenter({ onLogout }) {
               <SectionHead>Subscription Revenue Breakdown</SectionHead>
               <div style={{ display: 'flex', gap: 16, flexWrap: 'wrap' }}>
                 {Object.entries(tierCounts).map(([tier, count]) => {
-                  const price = prices[tier] || 0;
-                  const tMrr  = count * price;
+                  const price   = prices[tier] || 0;
+                  const mCount  = monthlyCounts[tier] || 0;
+                  const aCount  = annualCounts[tier]  || 0;
+                  const tMrr    = mCount * price + aCount * price * 0.8;
                   return (
                     <div key={tier} style={{ flex: 1, minWidth: 110, textAlign: 'center',
                       background: `${TIER_COLORS[tier]}10`, borderRadius: 10, padding: '16px 12px',
@@ -605,13 +620,32 @@ export default function CommandCenter({ onLogout }) {
                       <div style={{ fontSize: 30, fontWeight: 700, color: TIER_COLORS[tier] }}>{count}</div>
                       <div style={{ fontSize: 13, fontWeight: 600, color: TIER_COLORS[tier],
                         textTransform: 'capitalize', marginTop: 4 }}>{tier}</div>
+                      {/* Annual / monthly split badges */}
+                      {tier !== 'free' && count > 0 && (
+                        <div style={{ display: 'flex', gap: 4, justifyContent: 'center', marginTop: 6, flexWrap: 'wrap' }}>
+                          {mCount > 0 && (
+                            <span style={{ fontSize: 10, background: '#f0f4ff', color: T.blue,
+                              padding: '2px 7px', borderRadius: 8, fontWeight: 600 }}>
+                              {mCount} mo
+                            </span>
+                          )}
+                          {aCount > 0 && (
+                            <span style={{ fontSize: 10, background: '#f0fdf4', color: '#16a34a',
+                              padding: '2px 7px', borderRadius: 8, fontWeight: 600 }}>
+                              {aCount} yr ✓
+                            </span>
+                          )}
+                        </div>
+                      )}
                       {tier !== 'free' && price > 0 && (
-                        <div style={{ fontSize: 11, color: T.muted, marginTop: 3 }}>₱{price}/mo each</div>
+                        <div style={{ fontSize: 11, color: T.muted, marginTop: 4 }}>
+                          ₱{price}/mo {aCount > 0 ? `· ₱${Math.round(price*0.8*12).toLocaleString()}/yr` : ''}
+                        </div>
                       )}
                       {tier !== 'free' && tMrr > 0 && (
                         <div style={{ fontSize: 12, fontWeight: 600, color: T.green,
                           marginTop: 8, background: '#f0fdf4', borderRadius: 6, padding: '3px 8px' }}>
-                          ₱{tMrr.toLocaleString()}/mo
+                          ₱{Math.round(tMrr).toLocaleString()}/mo
                         </div>
                       )}
                       {tier === 'free' && (
@@ -623,21 +657,30 @@ export default function CommandCenter({ onLogout }) {
               </div>
               {mrr > 0 && (
                 <div style={{ marginTop: 16, paddingTop: 14, borderTop: `1px solid ${T.border}`,
-                  display: 'flex', gap: 28, flexWrap: 'wrap' }}>
+                  display: 'flex', gap: 28, flexWrap: 'wrap', alignItems: 'flex-end' }}>
                   <div>
                     <div style={{ fontSize: 11, color: T.muted }}>Total MRR</div>
-                    <div style={{ fontSize: 20, fontWeight: 700, color: T.green }}>{peso(mrr)}</div>
+                    <div style={{ fontSize: 20, fontWeight: 700, color: T.green }}>{peso(Math.round(mrr))}</div>
                   </div>
                   <div>
                     <div style={{ fontSize: 11, color: T.muted }}>Projected ARR</div>
-                    <div style={{ fontSize: 20, fontWeight: 700, color: T.text }}>{peso(arr)}</div>
+                    <div style={{ fontSize: 20, fontWeight: 700, color: T.text }}>{peso(Math.round(arr))}</div>
                   </div>
                   <div>
-                    <div style={{ fontSize: 11, color: T.muted }}>Avg Revenue per Paid Client</div>
+                    <div style={{ fontSize: 11, color: T.muted }}>Avg Revenue / Paid Client</div>
                     <div style={{ fontSize: 20, fontWeight: 700, color: T.text }}>
-                      {paidCount > 0 ? peso(mrr / paidCount) : '—'}
+                      {paidCount > 0 ? peso(Math.round(mrr / paidCount)) : '—'}
                     </div>
                   </div>
+                  {annualCount > 0 && (
+                    <div style={{ marginLeft: 'auto' }}>
+                      <div style={{ fontSize: 11, color: T.muted }}>Annual subscribers</div>
+                      <div style={{ fontSize: 16, fontWeight: 700, color: '#16a34a' }}>
+                        {annualCount} of {paidCount} 🎉
+                      </div>
+                      <div style={{ fontSize: 10, color: T.muted }}>saving 20% each</div>
+                    </div>
+                  )}
                 </div>
               )}
             </Card>
@@ -673,12 +716,21 @@ export default function CommandCenter({ onLogout }) {
                         <div style={{ textAlign: 'right', flexShrink: 0 }}>
                           <div style={{ fontSize: 11, color: T.muted }}>{fmt(u.createdAt)}</div>
                           {biz && (
-                            <span style={{ fontSize: 10, fontWeight: 600, textTransform: 'capitalize',
-                              background: (TIER_COLORS[biz.subscriptionTier || 'free']) + '18',
-                              color: TIER_COLORS[biz.subscriptionTier || 'free'],
-                              padding: '2px 8px', borderRadius: 10, marginTop: 3, display: 'inline-block' }}>
-                              {biz.subscriptionTier || 'free'}
-                            </span>
+                            <div style={{ display: 'flex', gap: 4, justifyContent: 'flex-end', marginTop: 3, flexWrap: 'wrap' }}>
+                              <span style={{ fontSize: 10, fontWeight: 600, textTransform: 'capitalize',
+                                background: (TIER_COLORS[biz.subscriptionTier || 'free']) + '18',
+                                color: TIER_COLORS[biz.subscriptionTier || 'free'],
+                                padding: '2px 8px', borderRadius: 10, display: 'inline-block' }}>
+                                {biz.subscriptionTier || 'free'}
+                              </span>
+                              {biz.billingCycle === 'annual' && (
+                                <span style={{ fontSize: 10, fontWeight: 600,
+                                  background: '#f0fdf4', color: '#16a34a',
+                                  padding: '2px 8px', borderRadius: 10, display: 'inline-block' }}>
+                                  annual ✓
+                                </span>
+                              )}
+                            </div>
                           )}
                         </div>
                       </div>
@@ -705,6 +757,7 @@ export default function CommandCenter({ onLogout }) {
                             {owner?.email || '—'} · {c.txCount} txn{c.txCount !== 1 ? 's' : ''}
                             {' · '}joined {_daysAgo(c.createdAt)} days ago
                             {owner?.lastActive ? ` · active ${_timeAgo(owner.lastActive)}` : ' · never active'}
+                            {c.subscriptionExpiresAt ? ` · expires ${fmt(c.subscriptionExpiresAt)}` : ''}
                           </div>
                         </div>
                         <button onClick={() => setTab('Clients')}

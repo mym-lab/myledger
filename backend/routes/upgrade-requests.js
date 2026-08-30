@@ -30,7 +30,7 @@ const stmtMyUpgrades    = db.prepare('SELECT * FROM upgrade_requests WHERE user_
 const stmtUpgradeById   = db.prepare('SELECT * FROM upgrade_requests WHERE id=?');
 const stmtUpdateUpgrade = db.prepare('UPDATE upgrade_requests SET status=@status, resolved_at=@resolved_at WHERE id=@id');
 const stmtRejectUpgrade = db.prepare('UPDATE upgrade_requests SET status=@status, rejected_reason=@reason, resolved_at=@resolved_at WHERE id=@id');
-const stmtUpdateClientTier    = db.prepare('UPDATE clients SET subscription_tier=?, subscription_expires_at=? WHERE id=?');
+const stmtUpdateClientTier    = db.prepare('UPDATE clients SET subscription_tier=?, subscription_expires_at=?, billing_cycle=? WHERE id=?');
 const stmtUpdateAccountantTier = db.prepare('UPDATE users SET accountant_tier=? WHERE id=?');
 
 // ── Receipt email helpers ─────────────────────────────────────────────────────
@@ -305,10 +305,11 @@ router.put('/:id/approve', authenticate, (req, res, next) => {
     }
 
     // Client upgrade
-    const clientDays = (r.billing_cycle || r.billingCycle) === 'annual' ? 365 : 30;
+    const clientBillingCycle = (r.billing_cycle || r.billingCycle || 'monthly');
+    const clientDays = clientBillingCycle === 'annual' ? 365 : 30;
     const expiresAt = new Date(Date.now() + clientDays * 24 * 60 * 60 * 1000).toISOString();
     stmtUpdateUpgrade.run({ id: req.params.id, status: 'approved', resolved_at: resolvedAt });
-    stmtUpdateClientTier.run(r.targetTier, expiresAt, r.clientId);
+    stmtUpdateClientTier.run(r.targetTier, expiresAt, clientBillingCycle, r.clientId);
 
     // ── Referral commission on subscription payment ──────────────────────────
     const submitter  = stmtUserById.get(r.userId);

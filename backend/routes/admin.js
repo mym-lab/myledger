@@ -86,6 +86,8 @@ router.get('/stats', (req, res) => {
         ownerId: c.ownerId,
         accountantId: c.accountantId,
         subscriptionTier: c.subscriptionTier || 'free',
+        billingCycle: c.billingCycle || 'monthly',
+        subscriptionExpiresAt: c.subscriptionExpiresAt || null,
         taxRegime: c.taxRegime || 'vat',
         createdAt: c.createdAt, txCount: cnt,
       };

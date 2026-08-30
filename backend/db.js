@@ -338,6 +338,9 @@ try { db.exec("ALTER TABLE clients ADD COLUMN tax_option TEXT"); }
 catch (_) { /* column already exists */ }
 try { db.exec("ALTER TABLE clients ADD COLUMN is_msme INTEGER NOT NULL DEFAULT 0"); }
 catch (_) { /* column already exists */ }
+// ── Billing cycle — 'monthly' | 'annual' (annual = 20% discount, 365 days) ───
+try { db.exec("ALTER TABLE clients ADD COLUMN billing_cycle TEXT NOT NULL DEFAULT 'monthly'"); }
+catch (_) { /* column already exists */ }
 
 // ── v10+ Trial system ─────────────────────────────────────────────────────────
 try { db.exec("ALTER TABLE users ADD COLUMN trial_started_at TEXT"); }
@@ -455,6 +458,7 @@ export function rowToClient(r) {
     taxRegime: r.tax_regime, optRate: r.opt_rate,
     birthday: r.birthday, ownerBirthdate: r.birthday, subscriptionTier: r.subscription_tier,
     subscriptionExpiresAt: r.subscription_expires_at || null,
+    billingCycle: r.billing_cycle || 'monthly',
     createdAt: r.created_at,
   };
 }
