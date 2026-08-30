@@ -531,6 +531,7 @@ export function InvoicesTab({ clientId, isAccountant = false }) {
                 <th style={{ padding: '10px 12px', textAlign: 'left', color: T.muted, fontWeight: 600 }}>Invoice #</th>
                 <th style={{ padding: '10px 12px', textAlign: 'left', color: T.muted, fontWeight: 600 }}>Customer</th>
                 <th style={{ padding: '10px 12px', textAlign: 'left', color: T.muted, fontWeight: 600 }}>Date</th>
+                <th style={{ padding: '10px 12px', textAlign: 'left', color: T.muted, fontWeight: 600 }}>Due</th>
                 <th style={{ padding: '10px 12px', textAlign: 'right', color: T.muted, fontWeight: 600 }}>NET</th>
                 <th style={{ padding: '10px 12px', textAlign: 'right', color: T.muted, fontWeight: 600 }}>VAT</th>
                 <th style={{ padding: '10px 12px', textAlign: 'right', color: T.muted, fontWeight: 600 }}>Total</th>
@@ -544,6 +545,34 @@ export function InvoicesTab({ clientId, isAccountant = false }) {
                   <td style={{ padding: '10px 12px', fontWeight: 700, color: T.accent }}>{inv.invoice_number}</td>
                   <td style={{ padding: '10px 12px', color: T.text }}>{inv.customer_name}</td>
                   <td style={{ padding: '10px 12px', color: T.muted }}>{fmtDate(inv.issue_date)}</td>
+                  <td style={{ padding: '10px 12px' }}>
+                    {inv.due_date ? (() => {
+                      const due = new Date(inv.due_date + 'T00:00:00');
+                      const daysOver = Math.floor((Date.now() - due.getTime()) / 86400000);
+                      const isOverdue = inv.status === 'sent' && daysOver > 0;
+                      const r7  = inv.reminder_7_sent_at;
+                      const r14 = inv.reminder_14_sent_at;
+                      const r30 = inv.reminder_30_sent_at;
+                      return (
+                        <div style={{ display: 'flex', flexDirection: 'column', gap: 3 }}>
+                          <span style={{ fontSize: 12, color: isOverdue ? '#dc2626' : T.muted, fontWeight: isOverdue ? 600 : 400 }}>
+                            {fmtDate(inv.due_date)}
+                          </span>
+                          {isOverdue && (
+                            <span style={{ fontSize: 10, fontWeight: 700, color: '#dc2626' }}>
+                              {daysOver}d overdue
+                            </span>
+                          )}
+                          {(r7 || r14 || r30) && (
+                            <span title={`Reminders sent: ${[r7 && '7d', r14 && '14d', r30 && '30d'].filter(Boolean).join(', ')}`}
+                              style={{ fontSize: 10, color: '#6b7280', cursor: 'default' }}>
+                              📧 {[r7 && '7d', r14 && '14d', r30 && '30d'].filter(Boolean).join(' ')}
+                            </span>
+                          )}
+                        </div>
+                      );
+                    })() : <span style={{ color: T.muted, fontSize: 12 }}>—</span>}
+                  </td>
                   <td style={{ padding: '10px 12px', textAlign: 'right', color: T.text }}>{peso(inv.subtotal)}</td>
                   <td style={{ padding: '10px 12px', textAlign: 'right', color: '#C9A84C' }}>{peso(inv.vat_amount)}</td>
                   <td style={{ padding: '10px 12px', textAlign: 'right', fontWeight: 700, color: T.text }}>{peso(inv.total)}</td>
