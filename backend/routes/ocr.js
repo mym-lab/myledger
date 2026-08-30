@@ -138,4 +138,135 @@ function findAmount(lines, labelRe) {
 function parsePhilippineReceipt(text) {
   const lines = text.split('\n').map(l => l.trim()).filter(Boolean);
 
-  // ── TIN ───────────────────────────────────────────────────────�
+  // ── TIN ──────────────────────────────────────────────────────────────────────
+  // Philippine TIN format: 000-000-000-000 (12 or 15 digits with dashes)
+  let tin = null;
+  const tinRe = /\b(\d{3}[- ]\d{3}[- ]\d{3}(?:[- ]\d{3,5})?)\b/;
+  for (const ln of lines) {
+    const m = ln.match(tinRe);
+    if (m) { tin = m[1].replace(/ /g, '-'); break; }
+  }
+
+  // ── Vendor name ───────────────────────────────────────────────────────────────
+  const SKIP_VENDOR = /^(OFFICIAL\s+RECEIPT|SALES\s+INVOICE|SERVICE\s+INVOICE|INVOICE|RECEIPT|VAT\s+REG|NON-VAT|TAX\s+INVOICE|BIR\s+FORM|AUTHORITY|PERMIT)/i;
+  let vendor = null;
+  for (const ln of lines) {
+    if (SKIP_VENDOR.test(ln)) continue;
+    if (ln === ln.toUpperCase() && ln.length >= 6 && /[A-Z]{3}/.test(ln)) {
+      vendor = ln; break;
+    }
+  }
+  if (!vendor) vendor = lines.find(l => l.length >= 6) || null;
+
+  // ── Date ─────────────────────────────────────────────────────────────────────
+  let date = null;
+  const datePatterns = [
+    /\b(\d{4}[-\/\.]\d{1,2}[-\/\.]\d{1,2})\b/,
+    /\b(\d{1,2}[-\/\.]\d{1,2}[-\/\.]\d{4})\b/,
+    /\b(\d{1,2}[-\/\.]\d{1,2}[-\/\.]\d{2})\b/,
+  ];
+  outer: for (const ln of lines) {
+    for (const re of datePatterns) {
+      const m = ln.match(re);
+      if (m) { date = m[1]; break outer; }
+    }
+  }
+
+  // ── Amounts ──────────────────────────────────────────────────────────────────
+  const grossRe  = /total\s+amount\s*(due|payable)|amount\s+due|grand\s+total|total\s+due|total\s+payable/i;
+  const vatRe    = /output\s+vat|vat\s+amount|12\s*%\s*vat|value[\s\-]added\s+tax|tax\s+amount/i;
+  const netRe    = /vatable\s+sales?|net\s+(of\s+)?vat|vat\s+able\s+sales?/i;
+  const exemptRe = /vat[\s\-]exempt\s+sales?|zero[\s\-]rated\s+sales?|exempt\s+sales?/i;
+  const scRe     = /\bservice\s+charge\b/i;
+  const discRe   = /less\s*[:\-]?\s*(sc[\s\/]?pwd|senior|pwd|discount)|sc\/pwd\s+discount/i;
+  const whtRe    = /less\s*[:\-]?\s*withholding|withholding\s+tax|\bewt\b|creditable\s+tax/i;
+
+  const amountGross    = findAmount(lines, grossRe);
+  const amountVat      = findAmount(lines, vatRe);
+  const amountNet      = findAmount(lines, netRe);
+  const vatExemptSales = findAmount(lines, exemptRe);
+  const serviceCharge  = findAmount(lines, scRe);
+  const scPwdDiscount  = findAmount(lines, discRe);
+  const withholdingTax = findAmount(lines, whtRe);
+
+  // Fallback: if no labeled gross found, use the largest trailing amount on any line
+  let grossFallback = null;
+  if (amountGross === null) {
+    const nums = [];
+    for (const ln of lines) {
+      const m = ln.match(/[P]?\s*([\d,]+\.\d{2})\s*$/);
+      if (m) nums.push(parseNum(m[1]));
+    }
+    if (nums.length) grossFallback = Math.max(...nums);
+  }
+
+  return {
+    vendor:         vendor,
+    tin:            tin,
+    date:           date,
+    amountGross:    amountGross ?? grossFallback,
+    amountVat:      amountVat,
+    amountNet:      amountNet,
+    vatExemptSales: vatExemptSales,
+    serviceCharge:  serviceCharge,
+    scPwdDiscount:  scPwdDiscount,
+    withholdingTax: withholdingTax,
+  };
+}
+
+// ── POST /api/ocr/receipt ─────────────────────────────────────────────────────
+router.post('/receipt', upload.single('receipt'), async (req, res) => {
+  try {
+    if (!req.file) {
+      return res.status(400).json({ error: 'No file uploaded. Use field name "receipt".' });
+    }
+
+    const mimeType = req.file.mimetype;
+    const base64   = req.file.buffer.toString('base64');
+
+    let rawText = null;
+    try {
+      const visionData = await callVisionAPI(base64, mimeType);
+      rawText = extractText(visionData, mimeType === 'application/pdf');
+    } catch (err) {
+      if (err.message === 'NOT_CONFIGURED') {
+        return res.status(503).json({
+          error: 'OCR not configured. Set GOOGLE_VISION_KEY in Railway environment variables.',
+          code: 'NOT_CONFIGURED',
+        });
+      }
+      throw err;
+    }
+
+    if (!rawText) {
+      return res.status(422).json({ error: 'Vision API returned no text. Try a clearer image.' });
+    }
+
+    const parsed = parsePhilippineReceipt(rawText);
+
+    return res.json({
+      ...parsed,
+      description: parsed.vendor || '',
+      rawText,
+    });
+  } catch (err) {
+    console.error('OCR route error:', err);
+    return res.status(500).json({ error: err.message });
+  }
+});
+
+export default router;
+   const parsed = parsePhilippineReceipt(rawText);
+
+    return res.json({
+      ...parsed,
+      description: parsed.vendor || '',
+      rawText,
+    });
+  } catch (err) {
+    console.error('OCR route error:', err);
+    return res.status(500).json({ error: err.message });
+  }
+});
+
+export default router;
