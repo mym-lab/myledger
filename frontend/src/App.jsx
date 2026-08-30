@@ -8,7 +8,7 @@
 // The app reads role from the stored user object and redirects
 // to the correct interface automatically after login.
 
-import { useState } from 'react';
+import { useState, Component } from 'react';
 import ClientInterface   from './pages/ClientInterface.jsx';
 import AccountantPortal  from './pages/AccountantPortal.jsx';
 import EncoderPortal     from './pages/EncoderPortal.jsx';
@@ -16,6 +16,65 @@ import CommandCenter     from './pages/CommandCenter.jsx';
 import AuthScreen        from './pages/AuthScreen.jsx';
 import OnboardingWizard  from './pages/OnboardingWizard.jsx';
 import InvoicePage       from './pages/InvoicePage.jsx';
+
+// ── Error Boundary — catches React render crashes and shows a recovery screen ──
+// Without this, any JS error in a portal causes a completely blank white page.
+class ErrorBoundary extends Component {
+  constructor(props) {
+    super(props);
+    this.state = { hasError: false, error: null, info: null };
+  }
+  static getDerivedStateFromError(error) {
+    return { hasError: true, error };
+  }
+  componentDidCatch(error, info) {
+    console.error('💥 MyLedger render error:', error, info);
+    this.setState({ info });
+  }
+  render() {
+    if (!this.state.hasError) return this.props.children;
+    const msg = this.state.error?.message || 'Unknown error';
+    return (
+      <div style={{
+        minHeight: '100vh', display: 'flex', alignItems: 'center', justifyContent: 'center',
+        background: '#f5f5f7', fontFamily: '-apple-system, BlinkMacSystemFont, sans-serif', padding: 24,
+      }}>
+        <div style={{ background: '#fff', borderRadius: 16, padding: 32, maxWidth: 480,
+          boxShadow: '0 4px 24px rgba(0,0,0,0.12)', textAlign: 'center' }}>
+          <div style={{ fontSize: 48, marginBottom: 12 }}>⚠️</div>
+          <h2 style={{ margin: '0 0 8px', fontSize: 20, fontWeight: 700, color: '#1d1d1f' }}>
+            Something went wrong
+          </h2>
+          <p style={{ margin: '0 0 20px', fontSize: 13, color: '#6e6e73', lineHeight: 1.6 }}>
+            The app hit an unexpected error. Please refresh — your data is safe.
+          </p>
+          <div style={{ background: '#f5f5f7', borderRadius: 10, padding: '10px 14px',
+            marginBottom: 20, textAlign: 'left' }}>
+            <code style={{ fontSize: 11, color: '#e74c3c', wordBreak: 'break-all', lineHeight: 1.6 }}>
+              {msg}
+            </code>
+          </div>
+          <div style={{ display: 'flex', gap: 10, justifyContent: 'center' }}>
+            <button
+              onClick={() => window.location.reload()}
+              style={{ padding: '10px 22px', background: '#0071e3', color: '#fff',
+                border: 'none', borderRadius: 10, fontSize: 14, fontWeight: 600,
+                cursor: 'pointer', fontFamily: 'inherit' }}>
+              Refresh Page
+            </button>
+            <button
+              onClick={() => { localStorage.removeItem('ml_token'); localStorage.removeItem('ml_user'); window.location.reload(); }}
+              style={{ padding: '10px 22px', background: 'transparent', color: '#6e6e73',
+                border: '1px solid #d2d2d7', borderRadius: 10, fontSize: 14, fontWeight: 500,
+                cursor: 'pointer', fontFamily: 'inherit' }}>
+              Sign out &amp; Retry
+            </button>
+          </div>
+        </div>
+      </div>
+    );
+  }
+}
 
 
 // Returns true if this user has already completed onboarding
@@ -127,14 +186,14 @@ export default function App() {
 
   // ── Accountant path ──
   if (PATH.startsWith('/accountant') || user?.role === 'accountant') {
-    return <AccountantPortal onLogout={handleLogout} />;
+    return <ErrorBoundary><AccountantPortal onLogout={handleLogout} /></ErrorBoundary>;
   }
 
   // ── Encoder path ──
   if (PATH.startsWith('/encoder') || user?.role === 'encoder') {
-    return <EncoderPortal onLogout={handleLogout} />;
+    return <ErrorBoundary><EncoderPortal onLogout={handleLogout} /></ErrorBoundary>;
   }
 
   // ── Default: client self-service ──
-  return <ClientInterface onLogout={handleLogout} />;
+  return <ErrorBoundary><ClientInterface onLogout={handleLogout} /></ErrorBoundary>;
 }
