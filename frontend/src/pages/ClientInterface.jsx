@@ -652,6 +652,7 @@ function TxModal({ clientId, client, onSaved, onClose, ewtRates = DEFAULT_EWT_RA
   const [saving,     setSaving]     = useState(false);
   const [ocrLoading, setOcrLoading] = useState(false);
   const [ocrMsg,     setOcrMsg]     = useState('');
+  const [ocrExtras,  setOcrExtras]  = useState(null);  // serviceCharge, scPwdDiscount, withholdingTax from OCR
   const fileRef = useRef(null);
 
   async function handleOcrFile(e) {
@@ -659,6 +660,7 @@ function TxModal({ clientId, client, onSaved, onClose, ewtRates = DEFAULT_EWT_RA
     if (!file) return;
     setOcrLoading(true);
     setOcrMsg('');
+    setOcrExtras(null);
     try {
       const data = await scanReceipt(file);
       // Pre-fill form with whatever was extracted
@@ -671,6 +673,15 @@ function TxModal({ clientId, client, onSaved, onClose, ewtRates = DEFAULT_EWT_RA
         counterpartyTin:  data.tin         || f.counterpartyTin,
         vatOverride:      data.amountVat   ? String(data.amountVat)  : f.vatOverride,
       }));
+      // Store extra receipt fields for informational display
+      const extras = {
+        serviceCharge:  data.serviceCharge  ?? null,
+        scPwdDiscount:  data.scPwdDiscount  ?? null,
+        withholdingTax: data.withholdingTax ?? null,
+        vatExemptSales: data.vatExemptSales ?? null,
+      };
+      if (Object.values(extras).some(v => v !== null)) setOcrExtras(extras);
+
       const extracted = [
         data.amountGross ? `₱${data.amountGross.toLocaleString()} gross` : null,
         data.amountVat   ? `₱${data.amountVat.toLocaleString()} VAT`     : null,
@@ -830,6 +841,33 @@ function TxModal({ clientId, client, onSaved, onClose, ewtRates = DEFAULT_EWT_RA
               </div>
             )}
           </Fld>
+        )}
+
+        {/* ── OCR Receipt Details (service charge, SC/PWD, WHT) ── */}
+        {ocrExtras && form.type === 'expense' && (
+          <div style={{ background: '#f0fdf4', border: '1px solid #86efac', borderRadius: 8,
+            padding: '8px 14px', marginBottom: 8, fontSize: 12, color: '#166534' }}>
+            <div style={{ fontWeight: 600, marginBottom: 4 }}>📄 From receipt scan:</div>
+            {ocrExtras.scPwdDiscount  != null && (
+              <div>👴 SC/PWD Discount: −₱{ocrExtras.scPwdDiscount.toLocaleString('en-PH', { minimumFractionDigits: 2 })}
+                <span style={{ color: '#6b7280' }}> (Senior Citizen / PWD deduction)</span></div>
+            )}
+            {ocrExtras.serviceCharge  != null && (
+              <div>🍽️ Service Charge: +₱{ocrExtras.serviceCharge.toLocaleString('en-PH', { minimumFractionDigits: 2 })}
+                <span style={{ color: '#6b7280' }}> (added to bill — not SC/PWD)</span></div>
+            )}
+            {ocrExtras.withholdingTax != null && (
+              <div>🏛️ Withholding Tax (EWT): −₱{ocrExtras.withholdingTax.toLocaleString('en-PH', { minimumFractionDigits: 2 })}
+                <span style={{ color: '#6b7280' }}> (creditable tax deducted)</span></div>
+            )}
+            {ocrExtras.vatExemptSales != null && (
+              <div>🔖 VAT-Exempt portion: ₱{ocrExtras.vatExemptSales.toLocaleString('en-PH', { minimumFractionDigits: 2 })}
+                <span style={{ color: '#6b7280' }}> (not subject to 12% VAT)</span></div>
+            )}
+            <div style={{ color: '#6b7280', marginTop: 4, fontSize: 11 }}>
+              For reference only — verify all amounts against your physical invoice.
+            </div>
+          </div>
         )}
 
         <VatCalc
