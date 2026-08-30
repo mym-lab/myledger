@@ -727,7 +727,7 @@ function TxModal({ clientId, client, onSaved, onClose, ewtRates = DEFAULT_EWT_RA
     <ModalShell title="Add Transaction" onClose={onClose} wide>
       <form onSubmit={handleSubmit}>
         {/* ── OCR Receipt Scanner ── */}
-        <input ref={fileRef} type="file" accept="image/*" capture="environment"
+        <input ref={fileRef} type="file" accept="image/*,application/pdf"
           style={{ display: 'none' }} onChange={handleOcrFile} />
         <div style={{ background: '#f5f0ff', border: `1px solid ${T.purple}30`, borderRadius: 10,
           padding: '10px 14px', marginBottom: 16 }}>
