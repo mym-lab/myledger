@@ -30,6 +30,7 @@ import ocrRoutes             from './routes/ocr.js';
 import invitationRoutes      from './routes/invitations.js';
 import referralRoutes        from './routes/referrals.js';
 import invoiceRoutes         from './routes/invoices.js';
+import recurringInvoiceRoutes, { generateDueRecurringInvoices } from './routes/recurring-invoices.js';
 import payrollRoutes         from './routes/payroll.js';
 import paymentRoutes         from './routes/payments.js';
 import monitoringRoutes, { trackActivity } from './routes/monitoring.js';
@@ -81,8 +82,9 @@ app.use('/api/audit',            auditRoutes);
 app.use('/api/ocr',              ocrRoutes);
 app.use('/api/invitations',      invitationRoutes);
 app.use('/api/referrals',        referralRoutes);
-app.use('/api/invoices',         invoiceRoutes);
-app.use('/api/payroll',          payrollRoutes);
+app.use('/api/invoices',            invoiceRoutes);
+app.use('/api/recurring-invoices',  recurringInvoiceRoutes);
+app.use('/api/payroll',             payrollRoutes);
 app.use('/api/payments',         paymentRoutes);
 app.use('/api/monitoring',       monitoringRoutes);
 app.use('/api/import',          importRoutes);
@@ -372,6 +374,32 @@ function scheduleInvoiceReminders() {
 // Run on startup to catch any missed sends, then every hour
 runInvoicePaymentReminders();
 setInterval(scheduleInvoiceReminders, 60 * 60 * 1000);
+
+
+// -- Recurring Invoice Scheduler ------------------------------------------
+// Runs daily at 8AM PH (UTC 0:00).
+// Generates invoices for all active recurring schedules due today or earlier.
+async function runRecurringInvoices() {
+  try {
+    if (!process.env.RESEND_API_KEY) {
+      await generateDueRecurringInvoices(null);
+      return;
+    }
+    const { sendEmail } = await import('./email.js');
+    await generateDueRecurringInvoices(sendEmail);
+  } catch (e) {
+    console.error('Recurring invoice scheduler error:', e.message);
+  }
+}
+
+function scheduleRecurringInvoices() {
+  const now  = new Date();
+  const utcH = now.getUTCHours();
+  if (utcH === 0) runRecurringInvoices();
+}
+// Run on startup to catch any missed generations, then every hour
+runRecurringInvoices();
+setInterval(scheduleRecurringInvoices, 60 * 60 * 1000);
 
 app.listen(PORT, () => {
   console.log(`

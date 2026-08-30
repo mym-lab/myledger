@@ -7,6 +7,8 @@ import { useState, useEffect } from 'react';
 import {
   getInvoices, createInvoice, updateInvoice,
   markInvoiceSent, markInvoicePaid, voidInvoice, deleteInvoice,
+  getRecurringInvoices, createRecurringInvoice, updateRecurringInvoice,
+  pauseRecurringInvoice, resumeRecurringInvoice, cancelRecurringInvoice,
 } from '../api.js';
 
 // ─── Design tokens (matches ClientInterface apple-light theme) ────────────────
@@ -513,11 +515,15 @@ export function InvoicesTab({ clientId, isAccountant = false }) {
         {tabBtn('Sent', 'sent')}
         {tabBtn('Paid', 'paid')}
         {tabBtn('Void', 'void')}
+        {tabBtn('🔁 Recurring', 'recurring')}
       </div>
 
       {err && <div style={{ color: T.red, fontSize: 13, marginBottom: 12 }}>{err}</div>}
 
-      {loading ? (
+      {/* Recurring invoices view */}
+      {filter === 'recurring' ? (
+        <RecurringTab clientId={clientId} />
+      ) : loading ? (
         <div style={{ color: T.muted, fontSize: 14, padding: '40px 0', textAlign: 'center' }}>Loading invoices…</div>
       ) : filtered.length === 0 ? (
         <div style={{ color: T.muted, fontSize: 14, padding: '40px 0', textAlign: 'center' }}>
@@ -646,7 +652,7 @@ export function InvoicesTab({ clientId, isAccountant = false }) {
       )}
 
       {/* Summary row */}
-      {invoices.length > 0 && (
+      {filter !== 'recurring' && invoices.length > 0 && (
         <div style={{ marginTop: 16, display: 'flex', gap: 20, flexWrap: 'wrap' }}>
           {[
             { label: 'Total Invoiced (NET)', value: invoices.filter(i => i.status !== 'void').reduce((s, i) => s + (i.subtotal || 0), 0) },
@@ -682,6 +688,347 @@ export function InvoicesTab({ clientId, isAccountant = false }) {
           invoice={payTarget}
           onClose={() => setPayTarget(null)}
           onPaid={() => { setPayTarget(null); load(); }}
+        />
+      )}
+    </div>
+  );
+}
+
+// ─── RECURRING INVOICES TAB ───────────────────────────────────────────────────
+
+const FREQ_LABELS = { weekly: 'Weekly', monthly: 'Monthly', quarterly: 'Quarterly', annual: 'Annual' };
+
+const emptyRecurringForm = () => ({
+  customer_name: '', customer_email: '', customer_address: '', customer_tin: '',
+  invoice_prefix: 'INV', notes: '', vat_type: 'vatable', payment_terms: 'Due on Receipt',
+  due_days: 30, frequency: 'monthly', start_date: new Date().toISOString().slice(0, 10),
+  end_date: '', max_invoices: '',
+  items: [{ key: Date.now(), description: '', quantity: 1, unit_price: 0, line_vat_type: 'vatable' }],
+});
+
+function RecurringFormModal({ clientId, schedule, onClose, onSaved }) {
+  const isEdit = !!schedule;
+  const [form, setForm] = useState(isEdit ? {
+    ...schedule,
+    start_date: schedule.next_run_date || new Date().toISOString().slice(0, 10),
+    max_invoices: schedule.max_invoices || '',
+    end_date: schedule.end_date || '',
+    items: schedule.items?.length
+      ? schedule.items.map(i => ({ ...i, key: i.id || Math.random() }))
+      : [{ key: Date.now(), description: '', quantity: 1, unit_price: 0, line_vat_type: 'vatable' }],
+  } : emptyRecurringForm());
+  const [saving, setSaving] = useState(false);
+  const [err, setErr] = useState('');
+
+  const setField = (k, v) => setForm(f => ({ ...f, [k]: v }));
+  const setItem = (idx, k, v) => setForm(f => {
+    const items = [...f.items];
+    items[idx] = { ...items[idx], [k]: v };
+    return { ...f, items };
+  });
+  const addItem = () => setForm(f => ({ ...f, items: [...f.items, { key: Date.now() + Math.random(), description: '', quantity: 1, unit_price: 0, line_vat_type: 'vatable' }] }));
+  const removeItem = idx => setForm(f => ({ ...f, items: f.items.filter((_, i) => i !== idx) }));
+
+  // Live totals preview
+  const subtotal = form.items.reduce((s, i) => {
+    const vt = i.line_vat_type || form.vat_type;
+    return vt === 'reimbursement' ? s : s + (Number(i.quantity) || 1) * (Number(i.unit_price) || 0);
+  }, 0);
+  const vatAmt   = subtotal * 0.12;
+  const reimb    = form.items.reduce((s, i) => (i.line_vat_type || form.vat_type) === 'reimbursement' ? s + (Number(i.quantity) || 1) * (Number(i.unit_price) || 0) : s, 0);
+  const total    = subtotal + vatAmt + reimb;
+
+  async function handleSave() {
+    if (!form.customer_name.trim()) return setErr('Customer name required');
+    if (!form.items.some(i => i.description.trim())) return setErr('At least one item with a description required');
+    setSaving(true); setErr('');
+    try {
+      const payload = {
+        client_id: clientId,
+        customer_name: form.customer_name, customer_email: form.customer_email,
+        customer_address: form.customer_address, customer_tin: form.customer_tin,
+        invoice_prefix: form.invoice_prefix || 'INV', notes: form.notes,
+        vat_type: form.vat_type, payment_terms: form.payment_terms,
+        due_days: Number(form.due_days) || 30, frequency: form.frequency,
+        start_date: form.start_date,
+        end_date: form.end_date || null,
+        max_invoices: form.max_invoices ? Number(form.max_invoices) : null,
+        items: form.items.filter(i => i.description.trim()).map(({ key, ...rest }) => rest),
+      };
+      if (isEdit) await updateRecurringInvoice(schedule.id, payload);
+      else await createRecurringInvoice(payload);
+      onSaved();
+    } catch (e) { setErr(e.message); setSaving(false); }
+  }
+
+  const inp = {
+    width: '100%', boxSizing: 'border-box', padding: '8px 12px',
+    border: `1px solid ${T.border}`, borderRadius: 8,
+    fontSize: 13, color: T.text, background: T.bg, outline: 'none',
+  };
+  const lab = { fontSize: 11, fontWeight: 600, color: T.muted, textTransform: 'uppercase', letterSpacing: 0.5, display: 'block', marginBottom: 4 };
+  const row2 = { display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12, marginBottom: 14 };
+  const row3 = { display: 'grid', gridTemplateColumns: '1fr 1fr 1fr', gap: 12, marginBottom: 14 };
+
+  return (
+    <div style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.5)', zIndex: 9999, display: 'flex', alignItems: 'flex-start', justifyContent: 'center', overflowY: 'auto', padding: '40px 16px' }}>
+      <div style={{ background: T.surface, borderRadius: 16, padding: 28, width: '100%', maxWidth: 680, boxShadow: '0 20px 60px rgba(0,0,0,0.2)' }}>
+        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 20 }}>
+          <div style={{ fontSize: 18, fontWeight: 700, color: T.text }}>
+            {isEdit ? 'Edit Recurring Schedule' : 'New Recurring Invoice'}
+          </div>
+          <button onClick={onClose} style={{ background: 'none', border: 'none', fontSize: 20, cursor: 'pointer', color: T.muted }}>✕</button>
+        </div>
+
+        {/* Customer */}
+        <div style={{ marginBottom: 14 }}>
+          <label style={lab}>Customer Name *</label>
+          <input style={inp} value={form.customer_name} onChange={e => setField('customer_name', e.target.value)} placeholder="e.g. Acme Corp" />
+        </div>
+        <div style={row2}>
+          <div><label style={lab}>Customer Email</label><input style={inp} type="email" value={form.customer_email} onChange={e => setField('customer_email', e.target.value)} placeholder="customer@email.com" /></div>
+          <div><label style={lab}>TIN</label><input style={inp} value={form.customer_tin} onChange={e => setField('customer_tin', e.target.value)} placeholder="xxx-xxx-xxx-000" /></div>
+        </div>
+
+        {/* Schedule */}
+        <div style={{ background: '#f0f9ff', border: '1px solid #bfdbfe', borderRadius: 10, padding: 16, marginBottom: 16 }}>
+          <div style={{ fontSize: 12, fontWeight: 700, color: '#1d4ed8', marginBottom: 12, textTransform: 'uppercase', letterSpacing: 0.5 }}>📅 Schedule</div>
+          <div style={row3}>
+            <div>
+              <label style={lab}>Frequency</label>
+              <select style={inp} value={form.frequency} onChange={e => setField('frequency', e.target.value)}>
+                <option value="weekly">Weekly</option>
+                <option value="monthly">Monthly</option>
+                <option value="quarterly">Quarterly</option>
+                <option value="annual">Annual</option>
+              </select>
+            </div>
+            <div><label style={lab}>First Run Date</label><input style={inp} type="date" value={form.start_date} onChange={e => setField('start_date', e.target.value)} /></div>
+            <div><label style={lab}>Due (days)</label><input style={inp} type="number" min="0" value={form.due_days} onChange={e => setField('due_days', e.target.value)} /></div>
+          </div>
+          <div style={row2}>
+            <div><label style={lab}>End Date (optional)</label><input style={inp} type="date" value={form.end_date} onChange={e => setField('end_date', e.target.value)} /></div>
+            <div><label style={lab}>Max Invoices (optional)</label><input style={inp} type="number" min="1" value={form.max_invoices} onChange={e => setField('max_invoices', e.target.value)} placeholder="e.g. 12" /></div>
+          </div>
+        </div>
+
+        {/* Invoice settings */}
+        <div style={row3}>
+          <div>
+            <label style={lab}>Invoice Prefix</label>
+            <input style={inp} value={form.invoice_prefix} onChange={e => setField('invoice_prefix', e.target.value)} maxLength={8} />
+          </div>
+          <div>
+            <label style={lab}>VAT Type</label>
+            <select style={inp} value={form.vat_type} onChange={e => setField('vat_type', e.target.value)}>
+              <option value="vatable">Vatable (12%)</option>
+              <option value="zero_rated">Zero-Rated</option>
+              <option value="exempt">VAT-Exempt</option>
+            </select>
+          </div>
+          <div>
+            <label style={lab}>Payment Terms</label>
+            <select style={inp} value={form.payment_terms} onChange={e => setField('payment_terms', e.target.value)}>
+              <option>Due on Receipt</option>
+              <option>Net 15</option>
+              <option>Net 30</option>
+              <option>Net 60</option>
+            </select>
+          </div>
+        </div>
+
+        {/* Line Items */}
+        <div style={{ marginBottom: 14 }}>
+          <label style={{ ...lab, marginBottom: 8 }}>Line Items *</label>
+          <div style={{ display: 'grid', gridTemplateColumns: '3fr 70px 100px 100px 70px', gap: 6, marginBottom: 6 }}>
+            {['Description', 'Qty', 'Unit Price', 'Amount', ''].map(h => (
+              <div key={h} style={{ fontSize: 10, fontWeight: 700, color: T.muted, textTransform: 'uppercase', letterSpacing: 0.5 }}>{h}</div>
+            ))}
+          </div>
+          {form.items.map((item, idx) => {
+            const lineAmt = (Number(item.quantity) || 0) * (Number(item.unit_price) || 0);
+            return (
+              <div key={item.key} style={{ display: 'grid', gridTemplateColumns: '3fr 70px 100px 100px 70px', gap: 6, marginBottom: 6, alignItems: 'center' }}>
+                <input style={inp} value={item.description} onChange={e => setItem(idx, 'description', e.target.value)} placeholder="Description" />
+                <input style={{ ...inp, textAlign: 'right' }} type="number" min="1" step="0.01" value={item.quantity} onChange={e => setItem(idx, 'quantity', e.target.value)} />
+                <input style={{ ...inp, textAlign: 'right' }} type="number" min="0" step="0.01" value={item.unit_price} onChange={e => setItem(idx, 'unit_price', e.target.value)} />
+                <div style={{ fontSize: 13, textAlign: 'right', color: T.text, padding: '0 4px' }}>{peso(lineAmt)}</div>
+                <button onClick={() => removeItem(idx)} style={{ background: 'none', border: 'none', color: T.red, fontSize: 16, cursor: 'pointer' }} disabled={form.items.length === 1}>✕</button>
+              </div>
+            );
+          })}
+          <button onClick={addItem} style={{ marginTop: 4, padding: '6px 14px', borderRadius: 8, border: `1px dashed ${T.accent}`, background: 'transparent', color: T.accent, fontSize: 12, fontWeight: 600, cursor: 'pointer' }}>+ Add Item</button>
+        </div>
+
+        {/* Totals preview */}
+        <div style={{ background: T.bg, border: `1px solid ${T.border}`, borderRadius: 10, padding: '12px 16px', marginBottom: 14, display: 'flex', gap: 24, flexWrap: 'wrap' }}>
+          <div><div style={{ fontSize: 10, color: T.muted, fontWeight: 600 }}>NET</div><div style={{ fontSize: 15, fontWeight: 700 }}>{peso(subtotal)}</div></div>
+          <div><div style={{ fontSize: 10, color: T.muted, fontWeight: 600 }}>VAT</div><div style={{ fontSize: 15, fontWeight: 700, color: '#C9A84C' }}>{peso(vatAmt)}</div></div>
+          {reimb > 0 && <div><div style={{ fontSize: 10, color: T.muted, fontWeight: 600 }}>REIMB</div><div style={{ fontSize: 15, fontWeight: 700 }}>{peso(reimb)}</div></div>}
+          <div><div style={{ fontSize: 10, color: T.muted, fontWeight: 600 }}>TOTAL (per invoice)</div><div style={{ fontSize: 15, fontWeight: 700, color: T.accent }}>{peso(total)}</div></div>
+        </div>
+
+        {/* Notes */}
+        <div style={{ marginBottom: 20 }}>
+          <label style={lab}>Notes</label>
+          <textarea style={{ ...inp, minHeight: 56, resize: 'vertical', fontFamily: 'inherit' }} value={form.notes} onChange={e => setField('notes', e.target.value)} placeholder="e.g. Monthly retainer for consulting services" />
+        </div>
+
+        {err && <div style={{ color: T.red, fontSize: 13, marginBottom: 12 }}>{err}</div>}
+        <div style={{ display: 'flex', justifyContent: 'flex-end', gap: 10 }}>
+          <button onClick={onClose} style={{ padding: '9px 20px', borderRadius: 8, border: `1px solid ${T.border}`, background: T.surface, fontSize: 13, fontWeight: 600, color: T.text, cursor: 'pointer' }}>Cancel</button>
+          <button onClick={handleSave} disabled={saving}
+            style={{ padding: '9px 24px', borderRadius: 8, border: 'none', background: T.accent, fontSize: 13, fontWeight: 700, color: '#fff', cursor: saving ? 'not-allowed' : 'pointer', opacity: saving ? 0.7 : 1 }}>
+            {saving ? 'Saving…' : isEdit ? 'Save Changes' : 'Create Schedule'}
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function RecurringTab({ clientId }) {
+  const [schedules, setSchedules] = useState([]);
+  const [loading,   setLoading]   = useState(true);
+  const [err,       setErr]       = useState('');
+  const [showForm,  setShowForm]  = useState(false);
+  const [editSched, setEditSched] = useState(null);
+
+  async function load() {
+    if (!clientId) return;
+    setLoading(true);
+    try {
+      const data = await getRecurringInvoices(clientId);
+      setSchedules(Array.isArray(data) ? data : []);
+    } catch (e) { setErr(e.message); }
+    finally { setLoading(false); }
+  }
+
+  useEffect(() => { load(); }, [clientId]);
+
+  async function handlePause(s) {
+    try { await pauseRecurringInvoice(s.id); load(); } catch (e) { alert(e.message); }
+  }
+  async function handleResume(s) {
+    try { await resumeRecurringInvoice(s.id); load(); } catch (e) { alert(e.message); }
+  }
+  async function handleCancel(s) {
+    if (!window.confirm(`Cancel recurring schedule for ${s.customer_name}? This cannot be undone.`)) return;
+    try { await cancelRecurringInvoice(s.id); load(); } catch (e) { alert(e.message); }
+  }
+
+  const statusDot = status => {
+    const col = status === 'active' ? T.green : status === 'paused' ? T.orange : T.muted;
+    const label = status === 'active' ? 'Active' : status === 'paused' ? 'Paused' : 'Cancelled';
+    return (
+      <span style={{ display: 'inline-flex', alignItems: 'center', gap: 5 }}>
+        <span style={{ width: 8, height: 8, borderRadius: '50%', background: col, flexShrink: 0 }} />
+        <span style={{ fontSize: 12, fontWeight: 600, color: col }}>{label}</span>
+      </span>
+    );
+  };
+
+  return (
+    <div>
+      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 16 }}>
+        <div>
+          <div style={{ fontSize: 15, fontWeight: 700, color: T.text }}>Recurring Schedules</div>
+          <div style={{ fontSize: 12, color: T.muted, marginTop: 2 }}>Invoices are auto-generated and emailed daily at 8 AM PH.</div>
+        </div>
+        <button onClick={() => { setEditSched(null); setShowForm(true); }}
+          style={{ padding: '9px 20px', borderRadius: 10, border: 'none', background: '#10b981', color: '#fff', fontSize: 13, fontWeight: 700, cursor: 'pointer' }}>
+          + New Schedule
+        </button>
+      </div>
+
+      {err && <div style={{ color: T.red, fontSize: 13, marginBottom: 12 }}>{err}</div>}
+
+      {loading ? (
+        <div style={{ color: T.muted, fontSize: 14, padding: '40px 0', textAlign: 'center' }}>Loading schedules…</div>
+      ) : schedules.length === 0 ? (
+        <div style={{ color: T.muted, fontSize: 14, padding: '40px 0', textAlign: 'center' }}>
+          No recurring schedules yet. Set one up for monthly retainers, subscriptions, or regular billing.
+        </div>
+      ) : (
+        <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
+          {schedules.map(s => {
+            const itemTotal = (s.items || []).reduce((acc, i) => acc + (Number(i.quantity) || 1) * (Number(i.unit_price) || 0), 0);
+            const vatAmt    = s.vat_type === 'vatable' ? itemTotal * 0.12 : 0;
+            const grandTotal = itemTotal + vatAmt;
+            return (
+              <div key={s.id} style={{ background: T.surface, border: `1px solid ${T.border}`, borderRadius: 12, padding: '16px 20px' }}>
+                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', flexWrap: 'wrap', gap: 12 }}>
+                  <div style={{ flex: 1, minWidth: 220 }}>
+                    <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: 4 }}>
+                      <div style={{ fontSize: 15, fontWeight: 700, color: T.text }}>{s.customer_name}</div>
+                      {statusDot(s.status)}
+                    </div>
+                    {s.customer_email && <div style={{ fontSize: 12, color: T.muted }}>{s.customer_email}</div>}
+                    <div style={{ fontSize: 12, color: T.muted, marginTop: 2 }}>
+                      {FREQ_LABELS[s.frequency] || s.frequency} · Due +{s.due_days}d ·{' '}
+                      {s.total_generated} invoice{s.total_generated !== 1 ? 's' : ''} generated
+                    </div>
+                  </div>
+                  <div style={{ textAlign: 'right' }}>
+                    <div style={{ fontSize: 20, fontWeight: 700, color: T.accent }}>{peso(grandTotal)}</div>
+                    <div style={{ fontSize: 11, color: T.muted }}>per invoice (incl. VAT)</div>
+                    <div style={{ fontSize: 12, color: T.text, marginTop: 4 }}>
+                      Next: <strong>{s.next_run_date || '—'}</strong>
+                    </div>
+                  </div>
+                </div>
+
+                {/* Items summary */}
+                <div style={{ marginTop: 10, borderTop: `1px solid ${T.border}`, paddingTop: 10, display: 'flex', flexWrap: 'wrap', gap: 8 }}>
+                  {(s.items || []).slice(0, 3).map((item, idx) => (
+                    <span key={idx} style={{ fontSize: 11, background: T.bg, border: `1px solid ${T.border}`, borderRadius: 6, padding: '2px 8px', color: T.text }}>
+                      {item.description} × {item.quantity}
+                    </span>
+                  ))}
+                  {(s.items || []).length > 3 && (
+                    <span style={{ fontSize: 11, color: T.muted }}>+{s.items.length - 3} more</span>
+                  )}
+                </div>
+
+                {/* Actions */}
+                <div style={{ marginTop: 12, display: 'flex', gap: 8, flexWrap: 'wrap' }}>
+                  {s.status !== 'cancelled' && (
+                    <button onClick={() => { setEditSched(s); setShowForm(true); }}
+                      style={{ padding: '5px 14px', borderRadius: 8, border: `1px solid ${T.border}`, background: T.surface, fontSize: 12, fontWeight: 600, color: T.text, cursor: 'pointer' }}>
+                      Edit
+                    </button>
+                  )}
+                  {s.status === 'active' && (
+                    <button onClick={() => handlePause(s)}
+                      style={{ padding: '5px 14px', borderRadius: 8, border: 'none', background: '#fff7ed', fontSize: 12, fontWeight: 600, color: '#c2410c', cursor: 'pointer' }}>
+                      Pause
+                    </button>
+                  )}
+                  {s.status === 'paused' && (
+                    <button onClick={() => handleResume(s)}
+                      style={{ padding: '5px 14px', borderRadius: 8, border: 'none', background: '#f0fdf4', fontSize: 12, fontWeight: 600, color: '#15803d', cursor: 'pointer' }}>
+                      Resume
+                    </button>
+                  )}
+                  {s.status !== 'cancelled' && (
+                    <button onClick={() => handleCancel(s)}
+                      style={{ padding: '5px 14px', borderRadius: 8, border: 'none', background: '#fef2f2', fontSize: 12, fontWeight: 600, color: T.red, cursor: 'pointer' }}>
+                      Cancel
+                    </button>
+                  )}
+                </div>
+              </div>
+            );
+          })}
+        </div>
+      )}
+
+      {showForm && (
+        <RecurringFormModal
+          clientId={clientId}
+          schedule={editSched}
+          onClose={() => { setShowForm(false); setEditSched(null); }}
+          onSaved={() => { setShowForm(false); setEditSched(null); load(); }}
         />
       )}
     </div>

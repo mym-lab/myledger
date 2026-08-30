@@ -288,6 +288,14 @@ export const markInvoicePaid   = (id, settlement, payment_date) =>
 export const voidInvoice       = (id, void_reason) => post(`/invoices/${id}/void`, { void_reason }, true);
 export const deleteInvoice     = (id)              => del(`/invoices/${id}`, true);
 
+// ─── Recurring Invoices ───────────────────────────────────────
+export const getRecurringInvoices    = (clientId)  => get(`/recurring-invoices?clientId=${clientId}`, true);
+export const createRecurringInvoice  = (data)      => post('/recurring-invoices', data, true);
+export const updateRecurringInvoice  = (id, data)  => put(`/recurring-invoices/${id}`, data, true);
+export const pauseRecurringInvoice   = (id)        => post(`/recurring-invoices/${id}/pause`, {}, true);
+export const resumeRecurringInvoice  = (id)        => post(`/recurring-invoices/${id}/resume`, {}, true);
+export const cancelRecurringInvoice  = (id)        => del(`/recurring-invoices/${id}`, true);
+
 // ─── Payroll / 1601-C ────────────────────────────────────────
 export const getEmployees      = (clientId)   => get(`/payroll/employees?clientId=${clientId}`, true);
 export const createEmployee    = (data)       => post('/payroll/employees', data, true);
