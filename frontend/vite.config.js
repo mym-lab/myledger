@@ -13,4 +13,14 @@ export default defineConfig({
       },
     },
   },
+  build: {
+    // Content-hashed filenames force browsers to load fresh chunks after every deploy
+    rollupOptions: {
+      output: {
+        entryFileNames:  'assets/[name]-[hash].js',
+        chunkFileNames:  'assets/[name]-[hash].js',
+        assetFileNames:  'assets/[name]-[hash][extname]',
+      },
+    },
+  },
 });
