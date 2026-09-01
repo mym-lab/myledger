@@ -175,6 +175,7 @@ export default function CommandCenter({ onLogout }) {
   // Accountant tier management
   const [tierMsg,      setTierMsg]      = useState('');
   const [acctPricingForm, setAcctPricingForm] = useState({ solo: '', professional: '', firm: '', agency: '' });
+  const [staffLimitForm,  setStaffLimitForm]  = useState({ free: '0', starter: '1', solo: '2', professional: '5', firm: '10', agency: '25' });
   // Referral rate settings
   const [referralForm,  setReferralForm]  = useState({ signupBonus: '100', subscriptionPercent: '10' });
   // EWT / ATC rates (editable table)
@@ -324,6 +325,14 @@ export default function CommandCenter({ onLogout }) {
       if (Array.isArray(s.ewtRates) && s.ewtRates.length > 0) {
         setEwtRatesForm(s.ewtRates.map(r => ({ atc: r.atc, rate: String(r.rate), description: r.description || '' })));
       }
+      if (s.staffLimits) setStaffLimitForm({
+        free:         String(s.staffLimits.free         ?? 0),
+        starter:      String(s.staffLimits.starter      ?? 1),
+        solo:         String(s.staffLimits.solo         ?? 2),
+        professional: String(s.staffLimits.professional ?? 5),
+        firm:         String(s.staffLimits.firm         ?? 10),
+        agency:       String(s.staffLimits.agency       ?? 25),
+      });
       if (s.smtp) setSmtpForm(f => ({ ...f, passSet: !!s.smtp.passSet,
         ...f,
         host:      s.smtp.host      ?? '',
@@ -440,6 +449,14 @@ export default function CommandCenter({ onLogout }) {
         ewtRates: ewtRatesForm
           .filter(r => r.atc.trim() && !isNaN(Number(r.rate)) && Number(r.rate) >= 0 && Number(r.rate) <= 1)
           .map(r => ({ atc: r.atc.trim().toUpperCase(), rate: Number(r.rate), description: r.description.trim() })),
+        staffLimits: {
+          free:         Number(staffLimitForm.free),
+          starter:      Number(staffLimitForm.starter),
+          solo:         Number(staffLimitForm.solo),
+          professional: Number(staffLimitForm.professional),
+          firm:         Number(staffLimitForm.firm),
+          agency:       Number(staffLimitForm.agency),
+        },
       });
       setSettings(r.settings);
       setSaveMsg('✓ Settings saved successfully');
@@ -1488,6 +1505,35 @@ export default function CommandCenter({ onLogout }) {
                           onChange={e => setAcctPricingForm(f => ({ ...f, [key]: e.target.value }))} />
                       </div>
                       <div style={{ fontSize: 11, color: T.muted, marginTop: 3 }}>/month</div>
+                    </div>
+                  ))}
+                </div>
+              </Card>
+
+              {/* Staff Sub-user Limits per Accountant Tier */}
+              <Card style={{ gridColumn: '1 / -1' }}>
+                <SectionHead>Staff Sub-user Limits per Accountant Tier</SectionHead>
+                <div style={{ fontSize: 13, color: T.muted, marginBottom: 16 }}>
+                  Max number of staff logins an accountant can create. Set to 0 to disable staff for that tier.
+                </div>
+                <div style={{ display: 'grid', gridTemplateColumns: 'repeat(6, 1fr)', gap: 16 }}>
+                  {[
+                    { key: 'free',         label: 'Free',         color: '#6e6e73' },
+                    { key: 'starter',      label: 'Starter',      color: '#5ac8fa' },
+                    { key: 'solo',         label: 'Solo',         color: '#0071e3' },
+                    { key: 'professional', label: 'Professional',  color: '#ff9500' },
+                    { key: 'firm',         label: 'Firm',         color: '#34c759' },
+                    { key: 'agency',       label: 'Agency',       color: '#af52de' },
+                  ].map(({ key, label, color }) => (
+                    <div key={key}>
+                      <label style={{ display: 'block', fontSize: 13, fontWeight: 700, color, marginBottom: 6 }}>
+                        {label}
+                      </label>
+                      <input style={{ ...inp, fontWeight: 600, fontSize: 15, marginBottom: 0 }}
+                        type="number" min="0" max="999"
+                        value={staffLimitForm[key]}
+                        onChange={e => setStaffLimitForm(f => ({ ...f, [key]: e.target.value }))} />
+                      <div style={{ fontSize: 11, color: T.muted, marginTop: 3 }}>staff</div>
                     </div>
                   ))}
                 </div>

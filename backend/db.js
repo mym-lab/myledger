@@ -413,6 +413,15 @@ const DEFAULT_SETTINGS = {
     user: '', pass: '',
     fromName: 'MyLedger', fromEmail: '', enabled: false,
   },
+  // Max staff sub-users per accountant tier (admin-editable)
+  staffLimits: {
+    free:         0,
+    starter:      1,
+    solo:         2,
+    professional: 5,
+    firm:         10,
+    agency:       25,
+  },
 };
 
 const initSetting = db.prepare(

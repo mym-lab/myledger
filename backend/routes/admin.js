@@ -131,7 +131,7 @@ router.get('/settings', (req, res, next) => {
 // PUT /api/admin/settings
 router.put('/settings', (req, res, next) => {
   try {
-    const { pricing, payment, contactEmail, accountantPricing, referral, ewtRates } = req.body;
+    const { pricing, payment, contactEmail, accountantPricing, referral, ewtRates, staffLimits } = req.body;
 
     if (pricing) {
       const current = getSetting('pricing') || {};
@@ -168,6 +168,14 @@ router.put('/settings', (req, res, next) => {
       if (accountantPricing.firm         != null) current.firm         = Number(accountantPricing.firm);
       if (accountantPricing.agency       != null) current.agency       = Number(accountantPricing.agency);
       setSetting('accountantPricing', current);
+    }
+    if (staffLimits && typeof staffLimits === 'object') {
+      const TIERS = ['free', 'starter', 'solo', 'professional', 'firm', 'agency'];
+      const current = getSetting('staffLimits') || {};
+      for (const tier of TIERS) {
+        if (staffLimits[tier] != null) current[tier] = Math.max(0, Math.floor(Number(staffLimits[tier])));
+      }
+      setSetting('staffLimits', current);
     }
     if (Array.isArray(ewtRates)) {
       // Validate: each entry must have atc (string), rate (0–1), description (string)

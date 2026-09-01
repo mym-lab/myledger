@@ -10,13 +10,16 @@
 import { Router }   from 'express';
 import bcrypt        from 'bcryptjs';
 import { v4 as uuid } from 'uuid';
-import { db, rowToStaff } from '../db.js';
+import { db, rowToStaff, getSetting } from '../db.js';
 import { authenticate }   from '../middleware/auth.js';
 
 const router = Router();
 router.use(authenticate);
 
 // ── Prepared statements ───────────────────────────────────────────────────────
+const stmtOwnerTier    = db.prepare('SELECT accountant_tier FROM users WHERE id = ?');
+const stmtCountStaff   = db.prepare('SELECT COUNT(*) AS cnt FROM accountant_staff WHERE owner_id = ?');
+
 const stmtInsertStaff = db.prepare(`
   INSERT INTO accountant_staff (id, owner_id, name, email, password_hash, created_at)
   VALUES (@id, @owner_id, @name, @email, @password_hash, datetime('now'))
@@ -83,6 +86,19 @@ router.post('/', async (req, res, next) => {
 
     if (stmtFindStaffByEmail.get(email))
       return res.status(409).json({ error: 'A staff member with that email already exists' });
+
+    // Enforce per-tier staff limit (from admin-editable settings)
+    const staffLimits = getSetting('staffLimits') || {};
+    const ownerRow    = stmtOwnerTier.get(req.userId);
+    const tier        = ownerRow?.accountant_tier || 'free';
+    const limit       = staffLimits[tier] ?? 0;
+    const current     = stmtCountStaff.get(req.userId).cnt;
+    if (limit === 0)
+      return res.status(403).json({ error: 'Your current plan does not include staff sub-users. Please upgrade.' });
+    if (current >= limit)
+      return res.status(403).json({
+        error: `Staff limit reached for your ${tier} plan (${limit} staff). Please upgrade to add more.`,
+      });
 
     const password_hash = await bcrypt.hash(password, 10);
     const id = uuid();
