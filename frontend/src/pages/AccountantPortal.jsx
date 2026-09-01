@@ -35,7 +35,7 @@ import {
   backupClient,
   scanReceipt,
   getMyReferrals,
-  getStaff, createStaff, assignStaff, deleteStaff,
+  getStaff, createStaff, assignStaff, resetStaffPassword, deleteStaff,
   downloadCSV,
   downloadBirXml,
   createPaymongoLink,
@@ -2136,8 +2136,11 @@ export default function AccountantPortal({ onLogout }) {
   const [newStaffName,   setNewStaffName]  = useState('');
   const [newStaffEmail,  setNewStaffEmail] = useState('');
   const [newStaffPw,     setNewStaffPw]    = useState('');
+  const [newStaffPwShow, setNewStaffPwShow]= useState(false);
   const [newStaffBusy,   setNewStaffBusy]  = useState(false);
   const [newStaffErr,    setNewStaffErr]   = useState('');
+  // Per-staff reset password state: { [staffId]: { show, pw, showPw, busy, err } }
+  const [staffReset,     setStaffReset]    = useState({});
 
   const [showTx, setShowTx]   = useState(false);
   const [journals,  setJournals]  = useState([]);
@@ -7021,9 +7024,17 @@ export default function AccountantPortal({ onLogout }) {
                   <input placeholder="Email address" type="email" value={newStaffEmail}
                     onChange={e => setNewStaffEmail(e.target.value)}
                     style={{ ...inp, flex: '1 1 200px' }} />
-                  <input placeholder="Temporary password" type="password" value={newStaffPw}
-                    onChange={e => setNewStaffPw(e.target.value)}
-                    style={{ ...inp, flex: '1 1 160px' }} />
+                  <div style={{ position: 'relative', flex: '1 1 180px' }}>
+                    <input placeholder="Temporary password" type={newStaffPwShow ? 'text' : 'password'}
+                      value={newStaffPw} onChange={e => setNewStaffPw(e.target.value)}
+                      style={{ ...inp, width: '100%', paddingRight: 36, boxSizing: 'border-box' }} />
+                    <button type="button" onClick={() => setNewStaffPwShow(s => !s)}
+                      style={{ position: 'absolute', right: 8, top: '50%', transform: 'translateY(-50%)',
+                        background: 'none', border: 'none', cursor: 'pointer', fontSize: 15,
+                        color: T.muted, padding: 0, lineHeight: 1 }}>
+                      {newStaffPwShow ? '🙈' : '👁️'}
+                    </button>
+                  </div>
                   <Btn disabled={newStaffBusy} onClick={async () => {
                     if (!newStaffName || !newStaffEmail || !newStaffPw)
                       return setNewStaffErr('All fields are required.');
@@ -7075,6 +7086,57 @@ export default function AccountantPortal({ onLogout }) {
                       catch (e) { alert(e.message); }
                     }}>Remove</Btn>
                   </div>
+
+                  {/* ── Reset password ─────────────────────────────── */}
+                  {(() => {
+                    const rs = staffReset[member.id] || {};
+                    const patchRs = patch => setStaffReset(prev => ({
+                      ...prev, [member.id]: { ...(prev[member.id] || {}), ...patch }
+                    }));
+                    return (
+                      <div style={{ marginBottom: 14 }}>
+                        {!rs.show ? (
+                          <button onClick={() => patchRs({ show: true, pw: '', showPw: false, err: '' })}
+                            style={{ fontSize: 12, color: T.accent, background: 'none', border: 'none',
+                              cursor: 'pointer', padding: 0, fontFamily: 'inherit', textDecoration: 'underline' }}>
+                            🔑 Reset password
+                          </button>
+                        ) : (
+                          <div style={{ display: 'flex', gap: 8, alignItems: 'center', flexWrap: 'wrap' }}>
+                            <div style={{ position: 'relative' }}>
+                              <input placeholder="New password (min 6 chars)"
+                                type={rs.showPw ? 'text' : 'password'}
+                                value={rs.pw || ''}
+                                onChange={e => patchRs({ pw: e.target.value })}
+                                style={{ ...inp, paddingRight: 34, width: 220, boxSizing: 'border-box' }} />
+                              <button type="button" onClick={() => patchRs({ showPw: !rs.showPw })}
+                                style={{ position: 'absolute', right: 8, top: '50%', transform: 'translateY(-50%)',
+                                  background: 'none', border: 'none', cursor: 'pointer', fontSize: 13,
+                                  color: T.muted, padding: 0, lineHeight: 1 }}>
+                                {rs.showPw ? '🙈' : '👁️'}
+                              </button>
+                            </div>
+                            <Btn size="sm" disabled={rs.busy} onClick={async () => {
+                              if (!rs.pw || rs.pw.length < 6) return patchRs({ err: 'Min 6 characters.' });
+                              patchRs({ busy: true, err: '' });
+                              try {
+                                await resetStaffPassword(member.id, rs.pw);
+                                patchRs({ show: false, busy: false, pw: '' });
+                              } catch (e) { patchRs({ err: e.message, busy: false }); }
+                            }}>
+                              {rs.busy ? 'Saving…' : 'Save'}
+                            </Btn>
+                            <button onClick={() => patchRs({ show: false })}
+                              style={{ fontSize: 12, color: T.muted, background: 'none', border: 'none',
+                                cursor: 'pointer', padding: 0, fontFamily: 'inherit' }}>
+                              Cancel
+                            </button>
+                            {rs.err && <span style={{ fontSize: 12, color: '#ff3b30' }}>{rs.err}</span>}
+                          </div>
+                        )}
+                      </div>
+                    );
+                  })()}
 
                   <SectionHead>Assigned Clients</SectionHead>
                   <div style={{ display: 'flex', flexWrap: 'wrap', gap: 8 }}>

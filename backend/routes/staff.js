@@ -153,4 +153,24 @@ router.delete('/:id', (req, res, next) => {
   } catch (err) { next(err); }
 });
 
+// ── PUT /api/staff/:id/password — owner resets a staff member's password ───────
+router.put('/:id/password', async (req, res, next) => {
+  if (!requireOwner(req, res)) return;
+  try {
+    const { id } = req.params;
+    const { password } = req.body;
+    if (!password || password.length < 6)
+      return res.status(400).json({ error: 'Password must be at least 6 characters' });
+
+    const staffRow = stmtGetStaff.get(id);
+    if (!staffRow || staffRow.owner_id !== req.userId)
+      return res.status(404).json({ error: 'Staff member not found' });
+
+    const password_hash = await bcrypt.hash(password, 10);
+    db.prepare('UPDATE accountant_staff SET password_hash = ? WHERE id = ?').run(password_hash, id);
+
+    res.json({ ok: true });
+  } catch (err) { next(err); }
+});
+
 export default router;
