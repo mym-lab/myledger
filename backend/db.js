@@ -368,6 +368,33 @@ try { db.exec(`
   )
 `); } catch (_) { /* already exists */ }
 
+// ── Accountant staff / team feature ──────────────────────────────────────────
+// Sub-users (staff) belong to one main accountant account (owner_id).
+// Each staff member has their own email + password and can be assigned
+// to a subset of the accountant's clients.
+try { db.exec(`
+  CREATE TABLE IF NOT EXISTS accountant_staff (
+    id            TEXT PRIMARY KEY,
+    owner_id      TEXT NOT NULL,
+    name          TEXT NOT NULL,
+    email         TEXT UNIQUE NOT NULL,
+    password_hash TEXT NOT NULL,
+    created_at    TEXT NOT NULL DEFAULT (datetime('now')),
+    FOREIGN KEY (owner_id) REFERENCES users(id)
+  )
+`); } catch (_) { /* already exists */ }
+
+try { db.exec(`
+  CREATE TABLE IF NOT EXISTS staff_assignments (
+    staff_id    TEXT NOT NULL,
+    client_id   TEXT NOT NULL,
+    assigned_at TEXT NOT NULL DEFAULT (datetime('now')),
+    PRIMARY KEY (staff_id, client_id),
+    FOREIGN KEY (staff_id)  REFERENCES accountant_staff(id),
+    FOREIGN KEY (client_id) REFERENCES clients(id)
+  )
+`); } catch (_) { /* already exists */ }
+
 // ── Default settings bootstrap ────────────────────────────────────────────────
 const DEFAULT_SETTINGS = {
   pricing: { starter: 399, professional: 699, enterprise: 999 },
@@ -527,6 +554,18 @@ export function rowToAudit(r) {
     id: r.id, clientId: r.client_id, userId: r.user_id,
     action: r.action, entity: r.entity, entityId: r.entity_id,
     detail: r.detail, timestamp: r.timestamp,
+  };
+}
+
+export function rowToStaff(r) {
+  if (!r) return null;
+  return {
+    id:        r.id,
+    ownerId:   r.owner_id,
+    name:      r.name,
+    email:     r.email,
+    createdAt: r.created_at,
+    // passwordHash intentionally omitted from API responses
   };
 }
 
