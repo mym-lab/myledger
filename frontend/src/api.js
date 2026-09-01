@@ -420,3 +420,15 @@ export const createStaff          = (data)         => post('/staff', data,      
 export const assignStaff          = (id, clientIds)=> put(`/staff/${id}/assign`, { clientIds }, true);
 export const resetStaffPassword   = (id, password) => put(`/staff/${id}/password`, { password }, true);
 export const deleteStaff          = (id)           => del(`/staff/${id}`,               true);
+
+// ─── Client Groups (multi-store / consolidated P&L) ───────────
+export const getClientGroups      = ()                       => get('/client-groups',                      true);
+export const createClientGroup    = (data)                   => post('/client-groups', data,               true);
+export const updateClientGroup    = (id, data)               => put(`/client-groups/${id}`, data,          true);
+export const deleteClientGroup    = (id)                     => del(`/client-groups/${id}`,                true);
+export const getConsolidated      = (id, from, to)           => {
+  let url = `/client-groups/${id}/consolidated`;
+  if (from) url += `?from=${from}`;
+  if (to)   url += `${from ? '&' : '?'}to=${to}`;
+  return get(url, true);
+};

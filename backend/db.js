@@ -399,6 +399,27 @@ try { db.exec(`
   )
 `); } catch (_) { /* already exists */ }
 
+// ── Client groups (multi-store / consolidated P&L) ────────────────────────────
+try { db.exec(`
+  CREATE TABLE IF NOT EXISTS client_groups (
+    id         TEXT PRIMARY KEY,
+    owner_id   TEXT NOT NULL,
+    name       TEXT NOT NULL,
+    created_at TEXT NOT NULL DEFAULT (datetime('now')),
+    FOREIGN KEY (owner_id) REFERENCES users(id)
+  )
+`); } catch (_) { /* already exists */ }
+
+try { db.exec(`
+  CREATE TABLE IF NOT EXISTS client_group_members (
+    group_id  TEXT NOT NULL,
+    client_id TEXT NOT NULL,
+    PRIMARY KEY (group_id, client_id),
+    FOREIGN KEY (group_id)  REFERENCES client_groups(id),
+    FOREIGN KEY (client_id) REFERENCES clients(id)
+  )
+`); } catch (_) { /* already exists */ }
+
 // ── Default settings bootstrap ────────────────────────────────────────────────
 const DEFAULT_SETTINGS = {
   pricing: { starter: 399, professional: 699, enterprise: 999 },

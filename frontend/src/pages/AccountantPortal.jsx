@@ -36,6 +36,7 @@ import {
   scanReceipt,
   getMyReferrals,
   getStaff, createStaff, assignStaff, resetStaffPassword, deleteStaff,
+  getClientGroups, createClientGroup, updateClientGroup, deleteClientGroup, getConsolidated,
   downloadCSV,
   downloadBirXml,
   createPaymongoLink,
@@ -202,7 +203,7 @@ function SectionHead({ children }) {
 const PRO_TABS = new Set([
   'Journal Entries', 'Trial Balance', 'Books', 'General Journal', 'General Ledger', 'COA', 'Period Lock', 'Audit Log',
   'BIR Returns', 'Payroll', 'Alphalist',
-  'Income Statement', 'Balance Sheet', 'Cash Flow', 'Assets', 'Contacts', 'SLSP',
+  'Income Statement', 'Balance Sheet', 'Cash Flow', 'Assets', 'Contacts', 'SLSP', 'Consolidated',
 ]);
 
 // Accountant tier definitions
@@ -1311,14 +1312,14 @@ function computeIncomeTax(transactions, client, year, quarter /* null = annual *
   };
 }
 
-const TABS = ['Dashboard', 'Transactions', 'Invoices', 'Journal Entries', 'Trial Balance', 'Books', 'General Journal', 'General Ledger', 'COA', 'Period Lock', 'Audit Log', 'BIR Returns', 'Payroll', 'Alphalist', 'SLSP', 'Income Statement', 'Balance Sheet', 'Cash Flow', 'Assets', 'Contacts', 'BIR Reminders', 'Filing Calendar', 'Compare', 'Portfolio', 'Business Setup', 'Referral', 'My Team'];
+const TABS = ['Dashboard', 'Transactions', 'Invoices', 'Journal Entries', 'Trial Balance', 'Books', 'General Journal', 'General Ledger', 'COA', 'Period Lock', 'Audit Log', 'BIR Returns', 'Payroll', 'Alphalist', 'SLSP', 'Income Statement', 'Balance Sheet', 'Cash Flow', 'Assets', 'Contacts', 'BIR Reminders', 'Filing Calendar', 'Compare', 'Consolidated', 'Portfolio', 'Business Setup', 'Referral', 'My Team'];
 
 // Grouped navigation — replaces the flat 26-tab bar with 6 category groups
 const TAB_GROUPS = [
   { label: '📊 Overview',    tabs: ['Dashboard', 'Portfolio'] },
   { label: '📝 Data Entry',  tabs: ['Transactions', 'Invoices', 'Contacts'] },
   { label: '📒 Books',       tabs: ['Journal Entries', 'Trial Balance', 'Books', 'General Journal', 'General Ledger', 'COA', 'Assets'] },
-  { label: '📈 Reports',     tabs: ['Income Statement', 'Balance Sheet', 'Cash Flow', 'Compare'] },
+  { label: '📈 Reports',     tabs: ['Income Statement', 'Balance Sheet', 'Cash Flow', 'Compare', 'Consolidated'] },
   { label: '🏛 BIR & Tax',   tabs: ['BIR Reminders', 'Filing Calendar', 'BIR Returns', 'Payroll', 'Alphalist', 'SLSP'] },
   { label: '⚙️ Settings',    tabs: ['Period Lock', 'Audit Log', 'Business Setup', 'Referral', 'My Team'] },
 ];
@@ -2142,6 +2143,22 @@ export default function AccountantPortal({ onLogout }) {
   // Per-staff reset password state: { [staffId]: { show, pw, showPw, busy, err } }
   const [staffReset,     setStaffReset]    = useState({});
 
+  // Consolidated P&L state
+  const [groups,           setGroups]          = useState([]);
+  const [groupsLoading,    setGroupsLoading]   = useState(false);
+  const [showNewGroup,     setShowNewGroup]     = useState(false);
+  const [newGroupName,     setNewGroupName]     = useState('');
+  const [newGroupClients,  setNewGroupClients]  = useState([]);
+  const [newGroupBusy,     setNewGroupBusy]     = useState(false);
+  const [editGroupId,      setEditGroupId]      = useState(null); // group being edited
+  const [editGroupName,    setEditGroupName]    = useState('');
+  const [editGroupClients, setEditGroupClients] = useState([]);
+  const [selectedGroupId,  setSelectedGroupId]  = useState('');
+  const [consolFrom,       setConsolFrom]       = useState('');
+  const [consolTo,         setConsolTo]         = useState('');
+  const [consolData,       setConsolData]       = useState(null);
+  const [consolLoading,    setConsolLoading]    = useState(false);
+
   const [showTx, setShowTx]   = useState(false);
   const [journals,  setJournals]  = useState([]);
   const [jLoad,     setJLoad]     = useState(false);
@@ -2380,10 +2397,27 @@ export default function AccountantPortal({ onLogout }) {
     finally { setTeamLoading(false); }
   }
 
-  // Referral + My Team tabs are user-level (no active client needed)
+  async function loadGroups() {
+    setGroupsLoading(true);
+    try { setGroups((await getClientGroups()).groups || []); }
+    catch (e) { console.error(e); }
+    finally { setGroupsLoading(false); }
+  }
+
+  async function loadConsolidated(gid, from, to) {
+    const groupId = gid !== undefined ? gid : selectedGroupId;
+    if (!groupId) return;
+    setConsolLoading(true);
+    try { setConsolData(await getConsolidated(groupId, from || consolFrom, to || consolTo)); }
+    catch (e) { console.error(e); }
+    finally { setConsolLoading(false); }
+  }
+
+  // Referral + My Team + Consolidated tabs are user-level (no active client needed)
   useEffect(() => {
-    if (tab === 'Referral') loadReferrals();
-    if (tab === 'My Team')  loadTeam();
+    if (tab === 'Referral')     loadReferrals();
+    if (tab === 'My Team')      loadTeam();
+    if (tab === 'Consolidated') loadGroups();
   }, [tab]);
 
   useEffect(() => {
@@ -6749,6 +6783,233 @@ export default function AccountantPortal({ onLogout }) {
             </div>
           );
         })()}
+
+        {/* ══════════ CONSOLIDATED P&L ══════════ */}
+        {tab === 'Consolidated' && !isStaffUser && (
+          !isPro ? <ProLock onUpgrade={(tier) => { setUpgradeTarget(tier || 'solo'); setShowUpgrade(true); }} trialExpired={trialStatus?.isExpired ?? false} /> :
+          <div>
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 24 }}>
+              <div>
+                <h2 style={{ margin: 0, fontSize: 22, fontWeight: 600 }}>Consolidated P&L</h2>
+                <div style={{ fontSize: 13, color: T.muted, marginTop: 4 }}>
+                  Group multiple clients (e.g. stores / branches) and view their combined financials.
+                </div>
+              </div>
+              <Btn size="sm" onClick={() => { setShowNewGroup(true); setNewGroupName(''); setNewGroupClients([]); }}>
+                + New Group
+              </Btn>
+            </div>
+
+            {/* ── New group form ── */}
+            {showNewGroup && (
+              <Card style={{ marginBottom: 20 }}>
+                <SectionHead>Create a Client Group</SectionHead>
+                <div style={{ display: 'flex', flexDirection: 'column', gap: 10, maxWidth: 480 }}>
+                  <input placeholder="Group name (e.g. ABC Pawnshop Stores)"
+                    value={newGroupName} onChange={e => setNewGroupName(e.target.value)}
+                    style={inp} />
+                  <div style={{ fontSize: 12, color: T.muted, fontWeight: 600, marginTop: 4 }}>
+                    Select member clients:
+                  </div>
+                  <div style={{ display: 'flex', flexDirection: 'column', gap: 6, maxHeight: 200, overflowY: 'auto' }}>
+                    {(clients || []).map(c => (
+                      <label key={c.id} style={{ display: 'flex', alignItems: 'center', gap: 8, fontSize: 13, cursor: 'pointer' }}>
+                        <input type="checkbox"
+                          checked={newGroupClients.includes(c.id)}
+                          onChange={e => setNewGroupClients(prev =>
+                            e.target.checked ? [...prev, c.id] : prev.filter(id => id !== c.id)
+                          )} />
+                        {c.tradeName}
+                      </label>
+                    ))}
+                  </div>
+                  <div style={{ display: 'flex', gap: 8, marginTop: 4 }}>
+                    <Btn disabled={newGroupBusy || !newGroupName.trim() || newGroupClients.length < 2}
+                      onClick={async () => {
+                        setNewGroupBusy(true);
+                        try {
+                          await createClientGroup({ name: newGroupName, clientIds: newGroupClients });
+                          setShowNewGroup(false);
+                          loadGroups();
+                        } catch (e) { alert(e.message); }
+                        finally { setNewGroupBusy(false); }
+                      }}>
+                      {newGroupBusy ? 'Saving…' : 'Create Group'}
+                    </Btn>
+                    <Btn variant="ghost" onClick={() => setShowNewGroup(false)}>Cancel</Btn>
+                  </div>
+                  {newGroupClients.length < 2 && newGroupName.trim() && (
+                    <div style={{ fontSize: 12, color: T.orange }}>Select at least 2 clients.</div>
+                  )}
+                </div>
+              </Card>
+            )}
+
+            {/* ── Group list ── */}
+            {groupsLoading ? <div style={{ color: T.muted }}>Loading…</div>
+            : groups.length === 0 && !showNewGroup ? (
+              <div style={{ textAlign: 'center', padding: '60px 20px', color: T.muted }}>
+                <div style={{ fontSize: 40, marginBottom: 12 }}>🏪</div>
+                <div style={{ fontSize: 15, fontWeight: 600 }}>No groups yet</div>
+                <div style={{ fontSize: 13, marginTop: 6 }}>Create a group to consolidate P&Ls across stores or branches.</div>
+              </div>
+            ) : (
+              <div style={{ display: 'flex', flexDirection: 'column', gap: 16 }}>
+                {groups.map(g => {
+                  const isEditing = editGroupId === g.id;
+                  const memberNames = (g.memberClientIds || [])
+                    .map(cid => (clients || []).find(c => c.id === cid)?.tradeName || cid)
+                    .join(', ');
+                  return (
+                    <Card key={g.id}>
+                      {isEditing ? (
+                        <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
+                          <input value={editGroupName} onChange={e => setEditGroupName(e.target.value)}
+                            style={inp} placeholder="Group name" />
+                          <div style={{ fontSize: 12, color: T.muted, fontWeight: 600 }}>Member clients:</div>
+                          <div style={{ display: 'flex', flexDirection: 'column', gap: 6, maxHeight: 160, overflowY: 'auto' }}>
+                            {(clients || []).map(c => (
+                              <label key={c.id} style={{ display: 'flex', alignItems: 'center', gap: 8, fontSize: 13, cursor: 'pointer' }}>
+                                <input type="checkbox"
+                                  checked={editGroupClients.includes(c.id)}
+                                  onChange={e => setEditGroupClients(prev =>
+                                    e.target.checked ? [...prev, c.id] : prev.filter(id => id !== c.id)
+                                  )} />
+                                {c.tradeName}
+                              </label>
+                            ))}
+                          </div>
+                          <div style={{ display: 'flex', gap: 8 }}>
+                            <Btn onClick={async () => {
+                              try {
+                                await updateClientGroup(g.id, { name: editGroupName, clientIds: editGroupClients });
+                                setEditGroupId(null);
+                                loadGroups();
+                              } catch (e) { alert(e.message); }
+                            }}>Save</Btn>
+                            <Btn variant="ghost" onClick={() => setEditGroupId(null)}>Cancel</Btn>
+                          </div>
+                        </div>
+                      ) : (
+                        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start' }}>
+                          <div>
+                            <div style={{ fontWeight: 600, fontSize: 15 }}>{g.name}</div>
+                            <div style={{ fontSize: 12, color: T.muted, marginTop: 2 }}>
+                              {g.memberClientIds?.length || 0} clients: {memberNames || '—'}
+                            </div>
+                          </div>
+                          <div style={{ display: 'flex', gap: 6 }}>
+                            <Btn size="sm" variant="ghost" onClick={() => {
+                              setEditGroupId(g.id);
+                              setEditGroupName(g.name);
+                              setEditGroupClients(g.memberClientIds || []);
+                            }}>Edit</Btn>
+                            <Btn size="sm" onClick={() => {
+                              setSelectedGroupId(g.id);
+                              setConsolData(null);
+                              loadConsolidated(g.id, consolFrom, consolTo);
+                            }} style={{ background: T.accent, color: '#fff' }}>View Report</Btn>
+                            <Btn size="sm" variant="danger" onClick={async () => {
+                              if (!confirm(`Delete group "${g.name}"?`)) return;
+                              try {
+                                await deleteClientGroup(g.id);
+                                if (selectedGroupId === g.id) { setSelectedGroupId(''); setConsolData(null); }
+                                loadGroups();
+                              } catch (e) { alert(e.message); }
+                            }}>Delete</Btn>
+                          </div>
+                        </div>
+                      )}
+                    </Card>
+                  );
+                })}
+              </div>
+            )}
+
+            {/* ── Consolidated Report ── */}
+            {selectedGroupId && (
+              <div style={{ marginTop: 32 }}>
+                <Card style={{ marginBottom: 16, padding: '14px 20px' }}>
+                  <div style={{ display: 'flex', gap: 12, alignItems: 'center', flexWrap: 'wrap' }}>
+                    <span style={{ fontWeight: 600, fontSize: 14 }}>
+                      {groups.find(g => g.id === selectedGroupId)?.name} — Consolidated P&L
+                    </span>
+                    <input type="date" value={consolFrom} onChange={e => setConsolFrom(e.target.value)}
+                      style={{ ...inp, fontSize: 12, padding: '5px 10px' }} />
+                    <span style={{ fontSize: 12, color: T.muted }}>to</span>
+                    <input type="date" value={consolTo} onChange={e => setConsolTo(e.target.value)}
+                      style={{ ...inp, fontSize: 12, padding: '5px 10px' }} />
+                    <Btn size="sm" onClick={() => loadConsolidated(selectedGroupId, consolFrom, consolTo)}>Run</Btn>
+                  </div>
+                </Card>
+
+                {consolLoading ? <div style={{ color: T.muted }}>Loading…</div>
+                : consolData && (() => {
+                  const { stores = [], consolidated } = consolData;
+                  if (!stores.length) return (
+                    <div style={{ color: T.muted, fontSize: 13, padding: 20 }}>No data for this period.</div>
+                  );
+
+                  const fmt = n => `₱${(n || 0).toLocaleString('en-PH', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
+                  const rows = [
+                    { label: 'Revenue',             key: 'revenue',           bold: true },
+                    { label: 'Cost of Sales',        key: 'costOfSales',       indent: true },
+                    { label: 'Gross Profit',         key: 'grossProfit',       bold: true },
+                    { label: 'Operating Expenses',   key: 'operatingExpenses', indent: true },
+                    { label: 'Net Profit / (Loss)',  key: 'netProfit',         bold: true, highlight: true },
+                  ];
+
+                  return (
+                    <Card style={{ padding: 0, overflow: 'hidden' }}>
+                      <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 13 }}>
+                        <thead>
+                          <tr style={{ background: T.bg }}>
+                            <th style={{ padding: '10px 14px', textAlign: 'left', fontWeight: 600,
+                              color: T.muted, fontSize: 11, borderBottom: `1px solid ${T.border}` }}>Account</th>
+                            {stores.map(s => (
+                              <th key={s.clientId} style={{ padding: '10px 14px', textAlign: 'right', fontWeight: 600,
+                                color: T.muted, fontSize: 11, borderBottom: `1px solid ${T.border}` }}>
+                                {s.clientName}
+                              </th>
+                            ))}
+                            <th style={{ padding: '10px 14px', textAlign: 'right', fontWeight: 700,
+                              color: T.accent, fontSize: 11, borderBottom: `1px solid ${T.border}` }}>TOTAL</th>
+                          </tr>
+                        </thead>
+                        <tbody>
+                          {rows.map((row, i) => (
+                            <tr key={row.key} style={{
+                              borderBottom: i < rows.length - 1 ? `1px solid ${T.border}` : 'none',
+                              background: row.highlight ? T.accentL : 'transparent',
+                            }}>
+                              <td style={{ padding: '10px 14px', fontWeight: row.bold ? 600 : 400,
+                                paddingLeft: row.indent ? 28 : 14, color: row.indent ? T.muted : 'inherit' }}>
+                                {row.label}
+                              </td>
+                              {stores.map(s => (
+                                <td key={s.clientId} style={{ padding: '10px 14px', textAlign: 'right',
+                                  fontWeight: row.bold ? 600 : 400,
+                                  color: row.key === 'netProfit' ? (s[row.key] >= 0 ? T.green : T.red) : 'inherit' }}>
+                                  {fmt(s[row.key])}
+                                </td>
+                              ))}
+                              <td style={{ padding: '10px 14px', textAlign: 'right', fontWeight: 700,
+                                color: row.key === 'netProfit'
+                                  ? (consolidated[row.key] >= 0 ? T.green : T.red)
+                                  : T.accent }}>
+                                {fmt(consolidated?.[row.key])}
+                              </td>
+                            </tr>
+                          ))}
+                        </tbody>
+                      </table>
+                    </Card>
+                  );
+                })()}
+              </div>
+            )}
+          </div>
+        )}
 
         {/* ══════════ PORTFOLIO (All Clients) ══════════ */}
         {tab === 'Portfolio' && (() => {
