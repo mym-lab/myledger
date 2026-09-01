@@ -35,6 +35,7 @@ import {
   backupClient,
   scanReceipt,
   getMyReferrals,
+  getStaff, createStaff, assignStaff, deleteStaff,
   downloadCSV,
   downloadBirXml,
   createPaymongoLink,
@@ -1310,7 +1311,7 @@ function computeIncomeTax(transactions, client, year, quarter /* null = annual *
   };
 }
 
-const TABS = ['Dashboard', 'Transactions', 'Invoices', 'Journal Entries', 'Trial Balance', 'Books', 'General Journal', 'General Ledger', 'COA', 'Period Lock', 'Audit Log', 'BIR Returns', 'Payroll', 'Alphalist', 'SLSP', 'Income Statement', 'Balance Sheet', 'Cash Flow', 'Assets', 'Contacts', 'BIR Reminders', 'Filing Calendar', 'Compare', 'Portfolio', 'Business Setup', 'Referral'];
+const TABS = ['Dashboard', 'Transactions', 'Invoices', 'Journal Entries', 'Trial Balance', 'Books', 'General Journal', 'General Ledger', 'COA', 'Period Lock', 'Audit Log', 'BIR Returns', 'Payroll', 'Alphalist', 'SLSP', 'Income Statement', 'Balance Sheet', 'Cash Flow', 'Assets', 'Contacts', 'BIR Reminders', 'Filing Calendar', 'Compare', 'Portfolio', 'Business Setup', 'Referral', 'My Team'];
 
 // Grouped navigation — replaces the flat 26-tab bar with 6 category groups
 const TAB_GROUPS = [
@@ -1319,7 +1320,7 @@ const TAB_GROUPS = [
   { label: '📒 Books',       tabs: ['Journal Entries', 'Trial Balance', 'Books', 'General Journal', 'General Ledger', 'COA', 'Assets'] },
   { label: '📈 Reports',     tabs: ['Income Statement', 'Balance Sheet', 'Cash Flow', 'Compare'] },
   { label: '🏛 BIR & Tax',   tabs: ['BIR Reminders', 'Filing Calendar', 'BIR Returns', 'Payroll', 'Alphalist', 'SLSP'] },
-  { label: '⚙️ Settings',    tabs: ['Period Lock', 'Audit Log', 'Business Setup', 'Referral'] },
+  { label: '⚙️ Settings',    tabs: ['Period Lock', 'Audit Log', 'Business Setup', 'Referral', 'My Team'] },
 ];
 
 const TAX_TYPES_LIST = [
@@ -2111,6 +2112,8 @@ export default function AccountantPortal({ onLogout }) {
   // Dynamic accent: agency accountants with a custom color override T.accent site-wide in header/badges
   const firmLogoData   = isAgency && meData?.firmLogo    ? meData.firmLogo    : null;
   const brandAccent    = accentOverride || T.accent;
+  // Staff sub-users see a limited view (no My Team, no Settings tabs)
+  const isStaffUser    = meData?.role === 'staff';
 
   const [tab,       setTab]     = useState('Dashboard');
   const [clients,   setClients] = useState([]);
@@ -2124,6 +2127,17 @@ export default function AccountantPortal({ onLogout }) {
   const [txLoad,    setTxLoad]  = useState(false);
   const [deadlines, setDL]      = useState([]);
   const [birLoad,   setBirLoad] = useState(false);
+
+  // My Team state
+  const [teamStaff,      setTeamStaff]     = useState([]);
+  const [teamLoading,    setTeamLoading]   = useState(false);
+  const [teamError,      setTeamError]     = useState('');
+  const [showAddStaff,   setShowAddStaff]  = useState(false);
+  const [newStaffName,   setNewStaffName]  = useState('');
+  const [newStaffEmail,  setNewStaffEmail] = useState('');
+  const [newStaffPw,     setNewStaffPw]    = useState('');
+  const [newStaffBusy,   setNewStaffBusy]  = useState(false);
+  const [newStaffErr,    setNewStaffErr]   = useState('');
 
   const [showTx, setShowTx]   = useState(false);
   const [journals,  setJournals]  = useState([]);
@@ -2354,9 +2368,18 @@ export default function AccountantPortal({ onLogout }) {
     } finally { setUpgradeSubmitting(false); }
   }
 
-  // Referral tab is user-level (no active client needed)
+  // Load staff when My Team tab is opened
+  async function loadTeam() {
+    setTeamLoading(true); setTeamError('');
+    try { setTeamStaff((await getStaff()).staff || []); }
+    catch (e) { setTeamError(e.message); }
+    finally { setTeamLoading(false); }
+  }
+
+  // Referral + My Team tabs are user-level (no active client needed)
   useEffect(() => {
     if (tab === 'Referral') loadReferrals();
+    if (tab === 'My Team')  loadTeam();
   }, [tab]);
 
   useEffect(() => {
@@ -2949,14 +2972,21 @@ export default function AccountantPortal({ onLogout }) {
              Sub-tab  : tabs in active group only (~34 px, max 7 items)
              Total    : ~70 px vs the previous ~180 px wrapping mess        */}
         {(() => {
-          const activeGroup = TAB_GROUPS.find(g => g.tabs.includes(tab)) || TAB_GROUPS[0];
+          // Staff sub-users see a restricted tab set (no team/settings management)
+          const visibleGroups = isStaffUser
+            ? TAB_GROUPS.map(g => ({
+                ...g,
+                tabs: g.tabs.filter(t => t !== 'My Team' && t !== 'Business Setup' && t !== 'Referral'),
+              })).filter(g => g.tabs.length > 0)
+            : TAB_GROUPS;
+          const activeGroup = visibleGroups.find(g => g.tabs.includes(tab)) || visibleGroups[0];
           return (
             <div style={{ marginBottom: 24 }}>
 
               {/* Category row */}
               <div style={{ display: 'flex', gap: 3, flexWrap: 'wrap', background: T.surface,
                 padding: 4, borderRadius: '10px 10px 0 0', boxShadow: T.shadow }}>
-                {TAB_GROUPS.map(g => {
+                {visibleGroups.map(g => {
                   const isActive = g === activeGroup;
                   return (
                     <button key={g.label}
@@ -6962,6 +6992,129 @@ export default function AccountantPortal({ onLogout }) {
                 )}
               </>
             )}
+          </div>
+        )}
+
+        {/* ════════════ MY TEAM ════════════ */}
+        {tab === 'My Team' && !isStaffUser && (
+          <div>
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 24 }}>
+              <div>
+                <h2 style={{ margin: 0, fontSize: 22, fontWeight: 600 }}>My Team</h2>
+                <div style={{ fontSize: 13, color: T.muted, marginTop: 4 }}>
+                  Add staff sub-users and assign them to specific clients. They log in with their own credentials.
+                </div>
+              </div>
+              <Btn size="sm" onClick={() => { setShowAddStaff(s => !s); setNewStaffErr(''); }}>
+                {showAddStaff ? '✕ Cancel' : '+ Invite Staff'}
+              </Btn>
+            </div>
+
+            {/* Add staff form */}
+            {showAddStaff && (
+              <Card style={{ marginBottom: 20, background: '#f9fffe', border: `1px solid ${T.accent}30` }}>
+                <SectionHead>New Staff Member</SectionHead>
+                <div style={{ display: 'flex', gap: 10, flexWrap: 'wrap', marginBottom: 10 }}>
+                  <input placeholder="Full name" value={newStaffName}
+                    onChange={e => setNewStaffName(e.target.value)}
+                    style={{ ...inp, flex: '1 1 160px' }} />
+                  <input placeholder="Email address" type="email" value={newStaffEmail}
+                    onChange={e => setNewStaffEmail(e.target.value)}
+                    style={{ ...inp, flex: '1 1 200px' }} />
+                  <input placeholder="Temporary password" type="password" value={newStaffPw}
+                    onChange={e => setNewStaffPw(e.target.value)}
+                    style={{ ...inp, flex: '1 1 160px' }} />
+                  <Btn disabled={newStaffBusy} onClick={async () => {
+                    if (!newStaffName || !newStaffEmail || !newStaffPw)
+                      return setNewStaffErr('All fields are required.');
+                    setNewStaffBusy(true); setNewStaffErr('');
+                    try {
+                      await createStaff({ name: newStaffName, email: newStaffEmail, password: newStaffPw });
+                      setNewStaffName(''); setNewStaffEmail(''); setNewStaffPw('');
+                      setShowAddStaff(false);
+                      loadTeam();
+                    } catch (e) { setNewStaffErr(e.message); }
+                    finally { setNewStaffBusy(false); }
+                  }}>
+                    {newStaffBusy ? 'Creating…' : 'Create'}
+                  </Btn>
+                </div>
+                {newStaffErr && <div style={{ color: '#ff3b30', fontSize: 12 }}>{newStaffErr}</div>}
+              </Card>
+            )}
+
+            {teamLoading && <div style={{ color: T.muted, fontSize: 14 }}>Loading…</div>}
+            {teamError  && <div style={{ color: '#ff3b30', fontSize: 13, padding: '12px 16px',
+              background: '#fff2f2', borderRadius: 8, border: '1px solid #ffcdd2', marginBottom: 16 }}>
+              ⚠️ {teamError}
+            </div>}
+
+            {!teamLoading && teamStaff.length === 0 && (
+              <div style={{ textAlign: 'center', padding: '60px 20px', color: T.muted }}>
+                <div style={{ fontSize: 40, marginBottom: 12 }}>👥</div>
+                <div style={{ fontSize: 15, fontWeight: 600 }}>No staff yet</div>
+                <div style={{ fontSize: 13, marginTop: 6 }}>Invite a staff member to get started.</div>
+              </div>
+            )}
+
+            {teamStaff.map(member => {
+              const assignedSet = new Set(member.assignedClientIds || []);
+              return (
+                <Card key={member.id} style={{ marginBottom: 16 }}>
+                  <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: 12 }}>
+                    <div>
+                      <div style={{ fontWeight: 600, fontSize: 15 }}>{member.name}</div>
+                      <div style={{ fontSize: 12, color: T.muted }}>{member.email}</div>
+                      <div style={{ fontSize: 11, color: T.muted, marginTop: 2 }}>
+                        Staff · {assignedSet.size} client{assignedSet.size !== 1 ? 's' : ''} assigned
+                      </div>
+                    </div>
+                    <Btn size="sm" variant="danger" onClick={async () => {
+                      if (!confirm(`Remove ${member.name}? This cannot be undone.`)) return;
+                      try { await deleteStaff(member.id); loadTeam(); }
+                      catch (e) { alert(e.message); }
+                    }}>Remove</Btn>
+                  </div>
+
+                  <SectionHead>Assigned Clients</SectionHead>
+                  <div style={{ display: 'flex', flexWrap: 'wrap', gap: 8 }}>
+                    {clients.map(c => {
+                      const checked = assignedSet.has(c.id);
+                      return (
+                        <label key={c.id} style={{
+                          display: 'flex', alignItems: 'center', gap: 6, cursor: 'pointer',
+                          padding: '5px 12px', borderRadius: 20, fontSize: 13,
+                          background: checked ? T.accentL : '#f5f5f7',
+                          border: `1px solid ${checked ? T.accent : T.border}`,
+                          color: checked ? T.accent : T.text,
+                          fontWeight: checked ? 600 : 400,
+                          transition: 'all .15s',
+                        }}>
+                          <input type="checkbox" checked={checked} style={{ display: 'none' }}
+                            onChange={async () => {
+                              const next = checked
+                                ? [...assignedSet].filter(id => id !== c.id)
+                                : [...assignedSet, c.id];
+                              try {
+                                const updated = await assignStaff(member.id, next);
+                                setTeamStaff(prev => prev.map(m =>
+                                  m.id === member.id
+                                    ? { ...m, assignedClientIds: updated.staff.assignedClientIds }
+                                    : m
+                                ));
+                              } catch (e) { alert(e.message); }
+                            }} />
+                          {checked ? '✓ ' : ''}{c.tradeName}
+                        </label>
+                      );
+                    })}
+                  </div>
+                  {clients.length === 0 && (
+                    <div style={{ fontSize: 13, color: T.muted }}>No clients yet.</div>
+                  )}
+                </Card>
+              );
+            })}
           </div>
         )}
 

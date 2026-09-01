@@ -11,7 +11,8 @@ export function authenticate(req, res, next) {
   try {
     const decoded = jwt.verify(token, JWT_SECRET);
     req.userId   = decoded.userId;
-    req.userRole = decoded.role || 'client';   // 'client' | 'accountant' | 'encoder'
+    req.userRole = decoded.role || 'client';   // 'client' | 'accountant' | 'encoder' | 'staff'
+    req.ownerId  = decoded.ownerId || null;    // set for role=staff: accountant's user id
     next();
   } catch (err) {
     // 401 = token invalid or expired → client must re-authenticate

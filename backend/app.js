@@ -38,6 +38,7 @@ import importRoutes         from './routes/import.js';
 import narrativeRoutes      from './routes/narrative.js';
 import receiptsRoutes       from './routes/receipts.js';
 import searchRoutes         from './routes/search.js';
+import staffRoutes          from './routes/staff.js';
 import { getTrialStatus, DRIP_MILESTONES } from './lib/trial.js';
 import { getDripEmail }    from './lib/drip-emails.js';
 
@@ -90,6 +91,7 @@ app.use('/api/monitoring',       monitoringRoutes);
 app.use('/api/import',          importRoutes);
 app.use('/api/reports/narrative', narrativeRoutes);
 app.use('/api/receipts',          receiptsRoutes);
+app.use('/api/staff',            staffRoutes);
 
 
 

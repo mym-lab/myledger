@@ -137,7 +137,7 @@ export default function App() {
     // Auto-redirect based on role after login
     if (usr?.role === 'admin' && !PATH.startsWith('/admin')) {
       window.location.href = '/admin';
-    } else if (usr?.role === 'accountant' && !PATH.startsWith('/accountant')) {
+    } else if ((usr?.role === 'accountant' || usr?.role === 'staff') && !PATH.startsWith('/accountant')) {
       window.location.href = '/accountant';
     } else if (usr?.role === 'encoder' && !PATH.startsWith('/encoder')) {
       window.location.href = '/encoder';
@@ -185,7 +185,7 @@ export default function App() {
   }
 
   // ── Accountant path ──
-  if (PATH.startsWith('/accountant') || user?.role === 'accountant') {
+  if (PATH.startsWith('/accountant') || user?.role === 'accountant' || user?.role === 'staff') {
     return <ErrorBoundary><AccountantPortal onLogout={handleLogout} /></ErrorBoundary>;
   }
 

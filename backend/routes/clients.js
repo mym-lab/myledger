@@ -49,6 +49,10 @@ const stmtDeleteCOA       = db.prepare('DELETE FROM coa             WHERE client
 const stmtDeletePeriods   = db.prepare('DELETE FROM locked_periods  WHERE client_id=?');
 const stmtDeleteAudit     = db.prepare('DELETE FROM audit_log       WHERE client_id=?');
 const stmtUserByEmail   = db.prepare('SELECT * FROM users WHERE email=? AND role=?');
+// Staff sub-users: fetch client IDs they're assigned to
+const stmtStaffAssignedClients = db.prepare(
+  'SELECT client_id FROM staff_assignments WHERE staff_id = ?'
+);
 
 function canAccess(client, userId) {
   return client.ownerId === userId || client.accountantId === userId;
@@ -56,18 +60,35 @@ function canAccess(client, userId) {
 function canEncode(client, userId) {
   return (client.encoderIds || []).includes(userId);
 }
-function anyAccess(client, userId) {
+function isStaffAssigned(clientId, staffId) {
+  const row = db.prepare('SELECT 1 FROM staff_assignments WHERE staff_id=? AND client_id=?').get(staffId, clientId);
+  return !!row;
+}
+function anyAccess(client, userId, userRole) {
+  if (userRole === 'staff') return isStaffAssigned(client.id, userId);
   return canAccess(client, userId) || canEncode(client, userId);
 }
 
 // GET /api/clients
 router.get('/', (req, res, next) => {
   try {
+    // Staff sub-users: only see their assigned clients
+    if (req.userRole === 'staff') {
+      const assignedIds = new Set(
+        stmtStaffAssignedClients.all(req.userId).map(r => r.client_id)
+      );
+      const clients = stmtAllClients.all()
+        .map(rowToClient)
+        .filter(c => assignedIds.has(c.id))
+        .sort((a, b) => new Date(b.createdAt) - new Date(a.createdAt));
+      return res.json({ clients });
+    }
+
     const userRow = db.prepare('SELECT role FROM users WHERE id=?').get(req.userId);
     const isAdmin = userRow?.role === 'admin';
     const clients = stmtAllClients.all()
       .map(rowToClient)
-      .filter(c => isAdmin || anyAccess(c, req.userId))
+      .filter(c => isAdmin || anyAccess(c, req.userId, req.userRole))
       .sort((a, b) => new Date(b.createdAt) - new Date(a.createdAt));
     res.json({ clients });
   } catch (err) { next(err); }
@@ -128,7 +149,7 @@ router.post('/', requireClientSlot(), (req, res, next) => {
 router.get('/:id', (req, res, next) => {
   try {
     const client = rowToClient(stmtClientById.get(req.params.id));
-    if (!client || !anyAccess(client, req.userId))
+    if (!client || !anyAccess(client, req.userId, req.userRole))
       return res.status(404).json({ error: 'Client not found' });
     res.json({ client });
   } catch (err) { next(err); }

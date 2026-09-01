@@ -412,3 +412,9 @@ export const updateProfile = (data) => apiFetch('/auth/profile', {
 });
 
 export const getTrialStatus = () => get('/auth/trial-status');
+
+// ─── Accountant Staff / Team ───────────────────────────────────
+export const getStaff        = ()                    => get('/staff',                  true);
+export const createStaff     = (data)                => post('/staff', data,           true);
+export const assignStaff     = (id, clientIds)       => put(`/staff/${id}/assign`, { clientIds }, true);
+export const deleteStaff     = (id)                  => del(`/staff/${id}`,            true);

@@ -4,7 +4,7 @@ import bcrypt from 'bcryptjs';
 import jwt from 'jsonwebtoken';
 import { v4 as uuid } from 'uuid';
 import { randomBytes } from 'crypto';
-import { db, rowToUser } from '../db.js';
+import { db, rowToUser, rowToStaff } from '../db.js';
 import { getTrialStatus } from '../lib/trial.js';
 import { requireTier }   from '../middleware/tierGuard.js';
 import { authenticate } from '../middleware/auth.js';
@@ -14,7 +14,8 @@ import { sendEmail } from '../email.js';
 const router = Router();
 const JWT_SECRET = process.env.JWT_SECRET || 'myledger-dev-secret-change-in-prod';
 
-const stmtFindByEmail  = db.prepare('SELECT * FROM users WHERE email = ?');
+const stmtFindByEmail      = db.prepare('SELECT * FROM users WHERE email = ?');
+const stmtFindStaffByEmail = db.prepare('SELECT * FROM accountant_staff WHERE email = ?');
 const stmtInsertUser   = db.prepare(`
   INSERT INTO users (id, email, name, company, role, password_hash, accountant_tier, firm_name, accent_color, trial_started_at, trial_tier, trial_drip_sent, created_at)
   VALUES (@id, @email, @name, @company, @role, @password_hash, @accountant_tier, @firm_name, @accent_color, @trial_started_at, @trial_tier, @trial_drip_sent, @created_at)
@@ -135,19 +136,44 @@ router.post('/login', async (req, res, next) => {
     if (!email || !password)
       return res.status(400).json({ error: 'email and password are required' });
 
+    // ── Check main users table first ─────────────────────────────────────────
     const row = stmtFindByEmail.get(email);
-    if (!row || !(await bcrypt.compare(password, row.password_hash)))
+    if (row) {
+      if (!(await bcrypt.compare(password, row.password_hash)))
+        return res.status(401).json({ error: 'Invalid credentials' });
+
+      const user  = rowToUser(row);
+      const token = jwt.sign({ userId: user.id, role: user.role }, JWT_SECRET, { expiresIn: '7d' });
+      return res.json({
+        token,
+        user: {
+          id: user.id, email: user.email, name: user.name, company: user.company,
+          role: user.role, accountantTier: user.accountantTier || undefined,
+          firmName:    user.firmName    || null,
+          accentColor: user.accentColor || null,
+        },
+      });
+    }
+
+    // ── Fall through: check accountant_staff table ────────────────────────────
+    const staffRow = stmtFindStaffByEmail.get(email);
+    if (!staffRow || !(await bcrypt.compare(password, staffRow.password_hash)))
       return res.status(401).json({ error: 'Invalid credentials' });
 
-    const user = rowToUser(row);
-    const token = jwt.sign({ userId: user.id, role: user.role }, JWT_SECRET, { expiresIn: '7d' });
+    const staff = rowToStaff(staffRow);
+    const token = jwt.sign(
+      { userId: staff.id, role: 'staff', ownerId: staff.ownerId },
+      JWT_SECRET,
+      { expiresIn: '7d' }
+    );
     res.json({
       token,
       user: {
-        id: user.id, email: user.email, name: user.name, company: user.company,
-        role: user.role, accountantTier: user.accountantTier || undefined,
-        firmName:    user.firmName    || null,
-        accentColor: user.accentColor || null,
+        id:      staff.id,
+        email:   staff.email,
+        name:    staff.name,
+        role:    'staff',
+        ownerId: staff.ownerId,
       },
     });
   } catch (err) { next(err); }
