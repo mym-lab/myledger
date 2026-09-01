@@ -2,6 +2,7 @@ import express from 'express';
 import { v4 as uuidv4 } from 'uuid';
 import { db } from '../db.js';
 import { authenticate } from '../middleware/auth.js';
+import { logAudit } from './audit.js';
 
 const router = express.Router();
 
@@ -236,6 +237,13 @@ router.post('/', (req, res) => {
 
     const created      = db.prepare(`SELECT * FROM invoices WHERE id = ?`).get(id);
     const createdItems = db.prepare(`SELECT * FROM invoice_items WHERE invoice_id = ?`).all(id);
+    logAudit({
+      clientId: req.body.client_id,
+      userId:  req.userRole === 'staff' ? req.ownerId : req.userId,
+      staffId: req.userRole === 'staff' ? req.userId  : null,
+      action: 'CREATE_INVOICE', entity: 'invoice', entityId: id,
+      detail: `Invoice #${created.invoice_number} ₱${created.total}`,
+    });
     res.status(201).json({ ...created, items: createdItems });
   } catch (err) {
     console.error('POST /invoices error:', err);
@@ -323,7 +331,13 @@ router.post('/:id/send', (req, res) => {
     const now = new Date().toISOString();
     db.prepare(`UPDATE invoices SET status = 'sent', sent_at = ?, updated_at = ? WHERE id = ?`)
       .run(now, now, req.params.id);
-
+    logAudit({
+      clientId: invoice.client_id,
+      userId:  req.userRole === 'staff' ? req.ownerId : req.userId,
+      staffId: req.userRole === 'staff' ? req.userId  : null,
+      action: 'SEND_INVOICE', entity: 'invoice', entityId: invoice.id,
+      detail: `Invoice #${invoice.invoice_number} marked sent`,
+    });
     res.json({ success: true, status: 'sent' });
   } catch (err) {
     res.status(500).json({ error: 'Failed to mark as sent' });
@@ -380,6 +394,13 @@ router.post('/:id/pay', (req, res) => {
       WHERE id = ?
     `).run(now, txId, now, req.params.id);
 
+    logAudit({
+      clientId: invoice.client_id,
+      userId:  req.userRole === 'staff' ? req.ownerId : req.userId,
+      staffId: req.userRole === 'staff' ? req.userId  : null,
+      action: 'PAY_INVOICE', entity: 'invoice', entityId: invoice.id,
+      detail: `Invoice #${invoice.invoice_number} marked paid ₱${serviceGross}`,
+    });
     res.json({ success: true, status: 'paid', transaction_id: txId });
   } catch (err) {
     console.error('POST /invoices/pay error:', err);
@@ -440,6 +461,13 @@ router.post('/:id/void', (req, res) => {
       WHERE id = ?
     `).run(void_reason, req.userId, now, reversalTxId, now, req.params.id);
 
+    logAudit({
+      clientId: invoice.client_id,
+      userId:  req.userRole === 'staff' ? req.ownerId : req.userId,
+      staffId: req.userRole === 'staff' ? req.userId  : null,
+      action: 'VOID_INVOICE', entity: 'invoice', entityId: invoice.id,
+      detail: void_reason || `Invoice #${invoice.invoice_number} voided`,
+    });
     res.json({ success: true, status: 'void', reversal_transaction_id: reversalTxId });
   } catch (err) {
     console.error('POST /invoices/void error:', err);

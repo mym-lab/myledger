@@ -13,28 +13,49 @@ router.use(authenticate);
 // ── Prepared statements ───────────────────────────────────────────────────────
 const stmtClientById    = db.prepare('SELECT * FROM clients WHERE id = ?');
 const stmtInsertAudit   = db.prepare(`
-  INSERT INTO audit_log (id, client_id, user_id, action, entity, entity_id, detail, timestamp)
-  VALUES (@id, @client_id, @user_id, @action, @entity, @entity_id, @detail, @timestamp)
+  INSERT INTO audit_log (id, client_id, user_id, staff_id, action, entity, entity_id, detail, timestamp)
+  VALUES (@id, @client_id, @user_id, @staff_id, @action, @entity, @entity_id, @detail, @timestamp)
 `);
 const stmtAuditByClient = db.prepare(`
   SELECT * FROM audit_log WHERE client_id=? ORDER BY timestamp DESC LIMIT ?
+`);
+const stmtAuditByClientAndStaff = db.prepare(`
+  SELECT * FROM audit_log WHERE client_id=? AND staff_id=? ORDER BY timestamp DESC LIMIT ?
+`);
+const stmtAuditByStaff = db.prepare(`
+  SELECT * FROM audit_log WHERE staff_id=? ORDER BY timestamp DESC LIMIT ?
 `);
 
 function canAccess(client, userId) {
   return client.ownerId === userId || client.accountantId === userId;
 }
 
-// GET /api/audit?clientId=[&limit=200]
+// GET /api/audit?clientId=[&staffId=][&limit=200]
+// staffId filter: show only actions by that staff member for this client
 router.get('/', (req, res, next) => {
   try {
-    const { clientId, limit = 200 } = req.query;
+    const { clientId, staffId, limit = 200 } = req.query;
     if (!clientId) return res.status(400).json({ error: 'clientId required' });
 
     const client = rowToClient(stmtClientById.get(clientId));
     if (!client || !canAccess(client, req.userId))
       return res.status(404).json({ error: 'Client not found' });
 
-    const entries = stmtAuditByClient.all(clientId, Number(limit)).map(rowToAudit);
+    const rows = staffId
+      ? stmtAuditByClientAndStaff.all(clientId, staffId, Number(limit))
+      : stmtAuditByClient.all(clientId, Number(limit));
+
+    // Enrich entries with staff name for display
+    const staffCache = {};
+    const entries = rows.map(r => {
+      const entry = rowToAudit(r);
+      if (entry.staffId && !staffCache[entry.staffId]) {
+        const s = db.prepare('SELECT name FROM accountant_staff WHERE id = ?').get(entry.staffId);
+        staffCache[entry.staffId] = s?.name || 'Staff';
+      }
+      return { ...entry, staffName: entry.staffId ? staffCache[entry.staffId] : null };
+    });
+
     res.json({ entries, count: entries.length });
   } catch (err) { next(err); }
 });
@@ -43,12 +64,14 @@ export default router;
 
 // ── Exported helper — call this from other routes to log events ───────────────
 // Synchronous — node:sqlite API is fully synchronous (no async needed)
-export function logAudit({ clientId, userId, action, entity, entityId, detail = '' }) {
+// staffId: pass req.userId when req.userRole === 'staff'; userId should then be req.ownerId
+export function logAudit({ clientId, userId, staffId = null, action, entity, entityId, detail = '' }) {
   try {
     stmtInsertAudit.run({
       id:        uuid(),
       client_id: clientId || null,
       user_id:   userId,
+      staff_id:  staffId || null,
       action,
       entity,
       entity_id: entityId || null,

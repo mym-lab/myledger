@@ -7,6 +7,7 @@ import { Router } from 'express';
 import { v4 as uuid } from 'uuid';
 import { db, rowToClient, rowToJE } from '../db.js';
 import { authenticate, noEncoder } from '../middleware/auth.js';
+import { logAudit } from './audit.js';
 
 const router = Router();
 router.use(authenticate);
@@ -68,6 +69,13 @@ router.post('/', (req, res, next) => {
     });
 
     const je = rowToJE(stmtJEById.get(id));
+    logAudit({
+      clientId,
+      userId:  req.userRole === 'staff' ? req.ownerId : req.userId,
+      staffId: req.userRole === 'staff' ? req.userId  : null,
+      action: 'CREATE_JOURNAL_ENTRY', entity: 'journal_entry', entityId: id,
+      detail: description || '',
+    });
     res.status(201).json({ journalEntry: je });
   } catch (err) { next(err); }
 });
@@ -98,6 +106,13 @@ router.delete('/:id', (req, res, next) => {
       return res.status(403).json({ error: 'Not authorised' });
 
     stmtDeleteJE.run(req.params.id);
+    logAudit({
+      clientId: je.clientId,
+      userId:  req.userRole === 'staff' ? req.ownerId : req.userId,
+      staffId: req.userRole === 'staff' ? req.userId  : null,
+      action: 'DELETE_JOURNAL_ENTRY', entity: 'journal_entry', entityId: je.id,
+      detail: je.description || '',
+    });
     res.json({ message: 'Journal entry deleted' });
   } catch (err) { next(err); }
 });

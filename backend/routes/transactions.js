@@ -173,7 +173,9 @@ router.post('/', (req, res, next) => {
     });
 
     logAudit({
-      clientId, userId: req.userId,
+      clientId,
+      userId:  req.userRole === 'staff' ? req.ownerId  : req.userId,
+      staffId: req.userRole === 'staff' ? req.userId   : null,
       action: 'CREATE_TRANSACTION', entity: 'transaction', entityId: id,
       detail: `${type} ₱${vatResult.gross} — ${description}`,
     });
@@ -326,7 +328,9 @@ router.put('/:id', noEncoder, (req, res, next) => {
     });
 
     logAudit({
-      clientId: tx.clientId, userId: req.userId,
+      clientId: tx.clientId,
+      userId:  req.userRole === 'staff' ? req.ownerId : req.userId,
+      staffId: req.userRole === 'staff' ? req.userId  : null,
       action: 'EDIT_TRANSACTION', entity: 'transaction', entityId: tx.id,
       detail: `Edited: ${JSON.stringify({ date: newDate, type: newType, description, category, referenceNo, settlement }).replace(/"/g, '')}`,
     });
@@ -357,7 +361,9 @@ router.put('/:id/void', (req, res, next) => {
     stmtVoidTx.run({ id: req.params.id, voided_at: voidedAt, voided_by: req.userId, void_reason: voidReason });
 
     logAudit({
-      clientId: tx.clientId, userId: req.userId,
+      clientId: tx.clientId,
+      userId:  req.userRole === 'staff' ? req.ownerId : req.userId,
+      staffId: req.userRole === 'staff' ? req.userId  : null,
       action: 'VOID_TRANSACTION', entity: 'transaction', entityId: tx.id,
       detail: voidReason,
     });

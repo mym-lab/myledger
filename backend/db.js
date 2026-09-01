@@ -193,6 +193,10 @@ CREATE TABLE IF NOT EXISTS audit_log (
 );
 CREATE INDEX IF NOT EXISTS idx_audit_client ON audit_log(client_id);
 CREATE INDEX IF NOT EXISTS idx_audit_time   ON audit_log(timestamp);
+`);
+// staff_id column added in v2 — idempotent ALTER (ignored if already exists)
+try { db.exec(`ALTER TABLE audit_log ADD COLUMN staff_id TEXT`); } catch (_) {}
+db.exec(`
 
 CREATE TABLE IF NOT EXISTS settings (
   key   TEXT PRIMARY KEY,
@@ -561,6 +565,7 @@ export function rowToAudit(r) {
   if (!r) return null;
   return {
     id: r.id, clientId: r.client_id, userId: r.user_id,
+    staffId: r.staff_id || null,
     action: r.action, entity: r.entity, entityId: r.entity_id,
     detail: r.detail, timestamp: r.timestamp,
   };

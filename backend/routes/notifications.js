@@ -86,6 +86,36 @@ router.get('/', (req, res, next) => {
       }
     }
 
+    // ── Staff activity (accountant only, last 24h) ───────────────────────────
+    if (userRole === 'accountant' && clients.length > 0) {
+      const since = new Date(now.getTime() - 24 * 60 * 60 * 1000).toISOString();
+      const clientIds = clients.map(c => c.id);
+      const placeholders = clientIds.map(() => '?').join(',');
+
+      const staffRows = db.prepare(`
+        SELECT a.staff_id, s.name AS staff_name, COUNT(*) AS n
+        FROM audit_log a
+        JOIN accountant_staff s ON s.id = a.staff_id
+        WHERE a.client_id IN (${placeholders})
+          AND a.staff_id IS NOT NULL
+          AND a.timestamp >= ?
+        GROUP BY a.staff_id
+      `).all(...clientIds, since);
+
+      for (const row of staffRows) {
+        notifications.push({
+          id: `staff-${row.staff_id}-${today}`,
+          type: 'staff_activity',
+          severity: 'info',
+          title: `${row.n} action${row.n > 1 ? 's' : ''} by ${row.staff_name}`,
+          body: `Staff activity in the last 24 hours`,
+          date: today,
+          staffId: row.staff_id,
+          staffName: row.staff_name,
+        });
+      }
+    }
+
     // ── AR overdue — income with AR settlement > 30 days old ────────────────
     for (const client of clients) {
       const cutoff = new Date(now.getTime() - 30 * 86400000).toISOString();

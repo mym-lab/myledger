@@ -246,9 +246,10 @@ export const lockPeriod        = (clientId, period) => post('/periods/lock', { c
 export const unlockPeriod      = (clientId, period) => post('/periods/unlock', { clientId, period }, true);
 
 // ─── Audit Log ────────────────────────────────────────────────
-export const getAuditLog       = (clientId, limit) => {
+export const getAuditLog       = (clientId, limit, staffId) => {
   let url = `/audit?clientId=${clientId}`;
-  if (limit) url += `&limit=${limit}`;
+  if (limit)   url += `&limit=${limit}`;
+  if (staffId) url += `&staffId=${staffId}`;
   return get(url, true);
 };
 

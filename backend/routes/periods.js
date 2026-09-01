@@ -66,7 +66,7 @@ router.post('/lock', (req, res, next) => {
     const lockedAt = new Date().toISOString();
     stmtInsertPeriod.run({ id, client_id: clientId, period, locked_by: req.userId, locked_at: lockedAt });
 
-    logAudit({ clientId, userId: req.userId, action: 'LOCK_PERIOD', entity: 'period', entityId: period, detail: `Period ${period} locked` });
+    logAudit({ clientId, userId: req.userRole === 'staff' ? req.ownerId : req.userId, staffId: req.userRole === 'staff' ? req.userId : null, action: 'LOCK_PERIOD', entity: 'period', entityId: period, detail: `Period ${period} locked` });
     res.json({ message: `Period ${period} locked`, lock: { id, clientId, period, lockedBy: req.userId, lockedAt } });
   } catch (err) { next(err); }
 });
@@ -86,7 +86,7 @@ router.post('/unlock', (req, res, next) => {
 
     stmtDeletePeriod.run(clientId, period);
 
-    logAudit({ clientId, userId: req.userId, action: 'UNLOCK_PERIOD', entity: 'period', entityId: period, detail: `Period ${period} unlocked` });
+    logAudit({ clientId, userId: req.userRole === 'staff' ? req.ownerId : req.userId, staffId: req.userRole === 'staff' ? req.userId : null, action: 'UNLOCK_PERIOD', entity: 'period', entityId: period, detail: `Period ${period} unlocked` });
     res.json({ message: `Period ${period} unlocked` });
   } catch (err) { next(err); }
 });

@@ -2210,8 +2210,9 @@ export default function AccountantPortal({ onLogout }) {
   const [gjFrom,      setGjFrom]      = useState('');
   const [gjTo,        setGjTo]        = useState('');
   // Audit Log
-  const [auditEntries, setAuditEntries] = useState([]);
-  const [auditLoad,    setAuditLoad]   = useState(false);
+  const [auditEntries,     setAuditEntries]    = useState([]);
+  const [auditLoad,        setAuditLoad]       = useState(false);
+  const [auditStaffFilter, setAuditStaffFilter]= useState(''); // staffId or '' for all
   // Period Locking
   const [periods,      setPeriods]     = useState([]);
   const [periodsLoad,  setPeriodsLoad] = useState(false);
@@ -2404,7 +2405,7 @@ export default function AccountantPortal({ onLogout }) {
     if (tab === 'General Ledger')   loadGL();
     if (tab === 'COA')              loadCOA();
     if (tab === 'Period Lock')      loadPeriods();
-    if (tab === 'Audit Log')        loadAudit();
+    if (tab === 'Audit Log')        { setAuditStaffFilter(''); loadAudit(''); }
     if (tab === 'Assets')           loadAssets();
     if (tab === 'Contacts')         loadContacts();
     if (tab === 'SLSP')             loadSLSP();
@@ -2566,9 +2567,10 @@ export default function AccountantPortal({ onLogout }) {
     finally { setBooksLoad(false); }
   }
 
-  async function loadAudit() {
+  async function loadAudit(staffId) {
     setAuditLoad(true);
-    try { const r = await getAuditLog(active.id, 200); setAuditEntries(r.entries || []); }
+    const filterStaff = staffId !== undefined ? staffId : auditStaffFilter;
+    try { const r = await getAuditLog(active.id, 200, filterStaff || undefined); setAuditEntries(r.entries || []); }
     catch (e) { console.error(e); }
     finally { setAuditLoad(false); }
   }
@@ -4680,7 +4682,19 @@ export default function AccountantPortal({ onLogout }) {
           !isPro ? <ProLock onUpgrade={(tier) => { setUpgradeTarget(tier || 'solo'); setShowUpgrade(true); }} trialExpired={trialStatus?.isExpired ?? false} /> : <div>
             <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 20 }}>
               <h2 style={{ margin: 0, fontSize: 22, fontWeight: 600 }}>Audit Log — {active.tradeName}</h2>
-              <Btn size="sm" variant="ghost" onClick={loadAudit}>↻ Refresh</Btn>
+              <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
+                {teamStaff.length > 0 && (
+                  <select value={auditStaffFilter} onChange={e => {
+                    const val = e.target.value;
+                    setAuditStaffFilter(val);
+                    loadAudit(val);
+                  }} style={{ ...inp, fontSize: 12, padding: '5px 10px', minWidth: 140 }}>
+                    <option value="">All staff</option>
+                    {teamStaff.map(s => <option key={s.id} value={s.id}>{s.name}</option>)}
+                  </select>
+                )}
+                <Btn size="sm" variant="ghost" onClick={() => loadAudit()}>↻ Refresh</Btn>
+              </div>
             </div>
             {auditLoad ? <div style={{ color: T.muted }}>Loading…</div>
             : auditEntries.length === 0 ? (
@@ -4693,7 +4707,7 @@ export default function AccountantPortal({ onLogout }) {
                 <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 13 }}>
                   <thead>
                     <tr style={{ background: T.bg }}>
-                      {['Timestamp', 'Action', 'Entity', 'Detail'].map(h => (
+                      {['Timestamp', 'Action', 'Entity', 'Detail', ...(teamStaff.length > 0 ? ['Staff'] : [])].map(h => (
                         <th key={h} style={{ padding: '10px 14px', textAlign: 'left', fontWeight: 600,
                           color: T.muted, fontSize: 11, borderBottom: `1px solid ${T.border}` }}>{h}</th>
                       ))}
@@ -4714,6 +4728,11 @@ export default function AccountantPortal({ onLogout }) {
                         </td>
                         <td style={{ padding: '10px 14px', color: T.muted, fontSize: 12 }}>{e.entity}</td>
                         <td style={{ padding: '10px 14px', fontSize: 12 }}>{e.detail || '—'}</td>
+                        {teamStaff.length > 0 && (
+                          <td style={{ padding: '10px 14px', fontSize: 12, color: T.muted }}>
+                            {e.staffName || '—'}
+                          </td>
+                        )}
                       </tr>
                     ))}
                   </tbody>
@@ -7080,11 +7099,18 @@ export default function AccountantPortal({ onLogout }) {
                         Staff · {assignedSet.size} client{assignedSet.size !== 1 ? 's' : ''} assigned
                       </div>
                     </div>
-                    <Btn size="sm" variant="danger" onClick={async () => {
-                      if (!confirm(`Remove ${member.name}? This cannot be undone.`)) return;
-                      try { await deleteStaff(member.id); loadTeam(); }
-                      catch (e) { alert(e.message); }
-                    }}>Remove</Btn>
+                    <div style={{ display: 'flex', gap: 6 }}>
+                      <Btn size="sm" variant="ghost" onClick={() => {
+                        setAuditStaffFilter(member.id);
+                        setTab('Audit Log');
+                        loadAudit(member.id);
+                      }}>👀 Activity</Btn>
+                      <Btn size="sm" variant="danger" onClick={async () => {
+                        if (!confirm(`Remove ${member.name}? This cannot be undone.`)) return;
+                        try { await deleteStaff(member.id); loadTeam(); }
+                        catch (e) { alert(e.message); }
+                      }}>Remove</Btn>
+                    </div>
                   </div>
 
                   {/* ── Reset password ─────────────────────────────── */}
