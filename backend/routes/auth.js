@@ -14,6 +14,15 @@ import { sendEmail } from '../email.js';
 const router = Router();
 const JWT_SECRET = process.env.JWT_SECRET || 'myledger-dev-secret-change-in-prod';
 
+const stmtLogAttempt = db.prepare(
+  `INSERT INTO login_attempts (id, email, ip, success, role, attempted_at)
+   VALUES (?, ?, ?, ?, ?, datetime('now'))`
+);
+function logAttempt(email, ip, success, role = null) {
+  try { stmtLogAttempt.run(uuid(), email.toLowerCase(), ip || null, success ? 1 : 0, role); }
+  catch (_) {}
+}
+
 const stmtFindByEmail      = db.prepare('SELECT * FROM users WHERE email = ?');
 const stmtFindStaffByEmail = db.prepare('SELECT * FROM accountant_staff WHERE email = ?');
 const stmtInsertUser   = db.prepare(`
@@ -137,12 +146,16 @@ router.post('/login', async (req, res, next) => {
       return res.status(400).json({ error: 'email and password are required' });
 
     // ── Check main users table first ─────────────────────────────────────────
+    const ip  = req.headers['x-forwarded-for']?.split(',')[0]?.trim() || req.socket?.remoteAddress || null;
     const row = stmtFindByEmail.get(email);
     if (row) {
-      if (!(await bcrypt.compare(password, row.password_hash)))
+      if (!(await bcrypt.compare(password, row.password_hash))) {
+        logAttempt(email, ip, false, row.role);
         return res.status(401).json({ error: 'Invalid credentials' });
+      }
 
       const user  = rowToUser(row);
+      logAttempt(email, ip, true, user.role);
       const token = jwt.sign({ userId: user.id, role: user.role }, JWT_SECRET, { expiresIn: '7d' });
       return res.json({
         token,
@@ -157,10 +170,13 @@ router.post('/login', async (req, res, next) => {
 
     // ── Fall through: check accountant_staff table ────────────────────────────
     const staffRow = stmtFindStaffByEmail.get(email);
-    if (!staffRow || !(await bcrypt.compare(password, staffRow.password_hash)))
+    if (!staffRow || !(await bcrypt.compare(password, staffRow.password_hash))) {
+      logAttempt(email, ip, false, 'staff');
       return res.status(401).json({ error: 'Invalid credentials' });
+    }
 
     const staff = rowToStaff(staffRow);
+    logAttempt(email, ip, true, 'staff');
     const token = jwt.sign(
       { userId: staff.id, role: 'staff', ownerId: staff.ownerId },
       JWT_SECRET,

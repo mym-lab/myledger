@@ -40,6 +40,7 @@ import receiptsRoutes       from './routes/receipts.js';
 import searchRoutes         from './routes/search.js';
 import staffRoutes          from './routes/staff.js';
 import clientGroupsRoutes   from './routes/client-groups.js';
+import budgetsRoutes        from './routes/budgets.js';
 import { getTrialStatus, DRIP_MILESTONES } from './lib/trial.js';
 import { getDripEmail }    from './lib/drip-emails.js';
 
@@ -94,6 +95,7 @@ app.use('/api/reports/narrative', narrativeRoutes);
 app.use('/api/receipts',          receiptsRoutes);
 app.use('/api/staff',            staffRoutes);
 app.use('/api/client-groups',    clientGroupsRoutes);
+app.use('/api/budgets',          budgetsRoutes);
 
 
 

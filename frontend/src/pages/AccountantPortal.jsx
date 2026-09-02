@@ -37,6 +37,7 @@ import {
   getMyReferrals,
   getStaff, createStaff, assignStaff, resetStaffPassword, deleteStaff,
   getClientGroups, createClientGroup, updateClientGroup, deleteClientGroup, getConsolidated,
+  getBudgets, saveBudget,
   downloadCSV,
   downloadBirXml,
   createPaymongoLink,
@@ -203,7 +204,7 @@ function SectionHead({ children }) {
 const PRO_TABS = new Set([
   'Journal Entries', 'Trial Balance', 'Books', 'General Journal', 'General Ledger', 'COA', 'Period Lock', 'Audit Log',
   'BIR Returns', 'Payroll', 'Alphalist',
-  'Income Statement', 'Balance Sheet', 'Cash Flow', 'Assets', 'Contacts', 'SLSP', 'Consolidated',
+  'Income Statement', 'Balance Sheet', 'Cash Flow', 'Assets', 'Contacts', 'SLSP', 'Budget', 'Consolidated',
 ]);
 
 // Accountant tier definitions
@@ -1312,14 +1313,14 @@ function computeIncomeTax(transactions, client, year, quarter /* null = annual *
   };
 }
 
-const TABS = ['Dashboard', 'Transactions', 'Invoices', 'Journal Entries', 'Trial Balance', 'Books', 'General Journal', 'General Ledger', 'COA', 'Period Lock', 'Audit Log', 'BIR Returns', 'Payroll', 'Alphalist', 'SLSP', 'Income Statement', 'Balance Sheet', 'Cash Flow', 'Assets', 'Contacts', 'BIR Reminders', 'Filing Calendar', 'Compare', 'Consolidated', 'Portfolio', 'Business Setup', 'Referral', 'My Team'];
+const TABS = ['Dashboard', 'Transactions', 'Invoices', 'Journal Entries', 'Trial Balance', 'Books', 'General Journal', 'General Ledger', 'COA', 'Period Lock', 'Audit Log', 'BIR Returns', 'Payroll', 'Alphalist', 'SLSP', 'Income Statement', 'Balance Sheet', 'Cash Flow', 'Assets', 'Contacts', 'BIR Reminders', 'Filing Calendar', 'Compare', 'Budget', 'Consolidated', 'Portfolio', 'Business Setup', 'Referral', 'My Team'];
 
 // Grouped navigation — replaces the flat 26-tab bar with 6 category groups
 const TAB_GROUPS = [
   { label: '📊 Overview',    tabs: ['Dashboard', 'Portfolio'] },
   { label: '📝 Data Entry',  tabs: ['Transactions', 'Invoices', 'Contacts'] },
   { label: '📒 Books',       tabs: ['Journal Entries', 'Trial Balance', 'Books', 'General Journal', 'General Ledger', 'COA', 'Assets'] },
-  { label: '📈 Reports',     tabs: ['Income Statement', 'Balance Sheet', 'Cash Flow', 'Compare', 'Consolidated'] },
+  { label: '📈 Reports',     tabs: ['Income Statement', 'Balance Sheet', 'Cash Flow', 'Compare', 'Budget', 'Consolidated'] },
   { label: '🏛 BIR & Tax',   tabs: ['BIR Reminders', 'Filing Calendar', 'BIR Returns', 'Payroll', 'Alphalist', 'SLSP'] },
   { label: '⚙️ Settings',    tabs: ['Period Lock', 'Audit Log', 'Business Setup', 'Referral', 'My Team'] },
 ];
@@ -2159,6 +2160,15 @@ export default function AccountantPortal({ onLogout }) {
   const [consolData,       setConsolData]       = useState(null);
   const [consolLoading,    setConsolLoading]    = useState(false);
 
+  // ── Budget state ─────────────────────────────────────────────────────────────
+  const defaultBudgetPeriod = () => { const n = new Date(); return `${n.getFullYear()}-${String(n.getMonth()+1).padStart(2,'0')}`; };
+  const [budgetPeriod,  setBudgetPeriod]  = useState(defaultBudgetPeriod);
+  const [budgetData,    setBudgetData]    = useState({});   // { category|type -> amount }
+  const [budgetLoad,    setBudgetLoad]    = useState(false);
+  const [budgetSaving,  setBudgetSaving]  = useState({});   // { key -> bool }
+  // For Compare tab budget overlay
+  const [compareBudget, setCompareBudget] = useState(null); // { revenue, costOfSales, opex }
+
   const [showTx, setShowTx]   = useState(false);
   const [journals,  setJournals]  = useState([]);
   const [jLoad,     setJLoad]     = useState(false);
@@ -2447,6 +2457,7 @@ export default function AccountantPortal({ onLogout }) {
     if (tab === 'BIR Reminders')    { loadBirSummary(); loadBIR(); }
     if (tab === 'Filing Calendar')  { loadCalendar(); }
     if (tab === 'Compare')          loadIncomeCompare();
+    if (tab === 'Budget')           loadBudget();
   }, [active?.id, tab]);
 
   // Portfolio tab doesn't need an active client — loads on tab switch only
@@ -2572,8 +2583,45 @@ export default function AccountantPortal({ onLogout }) {
     try {
       const data = await getIncomeCompare(active.id, p);
       setCompareData(data);
+      // Also load budget for the current period so Compare can show vs-budget column
+      if (active?.id) {
+        try {
+          const bRes = await getBudgets(active.id, p);
+          const bMap = {};
+          for (const b of (bRes.budgets || [])) bMap[`${b.category}|${b.type}`] = b.amount;
+          const rev  = bMap['Revenue|income']            || 0;
+          const cogs = bMap['Cost of Goods Sold|expense'] || 0;
+          const opex = bMap['Operating Expenses|expense'] || 0;
+          setCompareBudget({ revenue: rev, costOfSales: cogs, opex, grossProfit: rev - cogs, profit: rev - cogs - opex });
+        } catch (_) { setCompareBudget(null); }
+      }
     } catch (e) { console.error(e); }
     finally { setCompareLoad(false); }
+  }
+
+  async function loadBudget(period) {
+    if (!active?.id) return;
+    const p = period || budgetPeriod;
+    setBudgetLoad(true);
+    try {
+      const res = await getBudgets(active.id, p);
+      const map = {};
+      for (const b of (res.budgets || [])) map[`${b.category}|${b.type}`] = b.amount;
+      setBudgetData(map);
+    } catch (e) { console.error(e); }
+    finally { setBudgetLoad(false); }
+  }
+
+  async function handleBudgetSave(category, type, rawValue) {
+    if (!active?.id) return;
+    const key = `${category}|${type}`;
+    const amount = parseFloat(rawValue) || 0;
+    setBudgetSaving(s => ({ ...s, [key]: true }));
+    try {
+      await saveBudget({ clientId: active.id, period: budgetPeriod, category, type, amount });
+      setBudgetData(d => ({ ...d, [key]: amount }));
+    } catch (e) { console.error(e); }
+    finally { setBudgetSaving(s => ({ ...s, [key]: false })); }
   }
 
   async function loadPortfolio(period) {
@@ -6662,6 +6710,7 @@ export default function AccountantPortal({ onLogout }) {
         {tab === 'Compare' && active && (() => {
           const p = compareData?.periods;
           const v = compareData?.variance;
+          const cb = compareBudget; // { revenue, costOfSales, opex, grossProfit, profit } or null
           function varCell(varObj) {
             if (!varObj) return <td style={{ color: T.muted, textAlign: 'right' }}>—</td>;
             const sign = varObj.varPHP >= 0 ? '+' : '';
@@ -6673,14 +6722,25 @@ export default function AccountantPortal({ onLogout }) {
               </td>
             );
           }
+          function budgetVarCell(actual, budget) {
+            if (!cb || budget == null) return <td style={{ color: T.muted, textAlign: 'right', fontSize: 13 }}>—</td>;
+            const diff = actual - budget;
+            const pct  = budget !== 0 ? ` (${diff >= 0 ? '+' : ''}${Math.round(diff / budget * 100)}%)` : '';
+            const col  = diff >= 0 ? T.green : T.red;
+            return (
+              <td style={{ textAlign: 'right', fontSize: 13, color: col, fontWeight: 500 }}>
+                {diff >= 0 ? '+' : ''}{peso(diff)}{pct}
+              </td>
+            );
+          }
           const rows = [
-            { label: 'Net Revenue',        key: 'revenue',     bold: true },
-            { label: 'Cost of Goods Sold', key: 'costOfSales', indent: true },
-            { label: 'Gross Profit',       key: 'grossProfit', bold: true, rule: true },
-            { label: 'Operating Expenses', key: 'opex',        indent: true },
-            { label: 'Net Profit / Loss',  key: 'profit',      bold: true, rule: true },
-            { label: 'Output VAT',         key: 'outputVAT',   muted: true },
-            { label: 'Input VAT',          key: 'inputVAT',    muted: true },
+            { label: 'Net Revenue',        key: 'revenue',     budgetKey: 'revenue',     bold: true },
+            { label: 'Cost of Goods Sold', key: 'costOfSales', budgetKey: 'costOfSales', indent: true },
+            { label: 'Gross Profit',       key: 'grossProfit', budgetKey: 'grossProfit', bold: true, rule: true },
+            { label: 'Operating Expenses', key: 'opex',        budgetKey: 'opex',        indent: true },
+            { label: 'Net Profit / Loss',  key: 'profit',      budgetKey: 'profit',      bold: true, rule: true },
+            { label: 'Output VAT',         key: 'outputVAT',   budgetKey: null,          muted: true },
+            { label: 'Input VAT',          key: 'inputVAT',    budgetKey: null,          muted: true },
           ];
           const cellSt = (val, bold) => ({
             textAlign: 'right', fontSize: bold ? 15 : 13, fontWeight: bold ? 700 : 400,
@@ -6726,6 +6786,8 @@ export default function AccountantPortal({ onLogout }) {
                         <th style={{ ...thSt, color: T.orange }}>vs Prev Month</th>
                         <th style={thSt}>{p?.sameLastYear?.label || 'Same Mth LY'}</th>
                         <th style={{ ...thSt, color: T.purple }}>vs Last Year</th>
+                        {cb && <th style={{ ...thSt, color: '#0071e3' }}>Budget</th>}
+                        {cb && <th style={{ ...thSt, color: '#0071e3' }}>vs Budget</th>}
                       </tr>
                     </thead>
                     <tbody>
@@ -6744,6 +6806,10 @@ export default function AccountantPortal({ onLogout }) {
                           {varCell(v?.vsPrev?.[r.key])}
                           <td style={cellSt(p?.sameLastYear?.[r.key], false)}>{peso(p?.sameLastYear?.[r.key] ?? 0)}</td>
                           {varCell(v?.vsLY?.[r.key])}
+                          {cb && r.budgetKey && <td style={cellSt(cb[r.budgetKey], false)}>{peso(cb[r.budgetKey] ?? 0)}</td>}
+                          {cb && !r.budgetKey && <td style={{ color: T.muted, textAlign: 'right', fontSize: 13 }}>—</td>}
+                          {cb && r.budgetKey && budgetVarCell(p?.current?.[r.key] ?? 0, cb[r.budgetKey])}
+                          {cb && !r.budgetKey && <td style={{ color: T.muted, textAlign: 'right', fontSize: 13 }}>—</td>}
                         </tr>
                       ))}
                     </tbody>
@@ -6778,6 +6844,111 @@ export default function AccountantPortal({ onLogout }) {
                         ))}
                     </tbody>
                   </table>
+                </Card>
+              )}
+            </div>
+          );
+        })()}
+
+        {/* ══════════ BUDGET ══════════ */}
+        {tab === 'Budget' && active && (() => {
+          if (!isPro) return <ProLock onUpgrade={(tier) => { setUpgradeTarget(tier || 'professional'); setShowUpgrade(true); }} trialExpired={trialStatus?.isExpired ?? false} />;
+
+          // Standard budget lines
+          const BUDGET_LINES = [
+            { label: 'Revenue',              category: 'Revenue',              type: 'income',  bold: true },
+            { label: 'Cost of Goods Sold',   category: 'Cost of Goods Sold',   type: 'expense', indent: true },
+            { label: 'Operating Expenses',   category: 'Operating Expenses',   type: 'expense', indent: true },
+          ];
+
+          const get = (cat, typ) => budgetData[`${cat}|${typ}`] ?? '';
+          const revenue  = parseFloat(budgetData['Revenue|income'])            || 0;
+          const cogs     = parseFloat(budgetData['Cost of Goods Sold|expense']) || 0;
+          const opex     = parseFloat(budgetData['Operating Expenses|expense']) || 0;
+          const gross    = revenue - cogs;
+          const net      = revenue - cogs - opex;
+
+          const inp2 = { ...inp, textAlign: 'right', width: 160, padding: '6px 10px' };
+          const thSt = { textAlign: 'right', fontSize: 11, fontWeight: 700, color: T.muted,
+            textTransform: 'uppercase', letterSpacing: '0.5px', padding: '8px 12px' };
+          const derivedCell = (val) => (
+            <td style={{ textAlign: 'right', padding: '7px 12px', fontSize: 15, fontWeight: 700,
+              color: val < 0 ? T.red : T.text }}>
+              {peso(val)}
+            </td>
+          );
+
+          return (
+            <div>
+              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: 22, flexWrap: 'wrap', gap: 12 }}>
+                <div>
+                  <h2 style={{ margin: 0, fontSize: 22, fontWeight: 600 }}>Budget Entry — {active.tradeName}</h2>
+                  <div style={{ fontSize: 13, color: T.muted, marginTop: 4 }}>
+                    Set monthly budget targets. These appear as a comparison column in the Compare tab.
+                  </div>
+                </div>
+                <div style={{ display: 'flex', gap: 10, alignItems: 'center' }}>
+                  <input type="month" value={budgetPeriod}
+                    onChange={e => { setBudgetPeriod(e.target.value); loadBudget(e.target.value); }}
+                    style={{ ...inp, width: 160, padding: '7px 10px' }} />
+                  <Btn size="sm" variant="ghost" onClick={() => loadBudget()}>↻ Refresh</Btn>
+                </div>
+              </div>
+
+              {budgetLoad ? (
+                <div style={{ color: T.muted }}>Loading budget…</div>
+              ) : (
+                <Card style={{ overflowX: 'auto' }}>
+                  <table style={{ width: '100%', borderCollapse: 'collapse', minWidth: 400 }}>
+                    <thead>
+                      <tr style={{ borderBottom: `2px solid ${T.border}` }}>
+                        <th style={{ textAlign: 'left', fontSize: 11, fontWeight: 700, color: T.muted,
+                          textTransform: 'uppercase', letterSpacing: '0.5px', padding: '8px 12px', width: '55%' }}>
+                          Line Item
+                        </th>
+                        <th style={thSt}>Budget Amount (₱ NET)</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {BUDGET_LINES.map(row => {
+                        const key = `${row.category}|${row.type}`;
+                        const saving = budgetSaving[key];
+                        return (
+                          <tr key={key} style={{ borderBottom: `1px solid ${T.border}20` }}>
+                            <td style={{ padding: '7px 12px', paddingLeft: row.indent ? 28 : 12,
+                              fontSize: row.bold ? 14 : 13, fontWeight: row.bold ? 600 : 400, color: T.text }}>
+                              {row.label}
+                            </td>
+                            <td style={{ padding: '6px 12px', textAlign: 'right' }}>
+                              <input
+                                type="number" min="0" step="0.01"
+                                defaultValue={get(row.category, row.type)}
+                                key={`${budgetPeriod}-${key}`}
+                                style={{ ...inp2, opacity: saving ? 0.5 : 1 }}
+                                onBlur={e => handleBudgetSave(row.category, row.type, e.target.value)}
+                                onKeyDown={e => { if (e.key === 'Enter') e.target.blur(); }}
+                                placeholder="0.00"
+                              />
+                              {saving && <span style={{ fontSize: 11, color: T.muted, marginLeft: 6 }}>saving…</span>}
+                            </td>
+                          </tr>
+                        );
+                      })}
+
+                      {/* Derived rows */}
+                      <tr style={{ borderTop: `2px solid ${T.border}`, background: '#f9f9fb' }}>
+                        <td style={{ padding: '7px 12px', fontSize: 14, fontWeight: 600, color: T.text }}>Gross Profit</td>
+                        {derivedCell(gross)}
+                      </tr>
+                      <tr style={{ borderTop: `2px solid ${T.border}`, background: '#f9f9fb' }}>
+                        <td style={{ padding: '7px 12px', fontSize: 14, fontWeight: 700, color: T.text }}>Net Profit / Loss</td>
+                        {derivedCell(net)}
+                      </tr>
+                    </tbody>
+                  </table>
+                  <div style={{ fontSize: 11.5, color: T.muted, marginTop: 12, padding: '0 12px 12px' }}>
+                    All amounts NET (VAT-exclusive). Changes save automatically on Tab / Enter / click away.
+                  </div>
                 </Card>
               )}
             </div>

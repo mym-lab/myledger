@@ -432,3 +432,8 @@ export const getConsolidated      = (id, from, to)           => {
   if (to)   url += `${from ? '&' : '?'}to=${to}`;
   return get(url, true);
 };
+
+// ── Budgets ───────────────────────────────────────────────────────────────────
+export const getBudgets  = (clientId, period) => get(`/budgets?clientId=${clientId}&period=${period}`, true);
+export const saveBudget  = (data)             => post('/budgets', data, true);
+export const deleteBudget = (id)              => del(`/budgets/${id}`, true);

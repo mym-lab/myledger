@@ -420,6 +420,37 @@ try { db.exec(`
   )
 `); } catch (_) { /* already exists */ }
 
+// ── Login attempt log (security monitoring) ──────────────────────────────────
+try { db.exec(`
+  CREATE TABLE IF NOT EXISTS login_attempts (
+    id           TEXT PRIMARY KEY,
+    email        TEXT NOT NULL,
+    ip           TEXT,
+    success      INTEGER NOT NULL DEFAULT 0,
+    role         TEXT,
+    attempted_at TEXT NOT NULL DEFAULT (datetime('now'))
+  )
+`); } catch (_) {}
+try { db.exec('CREATE INDEX IF NOT EXISTS idx_login_attempts_email ON login_attempts(email)'); } catch (_) {}
+try { db.exec('CREATE INDEX IF NOT EXISTS idx_login_attempts_time  ON login_attempts(attempted_at)'); } catch (_) {}
+
+// ── Budgets (budget-vs-actual, professional+ tier) ───────────────────────────
+try { db.exec(`
+  CREATE TABLE IF NOT EXISTS budgets (
+    id         TEXT PRIMARY KEY,
+    client_id  TEXT NOT NULL,
+    period     TEXT NOT NULL,
+    category   TEXT NOT NULL,
+    type       TEXT NOT NULL,
+    amount     REAL NOT NULL DEFAULT 0,
+    created_at TEXT NOT NULL DEFAULT (datetime('now')),
+    UNIQUE(client_id, period, category, type),
+    FOREIGN KEY (client_id) REFERENCES clients(id)
+  )
+`); } catch (_) { /* already exists */ }
+try { db.exec('CREATE INDEX IF NOT EXISTS idx_budgets_client_period ON budgets(client_id, period)'); }
+catch (_) {}
+
 // ── Default settings bootstrap ────────────────────────────────────────────────
 const DEFAULT_SETTINGS = {
   pricing: { starter: 399, professional: 699, enterprise: 999 },

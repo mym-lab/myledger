@@ -281,4 +281,36 @@ router.put('/clients/:id/set-tier', (req, res, next) => {
   } catch (err) { next(err); }
 });
 
+// ── GET /api/admin/login-attempts ────────────────────────────────────────────
+// Returns recent login attempts with optional filters:
+//   ?success=0|1   (0 = failed only, 1 = successful only, omit = all)
+//   ?email=        (filter to one email address)
+//   ?limit=        (default 200)
+router.get('/login-attempts', (req, res, next) => {
+  try {
+    const { success, email, limit = 200 } = req.query;
+    let sql    = 'SELECT * FROM login_attempts WHERE 1=1';
+    const args = [];
+    if (success !== undefined) { sql += ' AND success = ?'; args.push(Number(success)); }
+    if (email)                 { sql += ' AND email LIKE ?'; args.push(`%${email.toLowerCase()}%`); }
+    sql += ' ORDER BY attempted_at DESC LIMIT ?';
+    args.push(Math.min(Number(limit) || 200, 1000));
+
+    const rows = db.prepare(sql).all(...args);
+
+    // Summarise top offending IPs and emails (failed only)
+    const failed = rows.filter(r => !r.success);
+    const byIp   = {};
+    const byEmail = {};
+    for (const r of failed) {
+      if (r.ip)    byIp[r.ip]       = (byIp[r.ip]       || 0) + 1;
+      if (r.email) byEmail[r.email] = (byEmail[r.email] || 0) + 1;
+    }
+    const topIps    = Object.entries(byIp).sort((a,b) => b[1]-a[1]).slice(0,10).map(([ip,count]) => ({ ip, count }));
+    const topEmails = Object.entries(byEmail).sort((a,b) => b[1]-a[1]).slice(0,10).map(([email,count]) => ({ email, count }));
+
+    res.json({ attempts: rows, summary: { totalFailed: failed.length, topIps, topEmails } });
+  } catch (err) { next(err); }
+});
+
 export default router;

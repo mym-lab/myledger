@@ -64,7 +64,7 @@ function MetricCard({ label, value, sub, color }) {
   );
 }
 
-const TABS = ['Overview', 'Upgrade Requests', 'Referrals', 'Clients', 'Users', 'Audit Log', 'Settings'];
+const TABS = ['Overview', 'Upgrade Requests', 'Referrals', 'Clients', 'Users', 'Audit Log', 'Security', 'Settings'];
 
 // ── Restore Backup Button ─────────────────────────────────────────────────────
 function RestoreBackupButton({ onDone }) {
@@ -213,6 +213,13 @@ export default function CommandCenter({ onLogout }) {
   // Active users (live polling)
   const [activeUsers,    setActiveUsers]    = useState([]);
 
+  // Security / login attempts
+  const [secAttempts,    setSecAttempts]    = useState([]);
+  const [secSummary,     setSecSummary]     = useState(null);
+  const [secLoad,        setSecLoad]        = useState(false);
+  const [secFilter,      setSecFilter]      = useState('failed'); // 'failed' | 'all'
+  const [secEmailFilter, setSecEmailFilter] = useState('');
+
   // Named function so RestoreBackupButton (and other places) can call it
   function loadStats() {
     getAdminStats().then(setStats).catch(e => setError(e.message));
@@ -292,7 +299,26 @@ export default function CommandCenter({ onLogout }) {
   // Load referrals when Referrals tab is active
   useEffect(() => {
     if (tab === 'Referrals') loadAllReferrals();
+    if (tab === 'Security')  loadLoginAttempts();
   }, [tab]);
+
+  async function loadLoginAttempts(filter, emailQ) {
+    setSecLoad(true);
+    const f = filter  !== undefined ? filter  : secFilter;
+    const q = emailQ  !== undefined ? emailQ  : secEmailFilter;
+    try {
+      const token = localStorage.getItem('ml_token') || '';
+      let url = `/api/admin/login-attempts?limit=300`;
+      if (f === 'failed')  url += '&success=0';
+      if (f === 'success') url += '&success=1';
+      if (q.trim()) url += `&email=${encodeURIComponent(q.trim())}`;
+      const res  = await fetch(url, { headers: { Authorization: `Bearer ${token}` } });
+      const data = await res.json();
+      setSecAttempts(data.attempts || []);
+      setSecSummary(data.summary  || null);
+    } catch (e) { console.error(e); }
+    finally { setSecLoad(false); }
+  }
 
   useEffect(() => {
     loadStats();
@@ -1389,6 +1415,106 @@ export default function CommandCenter({ onLogout }) {
                         </td>
                         <td style={{ padding: '10px 14px', color: T.muted, fontSize: 12 }}>{e.entity}</td>
                         <td style={{ padding: '10px 14px', fontSize: 12 }}>{e.detail || '—'}</td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            )}
+          </div>
+        )}
+
+        {/* ════════════ SECURITY ════════════ */}
+        {tab === 'Security' && (
+          <div>
+            <h2 style={{ margin: '0 0 4px', fontSize: 22, fontWeight: 600 }}>🔒 Security — Login Attempts</h2>
+            <p style={{ margin: '0 0 20px', color: T.muted, fontSize: 13 }}>
+              All login attempts recorded since the last deployment. Failed = wrong password or unknown email.
+            </p>
+
+            {/* Filters */}
+            <div style={{ display: 'flex', gap: 10, marginBottom: 16, flexWrap: 'wrap', alignItems: 'center' }}>
+              {['failed','all','success'].map(f => (
+                <button key={f} onClick={() => { setSecFilter(f); loadLoginAttempts(f); }}
+                  style={{ padding: '6px 14px', borderRadius: 8, border: 'none', cursor: 'pointer', fontSize: 13, fontWeight: 500,
+                    background: secFilter === f ? T.accent : T.border, color: secFilter === f ? '#fff' : T.text }}>
+                  {f === 'failed' ? '❌ Failed only' : f === 'success' ? '✅ Successful only' : '📋 All'}
+                </button>
+              ))}
+              <input placeholder="Filter by email…" value={secEmailFilter}
+                onChange={e => setSecEmailFilter(e.target.value)}
+                onKeyDown={e => { if (e.key === 'Enter') loadLoginAttempts(undefined, e.target.value); }}
+                style={{ padding: '6px 12px', borderRadius: 8, border: `1px solid ${T.border}`, fontSize: 13, minWidth: 200 }} />
+              <button onClick={() => loadLoginAttempts()}
+                style={{ padding: '6px 14px', borderRadius: 8, border: 'none', cursor: 'pointer', fontSize: 13,
+                  background: T.border, color: T.text }}>↻ Refresh</button>
+            </div>
+
+            {/* Summary cards — only for failed */}
+            {secSummary && secFilter !== 'success' && (
+              <div style={{ display: 'flex', gap: 16, marginBottom: 20, flexWrap: 'wrap' }}>
+                <div style={{ background: T.surface, borderRadius: 12, padding: '14px 20px', border: `1px solid ${T.border}`, minWidth: 160 }}>
+                  <div style={{ fontSize: 11, fontWeight: 700, color: T.muted, textTransform: 'uppercase', marginBottom: 4 }}>Total Failed</div>
+                  <div style={{ fontSize: 28, fontWeight: 700, color: secSummary.totalFailed > 10 ? '#ff3b30' : T.text }}>{secSummary.totalFailed}</div>
+                </div>
+                {secSummary.topIps?.length > 0 && (
+                  <div style={{ background: T.surface, borderRadius: 12, padding: '14px 20px', border: `1px solid ${T.border}`, flex: 1, minWidth: 220 }}>
+                    <div style={{ fontSize: 11, fontWeight: 700, color: T.muted, textTransform: 'uppercase', marginBottom: 8 }}>Top IPs (failed)</div>
+                    {secSummary.topIps.map(({ ip, count }) => (
+                      <div key={ip} style={{ display: 'flex', justifyContent: 'space-between', fontSize: 13, padding: '2px 0' }}>
+                        <span style={{ fontFamily: 'monospace', color: count > 5 ? '#ff3b30' : T.text }}>{ip}</span>
+                        <span style={{ fontWeight: 600, color: count > 5 ? '#ff3b30' : T.muted }}>{count}×</span>
+                      </div>
+                    ))}
+                  </div>
+                )}
+                {secSummary.topEmails?.length > 0 && (
+                  <div style={{ background: T.surface, borderRadius: 12, padding: '14px 20px', border: `1px solid ${T.border}`, flex: 1, minWidth: 240 }}>
+                    <div style={{ fontSize: 11, fontWeight: 700, color: T.muted, textTransform: 'uppercase', marginBottom: 8 }}>Top Targets (failed)</div>
+                    {secSummary.topEmails.map(({ email, count }) => (
+                      <div key={email} style={{ display: 'flex', justifyContent: 'space-between', fontSize: 13, padding: '2px 0' }}>
+                        <span style={{ color: count > 5 ? '#ff3b30' : T.text }}>{email}</span>
+                        <span style={{ fontWeight: 600, color: count > 5 ? '#ff3b30' : T.muted }}>{count}×</span>
+                      </div>
+                    ))}
+                  </div>
+                )}
+              </div>
+            )}
+
+            {/* Table */}
+            {secLoad ? (
+              <div style={{ color: T.muted }}>Loading…</div>
+            ) : secAttempts.length === 0 ? (
+              <div style={{ color: T.muted, textAlign: 'center', padding: 32 }}>No records found.</div>
+            ) : (
+              <div style={{ background: T.surface, borderRadius: 12, border: `1px solid ${T.border}`, overflowX: 'auto' }}>
+                <table style={{ width: '100%', borderCollapse: 'collapse' }}>
+                  <thead>
+                    <tr style={{ borderBottom: `2px solid ${T.border}` }}>
+                      {['Time (UTC)', 'Email', 'IP Address', 'Role', 'Result'].map(h => (
+                        <th key={h} style={{ textAlign: 'left', fontSize: 11, fontWeight: 700, color: T.muted,
+                          textTransform: 'uppercase', letterSpacing: '0.5px', padding: '10px 14px' }}>{h}</th>
+                      ))}
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {secAttempts.map(a => (
+                      <tr key={a.id} style={{ borderBottom: `1px solid ${T.border}20`,
+                        background: !a.success ? '#fff5f5' : 'transparent' }}>
+                        <td style={{ padding: '8px 14px', fontSize: 12, fontFamily: 'monospace', color: T.muted, whiteSpace: 'nowrap' }}>
+                          {a.attempted_at?.replace('T', ' ').slice(0, 19)}
+                        </td>
+                        <td style={{ padding: '8px 14px', fontSize: 13 }}>{a.email}</td>
+                        <td style={{ padding: '8px 14px', fontSize: 12, fontFamily: 'monospace', color: T.muted }}>{a.ip || '—'}</td>
+                        <td style={{ padding: '8px 14px', fontSize: 12, color: T.muted }}>{a.role || '—'}</td>
+                        <td style={{ padding: '8px 14px' }}>
+                          <span style={{ fontSize: 12, fontWeight: 600, padding: '2px 8px', borderRadius: 6,
+                            background: a.success ? '#d1fae5' : '#fee2e2',
+                            color:      a.success ? '#065f46' : '#991b1b' }}>
+                            {a.success ? '✅ Success' : '❌ Failed'}
+                          </span>
+                        </td>
                       </tr>
                     ))}
                   </tbody>
