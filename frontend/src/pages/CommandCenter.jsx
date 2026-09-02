@@ -213,6 +213,11 @@ export default function CommandCenter({ onLogout }) {
   // Active users (live polling)
   const [activeUsers,    setActiveUsers]    = useState([]);
 
+  // Backup
+  const [backupList,   setBackupList]   = useState([]);
+  const [backupBusy,   setBackupBusy]   = useState(false);
+  const [backupMsg,    setBackupMsg]    = useState('');
+
   // Security / login attempts
   const [secAttempts,    setSecAttempts]    = useState([]);
   const [secSummary,     setSecSummary]     = useState(null);
@@ -300,7 +305,29 @@ export default function CommandCenter({ onLogout }) {
   useEffect(() => {
     if (tab === 'Referrals') loadAllReferrals();
     if (tab === 'Security')  loadLoginAttempts();
+    if (tab === 'Settings')  loadBackups();
   }, [tab]);
+
+  async function loadBackups() {
+    const token = localStorage.getItem('ml_token') || '';
+    try {
+      const res  = await fetch('/api/admin/backups', { headers: { Authorization: `Bearer ${token}` } });
+      const data = await res.json();
+      setBackupList(data.backups || []);
+    } catch (_) {}
+  }
+
+  async function triggerBackup() {
+    setBackupBusy(true); setBackupMsg('');
+    const token = localStorage.getItem('ml_token') || '';
+    try {
+      const res  = await fetch('/api/admin/backup', { method: 'POST', headers: { Authorization: `Bearer ${token}` } });
+      const data = await res.json();
+      if (data.ok) { setBackupMsg(`✅ Backup complete: ${data.fileName} (${data.sizeMB} MB)`); loadBackups(); }
+      else setBackupMsg(`❌ ${data.error}`);
+    } catch (e) { setBackupMsg(`❌ ${e.message}`); }
+    finally { setBackupBusy(false); }
+  }
 
   async function loadLoginAttempts(filter, emailQ) {
     setSecLoad(true);
@@ -1531,6 +1558,46 @@ export default function CommandCenter({ onLogout }) {
             <p style={{ margin: '0 0 28px', fontSize: 14, color: T.muted }}>
               Changes take effect immediately for all new upgrade payments.
             </p>
+
+            {/* ── Database Backups ── */}
+            <Card style={{ marginBottom: 24 }}>
+              <SectionHead>🗄️ Database Backups</SectionHead>
+              <p style={{ fontSize: 13, color: T.muted, margin: '0 0 14px' }}>
+                Daily automatic backup at 2:00 AM PH time. Last 7 days kept on the Railway volume.
+                Enable cloud backup by setting <code>BACKUP_S3_ENDPOINT</code>, <code>BACKUP_S3_BUCKET</code>,
+                <code>BACKUP_S3_KEY</code>, <code>BACKUP_S3_SECRET</code> env vars (Cloudflare R2 or Backblaze B2).
+              </p>
+              <div style={{ display: 'flex', gap: 10, alignItems: 'center', marginBottom: 14 }}>
+                <button onClick={triggerBackup} disabled={backupBusy}
+                  style={{ padding: '8px 18px', borderRadius: 8, border: 'none', cursor: backupBusy ? 'not-allowed' : 'pointer',
+                    background: T.accent, color: '#fff', fontWeight: 600, fontSize: 13, opacity: backupBusy ? 0.6 : 1 }}>
+                  {backupBusy ? '⏳ Backing up…' : '⬇ Run Backup Now'}
+                </button>
+                {backupMsg && <span style={{ fontSize: 13, color: backupMsg.startsWith('✅') ? '#34c759' : '#ff3b30' }}>{backupMsg}</span>}
+              </div>
+              {backupList.length === 0 ? (
+                <div style={{ fontSize: 13, color: T.muted }}>No backups yet — first backup runs tonight at 2 AM PH or click above.</div>
+              ) : (
+                <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 13 }}>
+                  <thead>
+                    <tr style={{ borderBottom: `1px solid ${T.border}` }}>
+                      <th style={{ textAlign: 'left', padding: '5px 8px', color: T.muted, fontWeight: 600 }}>File</th>
+                      <th style={{ textAlign: 'right', padding: '5px 8px', color: T.muted, fontWeight: 600 }}>Size</th>
+                      <th style={{ textAlign: 'right', padding: '5px 8px', color: T.muted, fontWeight: 600 }}>Created (UTC)</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {backupList.map(b => (
+                      <tr key={b.fileName} style={{ borderBottom: `1px solid ${T.border}20` }}>
+                        <td style={{ padding: '5px 8px', fontFamily: 'monospace' }}>{b.fileName}</td>
+                        <td style={{ padding: '5px 8px', textAlign: 'right', color: T.muted }}>{b.sizeMB} MB</td>
+                        <td style={{ padding: '5px 8px', textAlign: 'right', color: T.muted }}>{b.createdAt?.slice(0, 19).replace('T', ' ')}</td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              )}
+            </Card>
 
             <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 20 }}>
 

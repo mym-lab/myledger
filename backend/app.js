@@ -42,6 +42,7 @@ import staffRoutes          from './routes/staff.js';
 import clientGroupsRoutes   from './routes/client-groups.js';
 import budgetsRoutes        from './routes/budgets.js';
 import { getTrialStatus, DRIP_MILESTONES } from './lib/trial.js';
+import { runBackup, listBackups }          from './lib/backup.js';
 import { getDripEmail }    from './lib/drip-emails.js';
 
 
@@ -406,6 +407,39 @@ function scheduleRecurringInvoices() {
 // Run on startup to catch any missed generations, then every hour
 runRecurringInvoices();
 setInterval(scheduleRecurringInvoices, 60 * 60 * 1000);
+
+// ── Daily Database Backup ─────────────────────────────────────────────────────
+// Runs daily at 2:00 AM Philippine time (UTC 18:00 previous day).
+// Keeps the last 7 backups in /data/backups/ and optionally uploads to S3/R2/B2.
+let lastBackupDate = null;
+async function runDailyBackup() {
+  try {
+    const now    = new Date();
+    const utcH   = now.getUTCHours();
+    const today  = now.toISOString().slice(0, 10);
+    // 2AM PH = UTC 18:00
+    if (utcH !== 18) return;
+    if (lastBackupDate === today) return; // already ran today
+    lastBackupDate = today;
+    await runBackup();
+  } catch (e) {
+    console.error('⚠️  Daily backup error:', e.message);
+  }
+}
+setInterval(runDailyBackup, 60 * 60 * 1000); // check every hour
+
+// ── Admin: manual backup trigger + list ──────────────────────────────────────
+app.post('/api/admin/backup', async (req, res) => {
+  try {
+    const result = await runBackup({ manual: true });
+    res.json({ ok: true, ...result });
+  } catch (e) {
+    res.status(500).json({ error: e.message });
+  }
+});
+app.get('/api/admin/backups', (req, res) => {
+  res.json({ backups: listBackups() });
+});
 
 app.listen(PORT, () => {
   console.log(`
