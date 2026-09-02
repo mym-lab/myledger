@@ -2189,6 +2189,35 @@ export default function ClientInterface({ onLogout }) {
               <span style={{ fontSize: 13, color: T.muted }}>TIN {active.tin} · {active.type}</span>
             </div>
 
+            {/* Weekly backup reminder */}
+            {(() => {
+              const key       = 'ml_backup_reminder_dismissed';
+              const dismissed = localStorage.getItem(key);
+              const weekAgo   = new Date(Date.now() - 7 * 24 * 60 * 60 * 1000).toISOString();
+              if (dismissed && dismissed > weekAgo) return null;
+              const date = new Date().toISOString().slice(0,10);
+              return (
+                <div style={{ background: '#fffbeb', border: '1px solid #fbbf24', borderRadius: 10,
+                  padding: '12px 16px', marginBottom: 16, display: 'flex', alignItems: 'center',
+                  gap: 12, flexWrap: 'wrap', fontSize: 13 }}>
+                  <span style={{ flex: 1 }}>
+                    💾 <strong>Data backup reminder:</strong> Download a CSV copy of your transactions for safe-keeping.
+                  </span>
+                  <button onClick={() => downloadCSV(`/transactions?clientId=${active.id}`, `transactions_${date}.csv`)}
+                    style={{ padding: '6px 14px', borderRadius: 8, border: 'none', cursor: 'pointer',
+                      background: '#f59e0b', color: '#fff', fontWeight: 600, fontSize: 12 }}>
+                    ⬇ Download CSV
+                  </button>
+                  <button onClick={() => localStorage.setItem(key, new Date().toISOString())}
+                    style={{ padding: '6px 10px', borderRadius: 8, border: '1px solid #fbbf24',
+                      cursor: 'pointer', background: 'transparent', color: '#92400e', fontSize: 12 }}
+                    title="Remind me again in 7 days">
+                    Dismiss
+                  </button>
+                </div>
+              );
+            })()}
+
             {/* Error banner */}
             {overviewErr && (
               <div style={{ background: '#fff5f5', border: '1px solid #fca5a5', borderRadius: 10,

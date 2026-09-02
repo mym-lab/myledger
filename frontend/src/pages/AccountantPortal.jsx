@@ -3198,6 +3198,35 @@ export default function AccountantPortal({ onLogout }) {
           <div>
             <h2 style={{ margin: '0 0 22px', fontSize: 22, fontWeight: 600 }}>{active.tradeName} — Dashboard</h2>
 
+            {/* Weekly backup reminder */}
+            {(() => {
+              const key       = 'ml_backup_reminder_dismissed';
+              const dismissed = localStorage.getItem(key);
+              const weekAgo   = new Date(Date.now() - 7 * 24 * 60 * 60 * 1000).toISOString();
+              if (dismissed && dismissed > weekAgo) return null;
+              const date = new Date().toISOString().slice(0,10);
+              return (
+                <div style={{ background: '#fffbeb', border: '1px solid #fbbf24', borderRadius: 10,
+                  padding: '12px 16px', marginBottom: 20, display: 'flex', alignItems: 'center',
+                  gap: 12, flexWrap: 'wrap', fontSize: 13 }}>
+                  <span style={{ flex: 1 }}>
+                    💾 <strong>Data backup reminder:</strong> Download a CSV copy of your transactions for safe-keeping.
+                  </span>
+                  <button onClick={() => downloadCSV(`/transactions?clientId=${active.id}`, `transactions_${active.tradeName}_${date}.csv`)}
+                    style={{ padding: '6px 14px', borderRadius: 8, border: 'none', cursor: 'pointer',
+                      background: '#f59e0b', color: '#fff', fontWeight: 600, fontSize: 12 }}>
+                    ⬇ Download CSV
+                  </button>
+                  <button onClick={() => { localStorage.setItem(key, new Date().toISOString()); window.dispatchEvent(new Event('storage')); }}
+                    style={{ padding: '6px 10px', borderRadius: 8, border: '1px solid #fbbf24',
+                      cursor: 'pointer', background: 'transparent', color: '#92400e', fontSize: 12 }}
+                    title="Remind me again in 7 days">
+                    Dismiss
+                  </button>
+                </div>
+              );
+            })()}
+
             {/* Metric cards */}
             <div style={{ display: 'flex', gap: 16, flexWrap: 'wrap', marginBottom: 24 }}>
               {[
