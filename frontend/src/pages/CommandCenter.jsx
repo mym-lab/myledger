@@ -11,6 +11,7 @@ import {
   getAuditLog,
   getAllReferrals, creditReferral,
   restoreBackup,
+  adminSetUserRole,
 } from '../api.js';
 
 const T = {
@@ -174,6 +175,7 @@ export default function CommandCenter({ onLogout }) {
   const [actionMsg,    setActionMsg]    = useState('');
   // Accountant tier management
   const [tierMsg,      setTierMsg]      = useState('');
+  const [roleMsg,      setRoleMsg]      = useState('');
   const [acctPricingForm, setAcctPricingForm] = useState({ solo: '', professional: '', firm: '', agency: '' });
   const [staffLimitForm,  setStaffLimitForm]  = useState({ free: '0', starter: '1', solo: '2', professional: '5', firm: '10', agency: '25' });
   // Referral rate settings
@@ -415,6 +417,18 @@ export default function CommandCenter({ onLogout }) {
       setTierMsg(`✓ Tier set to "${tier}"`);
       loadStats();
       setTimeout(() => setTierMsg(''), 3000);
+    } catch (e) { alert(e.message); }
+  }
+
+  async function handleSetRole(userId, email, currentRole) {
+    const newRole = currentRole === 'accountant' ? 'client' : 'accountant';
+    const label   = newRole === 'accountant' ? 'Accountant' : 'Business/Client';
+    if (!confirm(`Change ${email} from ${currentRole} → ${label}?\n\nThis takes effect immediately. The user will need to log out and back in.`)) return;
+    try {
+      await adminSetUserRole(userId, newRole);
+      setRoleMsg(`✓ ${email} is now ${label}`);
+      loadStats();
+      setTimeout(() => setRoleMsg(''), 4000);
     } catch (e) { alert(e.message); }
   }
 
@@ -1230,6 +1244,11 @@ export default function CommandCenter({ onLogout }) {
                   {brandingMsg}
                 </span>
               )}
+              {roleMsg && (
+                <span style={{ fontSize: 13, fontWeight: 600, color: '#0071e3', marginLeft: 12 }}>
+                  {roleMsg}
+                </span>
+              )}
             </div>
             {!stats || stats.users.length === 0 ? (
               <div style={{ color: T.muted, padding: 20 }}>No users yet.</div>
@@ -1329,6 +1348,18 @@ export default function CommandCenter({ onLogout }) {
                                   ))}
                                 </div>
                               ) : <span style={{ color: T.border, fontSize: 12 }}>—</span>}
+                              {u.role !== 'admin' && (
+                                <div style={{ marginTop: 6 }}>
+                                  <button
+                                    onClick={() => handleSetRole(u.id, u.email, u.role)}
+                                    title={`Switch to ${u.role === 'accountant' ? 'Business/Client' : 'Accountant'}`}
+                                    style={{ fontSize: 11, padding: '3px 10px', borderRadius: 6, border: `1px solid ${T.border}`,
+                                      background: 'transparent', color: T.muted, cursor: 'pointer', fontFamily: 'inherit',
+                                      whiteSpace: 'nowrap' }}>
+                                    ⇄ Make {u.role === 'accountant' ? 'Client' : 'Accountant'}
+                                  </button>
+                                </div>
+                              )}
                             </td>
                           </tr>
                           {isAgency && (

@@ -446,6 +446,9 @@ export const payBill     = (id)               => post(`/bills/${id}/pay`, {}, tr
 export const voidBill    = (id)               => post(`/bills/${id}/void`, {}, true);
 export const deleteBill  = (id)               => del(`/bills/${id}`, true);
 
+// ── Admin role management ─────────────────────────────────────────────────────
+export const adminSetUserRole = (userId, role) => put(`/admin/users/${userId}/set-role`, { role }, true);
+
 // ── Aged AR / AP Reports ──────────────────────────────────────────────────────
 export const getAgedAR   = (clientId)         => get(`/reports/aged-ar?clientId=${clientId}`, true);
 export const getAgedAP   = (clientId)         => get(`/reports/aged-ap?clientId=${clientId}`, true);

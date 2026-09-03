@@ -212,6 +212,31 @@ router.put('/users/:id/set-branding', (req, res, next) => {
   } catch (err) { next(err); }
 });
 
+// PUT /api/admin/users/:id/set-role
+router.put('/users/:id/set-role', (req, res, next) => {
+  try {
+    const { role } = req.body;
+    if (!['client', 'accountant'].includes(role))
+      return res.status(400).json({ error: 'role must be client or accountant' });
+
+    const user = rowToUser(stmtUserById.get(req.params.id));
+    if (!user) return res.status(404).json({ error: 'User not found' });
+    if (user.role === 'admin')
+      return res.status(400).json({ error: 'Cannot change admin role' });
+    if (user.role === role)
+      return res.status(400).json({ error: `User is already ${role}` });
+
+    db.prepare('UPDATE users SET role = ? WHERE id = ?').run(role, req.params.id);
+    // If switching to accountant, ensure they have a default tier
+    if (role === 'accountant') {
+      db.prepare("UPDATE users SET accountant_tier = CASE WHEN accountant_tier IS NULL OR accountant_tier = '' THEN 'free' ELSE accountant_tier END WHERE id = ?").run(req.params.id);
+    }
+
+    const updated = rowToUser(stmtUserById.get(req.params.id));
+    res.json({ message: `Role changed to ${role}`, user: { id: updated.id, email: updated.email, role: updated.role } });
+  } catch (err) { next(err); }
+});
+
 // PUT /api/admin/users/:id/set-tier
 router.put('/users/:id/set-tier', (req, res, next) => {
   try {
