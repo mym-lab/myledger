@@ -38,6 +38,8 @@ import {
   getStaff, createStaff, assignStaff, resetStaffPassword, deleteStaff,
   getClientGroups, createClientGroup, updateClientGroup, deleteClientGroup, getConsolidated,
   getBudgets, saveBudget,
+  getBills, createBill, payBill, voidBill, deleteBill,
+  getAgedAR, getAgedAP,
   downloadCSV,
   downloadBirXml,
   createPaymongoLink,
@@ -204,7 +206,7 @@ function SectionHead({ children }) {
 const PRO_TABS = new Set([
   'Journal Entries', 'Trial Balance', 'Books', 'General Journal', 'General Ledger', 'COA', 'Period Lock', 'Audit Log',
   'BIR Returns', 'Payroll', 'Alphalist',
-  'Income Statement', 'Balance Sheet', 'Cash Flow', 'Assets', 'Contacts', 'SLSP', 'Budget', 'Consolidated',
+  'Income Statement', 'Balance Sheet', 'Cash Flow', 'Assets', 'Contacts', 'SLSP', 'Budget', 'Aged AR/AP', 'Consolidated',
 ]);
 
 // Accountant tier definitions
@@ -1313,14 +1315,14 @@ function computeIncomeTax(transactions, client, year, quarter /* null = annual *
   };
 }
 
-const TABS = ['Dashboard', 'Transactions', 'Invoices', 'Journal Entries', 'Trial Balance', 'Books', 'General Journal', 'General Ledger', 'COA', 'Period Lock', 'Audit Log', 'BIR Returns', 'Payroll', 'Alphalist', 'SLSP', 'Income Statement', 'Balance Sheet', 'Cash Flow', 'Assets', 'Contacts', 'BIR Reminders', 'Filing Calendar', 'Compare', 'Budget', 'Consolidated', 'Portfolio', 'Business Setup', 'Referral', 'My Team'];
+const TABS = ['Dashboard', 'Transactions', 'Invoices', 'Journal Entries', 'Trial Balance', 'Books', 'General Journal', 'General Ledger', 'COA', 'Period Lock', 'Audit Log', 'BIR Returns', 'Payroll', 'Alphalist', 'SLSP', 'Income Statement', 'Balance Sheet', 'Cash Flow', 'Assets', 'Contacts', 'BIR Reminders', 'Filing Calendar', 'Compare', 'Budget', 'Aged AR/AP', 'Consolidated', 'Portfolio', 'Business Setup', 'Referral', 'My Team'];
 
 // Grouped navigation — replaces the flat 26-tab bar with 6 category groups
 const TAB_GROUPS = [
   { label: '📊 Overview',    tabs: ['Dashboard', 'Portfolio'] },
   { label: '📝 Data Entry',  tabs: ['Transactions', 'Invoices', 'Contacts'] },
   { label: '📒 Books',       tabs: ['Journal Entries', 'Trial Balance', 'Books', 'General Journal', 'General Ledger', 'COA', 'Assets'] },
-  { label: '📈 Reports',     tabs: ['Income Statement', 'Balance Sheet', 'Cash Flow', 'Compare', 'Budget', 'Consolidated'] },
+  { label: '📈 Reports',     tabs: ['Income Statement', 'Balance Sheet', 'Cash Flow', 'Compare', 'Budget', 'Aged AR/AP', 'Consolidated'] },
   { label: '🏛 BIR & Tax',   tabs: ['BIR Reminders', 'Filing Calendar', 'BIR Returns', 'Payroll', 'Alphalist', 'SLSP'] },
   { label: '⚙️ Settings',    tabs: ['Period Lock', 'Audit Log', 'Business Setup', 'Referral', 'My Team'] },
 ];
@@ -2169,6 +2171,17 @@ export default function AccountantPortal({ onLogout }) {
   // For Compare tab budget overlay
   const [compareBudget, setCompareBudget] = useState(null); // { revenue, costOfSales, opex }
 
+  // ── Aged AR/AP state ──────────────────────────────────────────────────────────
+  const [agedAR,        setAgedAR]        = useState(null);  // { rows, totals, asOf }
+  const [agedAP,        setAgedAP]        = useState(null);  // { rows, totals, asOf }
+  const [agedLoad,      setAgedLoad]      = useState(false);
+  const [bills,         setBills]         = useState([]);
+  const [billsLoad,     setBillsLoad]     = useState(false);
+  const [showBillForm,  setShowBillForm]  = useState(false);
+  const [billForm,      setBillForm]      = useState({ vendorName: '', vendorEmail: '', billNumber: '', billDate: '', dueDate: '', category: '', notes: '', amountNet: '', amountVat: '', amountGross: '' });
+  const [billFormErr,   setBillFormErr]   = useState('');
+  const [billSaving,    setBillSaving]    = useState(false);
+
   const [showTx, setShowTx]   = useState(false);
   const [journals,  setJournals]  = useState([]);
   const [jLoad,     setJLoad]     = useState(false);
@@ -2458,6 +2471,7 @@ export default function AccountantPortal({ onLogout }) {
     if (tab === 'Filing Calendar')  { loadCalendar(); }
     if (tab === 'Compare')          loadIncomeCompare();
     if (tab === 'Budget')           loadBudget();
+    if (tab === 'Aged AR/AP')       { loadAgedReport(); loadBillsList(); }
   }, [active?.id, tab]);
 
   // Portfolio tab doesn't need an active client — loads on tab switch only
@@ -2622,6 +2636,57 @@ export default function AccountantPortal({ onLogout }) {
       setBudgetData(d => ({ ...d, [key]: amount }));
     } catch (e) { console.error(e); }
     finally { setBudgetSaving(s => ({ ...s, [key]: false })); }
+  }
+
+  async function loadAgedReport() {
+    if (!active?.id) return;
+    setAgedLoad(true);
+    try {
+      const [ar, ap] = await Promise.all([getAgedAR(active.id), getAgedAP(active.id)]);
+      setAgedAR(ar);
+      setAgedAP(ap);
+    } catch (e) { console.error(e); }
+    finally { setAgedLoad(false); }
+  }
+
+  async function loadBillsList() {
+    if (!active?.id) return;
+    setBillsLoad(true);
+    try {
+      const res = await getBills(active.id);
+      setBills(res.bills || []);
+    } catch (e) { console.error(e); }
+    finally { setBillsLoad(false); }
+  }
+
+  async function handleCreateBill(e) {
+    e.preventDefault();
+    setBillFormErr('');
+    if (!billForm.vendorName || !billForm.billDate || !billForm.dueDate || !billForm.amountGross)
+      return setBillFormErr('Vendor name, bill date, due date, and amount are required.');
+    setBillSaving(true);
+    try {
+      await createBill({ clientId: active.id, ...billForm,
+        amountNet: parseFloat(billForm.amountNet) || 0,
+        amountVat: parseFloat(billForm.amountVat) || 0,
+        amountGross: parseFloat(billForm.amountGross) || 0,
+      });
+      setBillForm({ vendorName: '', vendorEmail: '', billNumber: '', billDate: '', dueDate: '', category: '', notes: '', amountNet: '', amountVat: '', amountGross: '' });
+      setShowBillForm(false);
+      await Promise.all([loadBillsList(), loadAgedReport()]);
+    } catch (e) { setBillFormErr(e.message || 'Failed to save bill'); }
+    finally { setBillSaving(false); }
+  }
+
+  async function handlePayBill(id) {
+    try { await payBill(id); await Promise.all([loadBillsList(), loadAgedReport()]); }
+    catch (e) { console.error(e); }
+  }
+
+  async function handleVoidBill(id) {
+    if (!confirm('Void this bill?')) return;
+    try { await voidBill(id); await Promise.all([loadBillsList(), loadAgedReport()]); }
+    catch (e) { console.error(e); }
   }
 
   async function loadPortfolio(period) {
@@ -6979,6 +7044,187 @@ export default function AccountantPortal({ onLogout }) {
                     All amounts NET (VAT-exclusive). Changes save automatically on Tab / Enter / click away.
                   </div>
                 </Card>
+              )}
+            </div>
+          );
+        })()}
+
+        {/* ══════════ AGED AR / AP ══════════ */}
+        {tab === 'Aged AR/AP' && active && (() => {
+          if (!isPro) return <ProLock onUpgrade={(tier) => { setUpgradeTarget(tier || 'solo'); setShowUpgrade(true); }} trialExpired={trialStatus?.isExpired ?? false} />;
+
+          const fmt = (n) => `₱${(n || 0).toLocaleString('en-PH', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
+          const bucketLabel  = { current: 'Current', '1_30': '1–30 days', '31_60': '31–60 days', '61_90': '61–90 days', '90plus': '90+ days' };
+          const bucketColor  = { current: '#34c759', '1_30': '#ff9500', '31_60': '#ff6b00', '61_90': '#ff3b30', '90plus': '#8b0000' };
+          const bucketKeys   = ['current', '1_30', '31_60', '61_90', '90plus'];
+
+          const AgingTable = ({ title, rows, totals, emptyMsg }) => (
+            <div style={{ marginBottom: 36 }}>
+              <h3 style={{ margin: '0 0 12px', fontSize: 17, fontWeight: 600 }}>{title}</h3>
+              {(!rows || rows.length === 0) ? (
+                <div style={{ color: '#86868b', fontSize: 14, padding: '24px 0' }}>{emptyMsg}</div>
+              ) : (
+                <div style={{ overflowX: 'auto' }}>
+                  <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 13 }}>
+                    <thead>
+                      <tr style={{ background: '#f5f5f7', borderBottom: '2px solid #e5e5ea' }}>
+                        <th style={{ textAlign: 'left', padding: '8px 10px', fontWeight: 600 }}>Name</th>
+                        <th style={{ textAlign: 'left', padding: '8px 10px', fontWeight: 600 }}>Ref #</th>
+                        <th style={{ textAlign: 'left', padding: '8px 10px', fontWeight: 600 }}>Due Date</th>
+                        {bucketKeys.map(k => (
+                          <th key={k} style={{ textAlign: 'right', padding: '8px 10px', fontWeight: 600, color: bucketColor[k] }}>{bucketLabel[k]}</th>
+                        ))}
+                        <th style={{ textAlign: 'right', padding: '8px 10px', fontWeight: 700 }}>Total</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {rows.map(r => (
+                        <tr key={r.id} style={{ borderBottom: '1px solid #f0f0f0' }}>
+                          <td style={{ padding: '7px 10px', fontWeight: 500 }}>{r.customerName || r.vendorName}</td>
+                          <td style={{ padding: '7px 10px', color: '#86868b' }}>{r.invoiceNumber || r.billNumber || '—'}</td>
+                          <td style={{ padding: '7px 10px', color: r.daysOverdue > 0 ? '#ff3b30' : '#1d1d1f' }}>{r.dueDate || '—'}</td>
+                          {bucketKeys.map(k => (
+                            <td key={k} style={{ textAlign: 'right', padding: '7px 10px', color: r.bucket === k ? bucketColor[k] : '#c7c7cc', fontWeight: r.bucket === k ? 600 : 400 }}>
+                              {r.bucket === k ? fmt(r.total) : '—'}
+                            </td>
+                          ))}
+                          <td style={{ textAlign: 'right', padding: '7px 10px', fontWeight: 600 }}>{fmt(r.total)}</td>
+                        </tr>
+                      ))}
+                    </tbody>
+                    <tfoot>
+                      <tr style={{ background: '#f5f5f7', borderTop: '2px solid #e5e5ea', fontWeight: 700 }}>
+                        <td colSpan={3} style={{ padding: '8px 10px' }}>TOTAL</td>
+                        {bucketKeys.map(k => (
+                          <td key={k} style={{ textAlign: 'right', padding: '8px 10px', color: totals[k] > 0 ? bucketColor[k] : '#c7c7cc' }}>{totals[k] > 0 ? fmt(totals[k]) : '—'}</td>
+                        ))}
+                        <td style={{ textAlign: 'right', padding: '8px 10px' }}>{fmt(totals.grand)}</td>
+                      </tr>
+                    </tfoot>
+                  </table>
+                </div>
+              )}
+            </div>
+          );
+
+          return (
+            <div>
+              {/* Header */}
+              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 24 }}>
+                <div>
+                  <h2 style={{ margin: 0, fontSize: 22, fontWeight: 600 }}>Aged AR / AP</h2>
+                  {agedAR?.asOf && <div style={{ fontSize: 12, color: '#86868b', marginTop: 2 }}>As of {agedAR.asOf}</div>}
+                </div>
+                <div style={{ display: 'flex', gap: 8 }}>
+                  <Btn size="sm" variant="ghost" onClick={loadAgedReport}>↻ Refresh</Btn>
+                  <Btn size="sm" onClick={() => setShowBillForm(s => !s)}>+ Add Bill</Btn>
+                </div>
+              </div>
+
+              {/* Add Bill Form */}
+              {showBillForm && (
+                <div style={{ background: '#f9f9f9', border: '1px solid #e5e5ea', borderRadius: 12, padding: 20, marginBottom: 28 }}>
+                  <h4 style={{ margin: '0 0 14px', fontSize: 15, fontWeight: 600 }}>New Bill (Accounts Payable)</h4>
+                  {billFormErr && <div style={{ color: '#ff3b30', fontSize: 13, marginBottom: 10 }}>{billFormErr}</div>}
+                  <form onSubmit={handleCreateBill}>
+                    <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(200px, 1fr))', gap: 12, marginBottom: 12 }}>
+                      {[
+                        { label: 'Vendor Name *', key: 'vendorName', type: 'text' },
+                        { label: 'Vendor Email', key: 'vendorEmail', type: 'email' },
+                        { label: 'Bill Number', key: 'billNumber', type: 'text' },
+                        { label: 'Bill Date *', key: 'billDate', type: 'date' },
+                        { label: 'Due Date *', key: 'dueDate', type: 'date' },
+                        { label: 'Category', key: 'category', type: 'text' },
+                        { label: 'Amount (Net)', key: 'amountNet', type: 'number' },
+                        { label: 'VAT Amount', key: 'amountVat', type: 'number' },
+                        { label: 'Total Amount *', key: 'amountGross', type: 'number' },
+                      ].map(f => (
+                        <div key={f.key}>
+                          <label style={{ fontSize: 12, color: '#86868b', display: 'block', marginBottom: 4 }}>{f.label}</label>
+                          <input type={f.type} value={billForm[f.key]} step={f.type === 'number' ? '0.01' : undefined}
+                            onChange={e => setBillForm(b => ({ ...b, [f.key]: e.target.value }))}
+                            style={{ width: '100%', padding: '8px 10px', border: '1px solid #d2d2d7', borderRadius: 8, fontSize: 13, boxSizing: 'border-box' }}
+                          />
+                        </div>
+                      ))}
+                      <div style={{ gridColumn: '1/-1' }}>
+                        <label style={{ fontSize: 12, color: '#86868b', display: 'block', marginBottom: 4 }}>Notes</label>
+                        <input type="text" value={billForm.notes} onChange={e => setBillForm(b => ({ ...b, notes: e.target.value }))}
+                          style={{ width: '100%', padding: '8px 10px', border: '1px solid #d2d2d7', borderRadius: 8, fontSize: 13, boxSizing: 'border-box' }} />
+                      </div>
+                    </div>
+                    <div style={{ display: 'flex', gap: 8, justifyContent: 'flex-end' }}>
+                      <Btn size="sm" variant="ghost" type="button" onClick={() => { setShowBillForm(false); setBillFormErr(''); }}>Cancel</Btn>
+                      <Btn size="sm" type="submit" disabled={billSaving}>{billSaving ? 'Saving…' : 'Save Bill'}</Btn>
+                    </div>
+                  </form>
+                </div>
+              )}
+
+              {agedLoad ? (
+                <div style={{ textAlign: 'center', padding: 40, color: '#86868b' }}>Loading…</div>
+              ) : (
+                <>
+                  {/* AR Aging */}
+                  <AgingTable
+                    title="📥 Accounts Receivable — Unpaid Invoices"
+                    rows={agedAR?.rows}
+                    totals={agedAR?.totals || {}}
+                    emptyMsg="No unpaid invoices. All clear! ✓"
+                  />
+
+                  {/* AP Aging */}
+                  <AgingTable
+                    title="📤 Accounts Payable — Outstanding Bills"
+                    rows={agedAP?.rows}
+                    totals={agedAP?.totals || {}}
+                    emptyMsg="No outstanding bills."
+                  />
+
+                  {/* Bills list with Pay / Void actions */}
+                  {bills.length > 0 && (
+                    <div>
+                      <h3 style={{ fontSize: 16, fontWeight: 600, marginBottom: 12 }}>All Bills</h3>
+                      <div style={{ overflowX: 'auto' }}>
+                        <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 13 }}>
+                          <thead>
+                            <tr style={{ background: '#f5f5f7', borderBottom: '2px solid #e5e5ea' }}>
+                              {['Vendor', 'Bill #', 'Bill Date', 'Due Date', 'Amount', 'Status', 'Actions'].map(h => (
+                                <th key={h} style={{ textAlign: h === 'Amount' ? 'right' : 'left', padding: '8px 10px', fontWeight: 600 }}>{h}</th>
+                              ))}
+                            </tr>
+                          </thead>
+                          <tbody>
+                            {bills.map(b => (
+                              <tr key={b.id} style={{ borderBottom: '1px solid #f0f0f0', opacity: b.status === 'void' ? 0.45 : 1 }}>
+                                <td style={{ padding: '7px 10px', fontWeight: 500 }}>{b.vendorName}</td>
+                                <td style={{ padding: '7px 10px', color: '#86868b' }}>{b.billNumber || '—'}</td>
+                                <td style={{ padding: '7px 10px' }}>{b.billDate}</td>
+                                <td style={{ padding: '7px 10px', color: b.status === 'unpaid' && b.dueDate < new Date().toISOString().substring(0,10) ? '#ff3b30' : '#1d1d1f' }}>{b.dueDate}</td>
+                                <td style={{ textAlign: 'right', padding: '7px 10px', fontWeight: 600 }}>{fmt(b.amountGross)}</td>
+                                <td style={{ padding: '7px 10px' }}>
+                                  <span style={{ padding: '2px 8px', borderRadius: 20, fontSize: 11, fontWeight: 600,
+                                    background: b.status === 'paid' ? '#d1fae5' : b.status === 'void' ? '#f3f3f3' : '#fff7ed',
+                                    color:      b.status === 'paid' ? '#065f46' : b.status === 'void' ? '#86868b' : '#c2410c' }}>
+                                    {b.status.charAt(0).toUpperCase() + b.status.slice(1)}
+                                  </span>
+                                </td>
+                                <td style={{ padding: '7px 10px' }}>
+                                  {b.status === 'unpaid' && (
+                                    <div style={{ display: 'flex', gap: 6 }}>
+                                      <Btn size="xs" onClick={() => handlePayBill(b.id)}>✓ Mark Paid</Btn>
+                                      <Btn size="xs" variant="ghost" onClick={() => handleVoidBill(b.id)}>Void</Btn>
+                                    </div>
+                                  )}
+                                </td>
+                              </tr>
+                            ))}
+                          </tbody>
+                        </table>
+                      </div>
+                    </div>
+                  )}
+                </>
               )}
             </div>
           );

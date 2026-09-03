@@ -451,6 +451,30 @@ try { db.exec(`
 try { db.exec('CREATE INDEX IF NOT EXISTS idx_budgets_client_period ON budgets(client_id, period)'); }
 catch (_) {}
 
+// ── Bills / Accounts Payable ──────────────────────────────────────────────────
+try { db.exec(`
+  CREATE TABLE IF NOT EXISTS bills (
+    id            TEXT PRIMARY KEY,
+    client_id     TEXT NOT NULL,
+    vendor_name   TEXT NOT NULL,
+    vendor_email  TEXT NOT NULL DEFAULT '',
+    bill_number   TEXT NOT NULL DEFAULT '',
+    bill_date     TEXT NOT NULL,
+    due_date      TEXT NOT NULL,
+    category      TEXT NOT NULL DEFAULT '',
+    notes         TEXT NOT NULL DEFAULT '',
+    amount_net    REAL NOT NULL DEFAULT 0,
+    amount_vat    REAL NOT NULL DEFAULT 0,
+    amount_gross  REAL NOT NULL DEFAULT 0,
+    status        TEXT NOT NULL DEFAULT 'unpaid',
+    paid_at       TEXT NOT NULL DEFAULT '',
+    created_by    TEXT NOT NULL,
+    created_at    TEXT NOT NULL DEFAULT (datetime('now'))
+  )
+`); } catch (_) {}
+try { db.exec('CREATE INDEX IF NOT EXISTS idx_bills_client ON bills(client_id)'); } catch (_) {}
+try { db.exec('CREATE INDEX IF NOT EXISTS idx_bills_status ON bills(client_id, status)'); } catch (_) {}
+
 // ── Default settings bootstrap ────────────────────────────────────────────────
 const DEFAULT_SETTINGS = {
   pricing: { starter: 399, professional: 699, enterprise: 999 },

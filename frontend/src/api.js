@@ -437,3 +437,15 @@ export const getConsolidated      = (id, from, to)           => {
 export const getBudgets  = (clientId, period) => get(`/budgets?clientId=${clientId}&period=${period}`, true);
 export const saveBudget  = (data)             => post('/budgets', data, true);
 export const deleteBudget = (id)              => del(`/budgets/${id}`, true);
+
+// ── Bills (Accounts Payable) ──────────────────────────────────────────────────
+export const getBills    = (clientId, status) => get(`/bills?clientId=${clientId}${status ? `&status=${status}` : ''}`, true);
+export const createBill  = (data)             => post('/bills', data, true);
+export const updateBill  = (id, data)         => put(`/bills/${id}`, data, true);
+export const payBill     = (id)               => post(`/bills/${id}/pay`, {}, true);
+export const voidBill    = (id)               => post(`/bills/${id}/void`, {}, true);
+export const deleteBill  = (id)               => del(`/bills/${id}`, true);
+
+// ── Aged AR / AP Reports ──────────────────────────────────────────────────────
+export const getAgedAR   = (clientId)         => get(`/reports/aged-ar?clientId=${clientId}`, true);
+export const getAgedAP   = (clientId)         => get(`/reports/aged-ap?clientId=${clientId}`, true);

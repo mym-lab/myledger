@@ -833,4 +833,112 @@ router.get('/cashflow-forecast', requireTier('solo'), (req, res, next) => {
   } catch (err) { next(err); }
 });
 
+// ── Aged AR (Accounts Receivable) ─────────────────────────────────────────────
+// GET /api/reports/aged-ar?clientId=
+router.get('/aged-ar', (req, res, next) => {
+  try {
+    const { clientId } = req.query;
+    if (!clientId) return res.status(400).json({ error: 'clientId required' });
+    const client = rowToClient(stmtClientById.get(clientId));
+    if (!client || !canAccess(client, req.user.userId)) return res.status(403).json({ error: 'Forbidden' });
+
+    const today = new Date().toISOString().substring(0, 10);
+
+    // Unpaid invoices (sent or overdue, not draft/paid/void)
+    const invoices = db.prepare(`
+      SELECT id, invoice_number, customer_name, issue_date, due_date, total, status
+      FROM invoices
+      WHERE client_id = ? AND status NOT IN ('draft', 'paid', 'void')
+      ORDER BY due_date ASC
+    `).all(clientId);
+
+    function ageDays(dueDate) {
+      if (!dueDate) return 0;
+      const diff = new Date(today) - new Date(dueDate);
+      return Math.floor(diff / 86400000);
+    }
+
+    function bucket(days) {
+      if (days <= 0)  return 'current';
+      if (days <= 30) return '1_30';
+      if (days <= 60) return '31_60';
+      if (days <= 90) return '61_90';
+      return '90plus';
+    }
+
+    const rows = invoices.map(inv => {
+      const days = ageDays(inv.due_date);
+      return {
+        id:           inv.id,
+        invoiceNumber:inv.invoice_number,
+        customerName: inv.customer_name,
+        issueDate:    inv.issue_date,
+        dueDate:      inv.due_date,
+        total:        inv.total,
+        daysOverdue:  Math.max(0, days),
+        bucket:       bucket(days),
+        status:       inv.status,
+      };
+    });
+
+    const totals = { current: 0, '1_30': 0, '31_60': 0, '61_90': 0, '90plus': 0, grand: 0 };
+    rows.forEach(r => { totals[r.bucket] = round(totals[r.bucket] + r.total); totals.grand = round(totals.grand + r.total); });
+
+    res.json({ rows, totals, asOf: today });
+  } catch (err) { next(err); }
+});
+
+// ── Aged AP (Accounts Payable / Bills) ────────────────────────────────────────
+// GET /api/reports/aged-ap?clientId=
+router.get('/aged-ap', (req, res, next) => {
+  try {
+    const { clientId } = req.query;
+    if (!clientId) return res.status(400).json({ error: 'clientId required' });
+    const client = rowToClient(stmtClientById.get(clientId));
+    if (!client || !canAccess(client, req.user.userId)) return res.status(403).json({ error: 'Forbidden' });
+
+    const today = new Date().toISOString().substring(0, 10);
+
+    const bills = db.prepare(`
+      SELECT id, bill_number, vendor_name, bill_date, due_date, amount_gross, category, status
+      FROM bills
+      WHERE client_id = ? AND status = 'unpaid'
+      ORDER BY due_date ASC
+    `).all(clientId);
+
+    function ageDays(dueDate) {
+      const diff = new Date(today) - new Date(dueDate);
+      return Math.floor(diff / 86400000);
+    }
+
+    function bucket(days) {
+      if (days <= 0)  return 'current';
+      if (days <= 30) return '1_30';
+      if (days <= 60) return '31_60';
+      if (days <= 90) return '61_90';
+      return '90plus';
+    }
+
+    const rows = bills.map(b => {
+      const days = ageDays(b.due_date);
+      return {
+        id:          b.id,
+        billNumber:  b.bill_number,
+        vendorName:  b.vendor_name,
+        billDate:    b.bill_date,
+        dueDate:     b.due_date,
+        total:       b.amount_gross,
+        daysOverdue: Math.max(0, days),
+        bucket:      bucket(days),
+        category:    b.category,
+      };
+    });
+
+    const totals = { current: 0, '1_30': 0, '31_60': 0, '61_90': 0, '90plus': 0, grand: 0 };
+    rows.forEach(r => { totals[r.bucket] = round(totals[r.bucket] + r.total); totals.grand = round(totals.grand + r.total); });
+
+    res.json({ rows, totals, asOf: today });
+  } catch (err) { next(err); }
+});
+
 export default router;
