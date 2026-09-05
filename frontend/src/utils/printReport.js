@@ -1428,107 +1428,229 @@ export function buildAlphalistHtml({ rows, clientName, period }) {
 export function build2307Html({ payee, client, period, atcList, months, qMonthLabels }) {
   const c = client || {};
   const p = payee  || {};
-  const tinFmt = tin => (tin || '').replace(/[^0-9]/g, '').replace(/(\d{3})(\d{3})(\d{3})(\d*)/, '$1-$2-$3-$4').replace(/-$/, '');
+  const tinFmt = tin => {
+    const d = (tin || '').replace(/[^0-9]/g, '');
+    if (!d) return '___-___-___-____';
+    return d.replace(/(\d{3})(\d{0,3})(\d{0,3})(\d{0,4})/, (_, a, b, cc, d2) =>
+      [a, b, cc, d2].filter(Boolean).join('-'));
+  };
   const totalEWT  = Math.round(atcList.reduce((s, a) => s + (a.ewt || 0), 0) * 100) / 100;
   const totalBase = Math.round(atcList.reduce((s, a) => s + (a.base || 0), 0) * 100) / 100;
+  const mLabels = qMonthLabels || ['1st Month', '2nd Month', '3rd Month'];
+  const mAmts   = months || [0, 0, 0];
 
-  // Monthly labels: use passed-in labels or derive from period string
-  const mLabels = qMonthLabels || ['Month 1', 'Month 2', 'Month 3'];
-  const mAmts   = months || [0, 0, 0];  // net payment per month
+  // cell style helpers
+  const th = (txt, extra = '') =>
+    `<th style="border:1px solid #000;padding:3px 5px;font-size:7.5pt;text-align:center;background:#e8e8e8;${extra}">${txt}</th>`;
+  const td = (txt, extra = '') =>
+    `<td style="border:1px solid #000;padding:3px 6px;font-size:8pt;${extra}">${txt}</td>`;
+  const fld = (label, val, width = '') =>
+    `<div style="border:1px solid #000;padding:2px 5px;${width ? 'width:'+width+';' : 'flex:1;'}min-height:28px">
+      <div style="font-size:6.5pt;color:#333;font-weight:600">${label}</div>
+      <div style="font-size:8.5pt;font-weight:500;padding:1px 0">${val || '&nbsp;'}</div>
+    </div>`;
 
-  // ATC table — 7 columns when monthly breakdown available
-  const hasMonths = mAmts.some(m => m > 0);
-  const atcRows = atcList.length === 0
-    ? `<tr><td colspan="${hasMonths ? 7 : 5}" style="text-align:center;color:#999;font-style:italic;padding:10px">No EWT transactions</td></tr>`
-    : atcList.map(a => `
-      <tr>
-        <td style="padding:5px 8px;border:1px solid #ddd;font-family:monospace;font-weight:700;color:#003087">${a.atc}</td>
-        <td style="padding:5px 8px;border:1px solid #ddd">${a.description}</td>
-        ${hasMonths ? `
-        <td style="padding:5px 8px;border:1px solid #ddd;text-align:right">${peso(a.m1 || 0)}</td>
-        <td style="padding:5px 8px;border:1px solid #ddd;text-align:right">${peso(a.m2 || 0)}</td>
-        <td style="padding:5px 8px;border:1px solid #ddd;text-align:right">${peso(a.m3 || 0)}</td>` : ''}
-        <td style="padding:5px 8px;border:1px solid #ddd;text-align:right">${peso(a.base)}</td>
-        <td style="padding:5px 8px;border:1px solid #ddd;text-align:right">${(a.rate * 100).toFixed(0)}%</td>
-        <td style="padding:5px 8px;border:1px solid #ddd;text-align:right;font-weight:700">${peso(a.ewt)}</td>
+  const ewtRows = atcList.length === 0
+    ? `<tr><td colspan="5" style="border:1px solid #000;padding:8px;text-align:center;color:#999;font-style:italic;font-size:8pt">No EWT transactions for this period</td></tr>`
+    : atcList.map(a => `<tr>
+        ${td(`<span style="font-family:monospace;font-weight:700">${a.atc}</span>`, 'width:70px;text-align:center')}
+        ${td(peso(a.m1 || 0), 'text-align:right;width:105px')}
+        ${td(peso(a.m2 || 0), 'text-align:right;width:105px')}
+        ${td(peso(a.m3 || 0), 'text-align:right;width:105px')}
+        ${td(peso(a.base), 'text-align:right;width:115px;font-weight:600')}
+        ${td(peso(a.ewt), 'text-align:right;width:115px;font-weight:700')}
       </tr>`).join('');
 
-  return `${birCss}
-  <div class="bir-wrap">
-    <div class="bir-header">
-      <div class="form-no">BIR Form No. 2307</div>
-      <div class="form-title">Certificate of Creditable Tax Withheld at Source</div>
-      <div class="form-sub">Republic of the Philippines · Department of Finance · Bureau of Internal Revenue</div>
-    </div>
+  return `
+  <div style="font-family:Arial,Helvetica,sans-serif;font-size:8pt;color:#000;max-width:780px;margin:0 auto">
 
-    <div class="bir-part">
-      <div class="bir-part-title">Part I — Payee Information (Supplier / Vendor)</div>
-      <div class="bir-row">
-        ${birField('1 Payee TIN', tinFmt(p.tin) || p.tin || '—', 'flex:1.5')}
-        ${birField('2 Payee Name', p.name || '—', 'flex:3')}
+    <!-- BIR FORM HEADER -->
+    <div style="display:flex;border:2px solid #000;margin-bottom:0">
+      <div style="border-right:1px solid #000;padding:6px 10px;min-width:130px;font-size:7pt;line-height:1.5">
+        <div style="font-weight:700">For BIR BCS/</div>
+        <div>Use Only Item:</div>
+        <div style="height:20px;border-bottom:1px solid #aaa"></div>
       </div>
-      <div class="bir-row">
-        ${birField('3 Payee Registered Address', p.address || '—', 'flex:4')}
+      <div style="flex:1;text-align:center;padding:4px 8px">
+        <div style="font-size:7pt">Republic of the Philippines · Department of Finance</div>
+        <div style="font-size:7pt">Bureau of Internal Revenue</div>
       </div>
-    </div>
-
-    <div class="bir-part">
-      <div class="bir-part-title">Part II — Withholding Agent Information (Your Business)</div>
-      <div class="bir-row">
-        ${birField('4 Withholding Agent TIN', tinFmt(c.tin) || c.tin || '—', 'flex:1.5')}
-        ${birField('5 Withholding Agent Name', c.tradeName || '—', 'flex:3')}
-      </div>
-      <div class="bir-row">
-        ${birField('6 Registered Address', c.address || '—', 'flex:3')}
-        ${birField('ZIP', c.zipCode || '—', 'width:70px')}
-        ${birField('7 Telephone', c.telephone || '—', 'flex:1')}
-      </div>
-      <div class="bir-row">
-        ${birField('8 Return Period', period || '—', 'flex:2')}
-        ${birField('9 Date of Remittance', '—', 'flex:1.5')}
-        ${birField('10 Amended?', 'No', 'flex:0.8')}
+      <div style="border-left:2px solid #000;padding:6px 14px;text-align:center">
+        <div style="font-size:7pt;font-weight:700">BIR Form No.</div>
+        <div style="font-size:24pt;font-weight:900;line-height:1.1;letter-spacing:2px">2307</div>
+        <div style="font-size:6.5pt">January 2018 (ENCS)</div>
+        <div style="font-size:6.5pt;font-weight:700">2307 01/18ENCS</div>
       </div>
     </div>
 
-    <div class="bir-part">
-      <div class="bir-part-title">Part III — Schedule of Income Payments and Taxes Withheld</div>
-      <table style="width:100%;border-collapse:collapse;font-size:8.5pt;margin:0">
+    <div style="border:2px solid #000;border-top:none;text-align:center;padding:3px;font-size:9pt;font-weight:700">
+      Certificate of Creditable Tax Withheld at Source
+    </div>
+    <div style="border:2px solid #000;border-top:none;padding:2px 6px;font-size:6.5pt;font-style:italic">
+      Fill in all applicable spaces. Mark all appropriate boxes with an "X".
+    </div>
+
+    <!-- FIELD 1: Period -->
+    <div style="border:2px solid #000;border-top:none;display:flex;align-items:center;padding:3px 6px;gap:8px">
+      <span style="font-size:7pt;font-weight:700;white-space:nowrap">1 For the Period</span>
+      <div style="border-bottom:1px solid #000;flex:1;min-width:120px;font-size:8.5pt;padding:1px 4px;font-weight:600">
+        ${period || '&nbsp;'}
+      </div>
+    </div>
+
+    <!-- PART I: PAYEE -->
+    <div style="border:2px solid #000;border-top:none">
+      <div style="background:#000;color:#fff;font-weight:700;font-size:7.5pt;padding:2px 6px;letter-spacing:.03em">
+        Part I – Payee Information
+      </div>
+      <div style="display:flex;gap:0">
+        ${fld('2 Taxpayer Identification Number (TIN)', tinFmt(p.tin), '200px')}
+        ${fld('3 Payee\'s Name (Registered Name / Last Name, First Name, Middle Name)', p.name || '')}
+      </div>
+      <div style="display:flex;gap:0">
+        ${fld('4 Registered Address', p.address || '')}
+        ${fld('4A ZIP Code', p.zipCode || '', '80px')}
+      </div>
+      <div style="display:flex;gap:0">
+        ${fld('5 Foreign Address, if applicable', p.foreignAddress || '')}
+      </div>
+    </div>
+
+    <!-- PART II: PAYOR -->
+    <div style="border:2px solid #000;border-top:none">
+      <div style="background:#000;color:#fff;font-weight:700;font-size:7.5pt;padding:2px 6px;letter-spacing:.03em">
+        Part II – Payor Information
+      </div>
+      <div style="display:flex;gap:0">
+        ${fld('6 Taxpayer Identification Number (TIN)', tinFmt(c.tin), '200px')}
+        ${fld('7 Payor\'s Name (Registered Name / Last Name, First Name, Middle Name)', c.tradeName || '')}
+      </div>
+      <div style="display:flex;gap:0">
+        ${fld('8 Registered Address', c.address || '')}
+        ${fld('8A ZIP Code', c.zipCode || '', '80px')}
+      </div>
+    </div>
+
+    <!-- PART III: INCOME PAYMENTS TABLE -->
+    <div style="border:2px solid #000;border-top:none">
+      <div style="background:#000;color:#fff;font-weight:700;font-size:7.5pt;padding:2px 6px;letter-spacing:.03em">
+        Part III – Details of Monthly Income Payments and Taxes Withheld
+      </div>
+      <table style="width:100%;border-collapse:collapse;font-size:7.5pt">
         <thead>
-          <tr style="background:#f0f0f0">
-            <th style="padding:6px 8px;text-align:left;border:1px solid #ccc;width:90px">ATC</th>
-            <th style="padding:6px 8px;text-align:left;border:1px solid #ccc">Nature of Income Payment</th>
-            ${hasMonths ? `
-            <th style="padding:6px 8px;text-align:right;border:1px solid #ccc;width:90px">${mLabels[0]}</th>
-            <th style="padding:6px 8px;text-align:right;border:1px solid #ccc;width:90px">${mLabels[1]}</th>
-            <th style="padding:6px 8px;text-align:right;border:1px solid #ccc;width:90px">${mLabels[2]}</th>` : ''}
-            <th style="padding:6px 8px;text-align:right;border:1px solid #ccc;width:110px">Total Income Payment</th>
-            <th style="padding:6px 8px;text-align:right;border:1px solid #ccc;width:55px">Rate</th>
-            <th style="padding:6px 8px;text-align:right;border:1px solid #ccc;width:110px">Tax Withheld</th>
+          <tr>
+            ${th('ATC', 'width:70px;font-size:7pt')}
+            <th colspan="3" style="border:1px solid #000;padding:3px 5px;font-size:7pt;text-align:center;background:#e8e8e8">
+              AMOUNT OF INCOME PAYMENTS<br>
+              <span style="font-size:6.5pt">Income Payments Subject to Expanded Withholding Tax</span>
+            </th>
+            ${th('Total', 'width:115px;font-size:7pt')}
+            ${th('Tax Withheld<br>for the Quarter', 'width:115px;font-size:7pt')}
+          </tr>
+          <tr>
+            ${th('', 'background:#fff')}
+            ${th(`1st Month of the Quarter<br><span style="font-weight:400">${mLabels[0]}</span>`, 'width:105px')}
+            ${th(`2nd Month of the Quarter<br><span style="font-weight:400">${mLabels[1]}</span>`, 'width:105px')}
+            ${th(`3rd Month of the Quarter<br><span style="font-weight:400">${mLabels[2]}</span>`, 'width:105px')}
+            ${th('Quarter', 'width:115px')}
+            ${th('', 'width:115px')}
           </tr>
         </thead>
-        <tbody>${atcRows}</tbody>
-        <tfoot>
-          <tr style="background:#f8f8f8;font-weight:700">
-            <td colspan="2" style="padding:7px 8px;border:1px solid #ccc">TOTAL</td>
-            ${hasMonths ? `
-            <td style="padding:7px 8px;border:1px solid #ccc;text-align:right">${peso(mAmts[0])}</td>
-            <td style="padding:7px 8px;border:1px solid #ccc;text-align:right">${peso(mAmts[1])}</td>
-            <td style="padding:7px 8px;border:1px solid #ccc;text-align:right">${peso(mAmts[2])}</td>` : ''}
-            <td style="padding:7px 8px;border:1px solid #ccc;text-align:right">${peso(totalBase)}</td>
-            <td style="border:1px solid #ccc"></td>
-            <td style="padding:7px 8px;border:1px solid #ccc;text-align:right">${peso(totalEWT)}</td>
+        <tbody>
+          ${ewtRows}
+          <tr style="font-weight:700;background:#f5f5f5">
+            ${td('<strong>Total</strong>', 'text-align:left')}
+            ${td(peso(mAmts[0]), 'text-align:right')}
+            ${td(peso(mAmts[1]), 'text-align:right')}
+            ${td(peso(mAmts[2]), 'text-align:right')}
+            ${td(peso(totalBase), 'text-align:right;font-weight:700')}
+            ${td(peso(totalEWT), 'text-align:right;font-weight:700')}
           </tr>
-        </tfoot>
+        </tbody>
+      </table>
+
+      <!-- Business Tax section (blank — for govt withholding agents) -->
+      <div style="border-top:1px solid #000;padding:2px 5px;font-size:7pt;background:#f0f0f0;font-style:italic">
+        Money Payments Subject to Withholding of Business Tax (Government &amp; Private)
+      </div>
+      <table style="width:100%;border-collapse:collapse;font-size:8pt">
+        <tr>
+          ${td('&nbsp;', 'text-align:center;width:70px')}
+          ${td('&nbsp;', 'text-align:right;width:105px')}
+          ${td('&nbsp;', 'text-align:right;width:105px')}
+          ${td('&nbsp;', 'text-align:right;width:105px')}
+          ${td('&nbsp;', 'text-align:right;width:115px')}
+          ${td('&nbsp;', 'text-align:right;width:115px')}
+        </tr>
+        <tr style="font-weight:700;background:#f5f5f5">
+          ${td('<strong>Total</strong>', 'text-align:left')}
+          ${td('&nbsp;', 'text-align:right')}
+          ${td('&nbsp;', 'text-align:right')}
+          ${td('&nbsp;', 'text-align:right')}
+          ${td('&nbsp;', 'text-align:right')}
+          ${td('&nbsp;', 'text-align:right')}
+        </tr>
       </table>
     </div>
 
-    <div style="margin-top:14px;display:flex;gap:16px">
-      <div class="bir-sig-box" style="flex:2">Signature of Withholding Agent / Authorized Representative over Printed Name</div>
-      <div class="bir-sig-box">TIN</div>
-      <div class="bir-sig-box">Title / Position</div>
-      <div class="bir-sig-box">Date</div>
+    <!-- DECLARATION -->
+    <div style="border:2px solid #000;border-top:none;padding:5px 8px;font-size:6.5pt;line-height:1.5;text-align:justify">
+      We declare under the penalties of perjury that this certificate has been made in good faith, verified by us, and to the best of our knowledge and belief,
+      is true and correct, pursuant to the provisions of the National Internal Revenue Code, as amended, and the regulations issued under authority thereof.
+      Further, we give our consent to the processing of our information as contemplated under the *Data Privacy Act of 2012 (R.A. No. 10173) for legitimate
+      and lawful purposes.
     </div>
-    <p class="bir-note">This certificate is issued by the withholding agent to the payee. The payee may use this to claim creditable withholding tax on their income tax return (BIR Form 1701/1702/2551Q).</p>
+
+    <!-- PAYOR SIGNATURE BLOCK -->
+    <div style="border:2px solid #000;border-top:none">
+      <div style="display:flex;gap:0">
+        <div style="flex:3;border-right:1px solid #000;padding:4px 6px;min-height:50px">
+          <div style="font-size:6.5pt;color:#555">Signature over Printed Name of Payor / Payor's Authorized Representative / Tax Agent</div>
+          <div style="font-size:6.5pt;color:#555">(Indicate Title/Designation and TIN)</div>
+          <div style="margin-top:18px;border-top:1px solid #000;font-size:6.5pt;padding-top:2px">&nbsp;</div>
+        </div>
+        <div style="flex:1;border-right:1px solid #000;padding:4px 6px;min-height:50px">
+          <div style="font-size:6.5pt;color:#555">Tax Agent Accreditation No. /<br>Attorney's Roll No. (if applicable)</div>
+          <div style="margin-top:14px;border-top:1px solid #000;font-size:6.5pt;padding-top:2px">&nbsp;</div>
+        </div>
+        <div style="flex:1;border-right:1px solid #000;padding:4px 6px;min-height:50px">
+          <div style="font-size:6.5pt;color:#555">Date of Issue<br>(MM/DD/YYYY)</div>
+          <div style="margin-top:22px;border-top:1px solid #000">&nbsp;</div>
+        </div>
+        <div style="flex:1;padding:4px 6px;min-height:50px">
+          <div style="font-size:6.5pt;color:#555">Date of Expiry<br>(MM/DD/YYYY)</div>
+          <div style="margin-top:22px;border-top:1px solid #000">&nbsp;</div>
+        </div>
+      </div>
+    </div>
+
+    <!-- CONFORME: PAYEE SIGNATURE -->
+    <div style="border:2px solid #000;border-top:none">
+      <div style="padding:2px 6px;font-size:7pt;font-weight:700;background:#f0f0f0">CONFORME:</div>
+      <div style="display:flex;gap:0">
+        <div style="flex:3;border-right:1px solid #000;padding:4px 6px;min-height:50px">
+          <div style="font-size:6.5pt;color:#555">Signature over Printed Name of Payee / Payee's Authorized Representative / Tax Agent</div>
+          <div style="font-size:6.5pt;color:#555">(Indicate Title/Designation and TIN)</div>
+          <div style="margin-top:18px;border-top:1px solid #000;font-size:6.5pt;padding-top:2px">&nbsp;</div>
+        </div>
+        <div style="flex:1;border-right:1px solid #000;padding:4px 6px;min-height:50px">
+          <div style="font-size:6.5pt;color:#555">Tax Agent Accreditation No. /<br>Attorney's Roll No. (if applicable)</div>
+          <div style="margin-top:14px;border-top:1px solid #000;font-size:6.5pt;padding-top:2px">&nbsp;</div>
+        </div>
+        <div style="flex:1;border-right:1px solid #000;padding:4px 6px;min-height:50px">
+          <div style="font-size:6.5pt;color:#555">Date of Issue<br>(MM/DD/YYYY)</div>
+          <div style="margin-top:22px;border-top:1px solid #000">&nbsp;</div>
+        </div>
+        <div style="flex:1;padding:4px 6px;min-height:50px">
+          <div style="font-size:6.5pt;color:#555">Date of Expiry<br>(MM/DD/YYYY)</div>
+          <div style="margin-top:22px;border-top:1px solid #000">&nbsp;</div>
+        </div>
+      </div>
+    </div>
+
+    <p style="font-size:6.5pt;color:#555;margin:4px 0">
+      *NOTE: The BIR Data Privacy is in the BIR website (www.bir.gov.ph)
+    </p>
   </div>`;
 }
 
