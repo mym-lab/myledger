@@ -4813,8 +4813,9 @@ export default function AccountantPortal({ onLogout }) {
                     const mo   = new Date(t.createdAt).getMonth() + 1;
                     const mIdx = qMths.indexOf(mo); // 0,1,2
                     if (!byPayee[name]) byPayee[name] = { name, tin: t.counterpartyTin || '', months: [0,0,0], totalPayments: 0, totalEWT: 0 };
-                    byPayee[name].months[mIdx] = Math.round((byPayee[name].months[mIdx] + (t.amount_net || 0)) * 100) / 100;
-                    byPayee[name].totalPayments = Math.round((byPayee[name].totalPayments + (t.amount_net || 0)) * 100) / 100;
+                    const netAmt = t.net || t.amount_net || 0;
+                    byPayee[name].months[mIdx] = Math.round((byPayee[name].months[mIdx] + netAmt) * 100) / 100;
+                    byPayee[name].totalPayments = Math.round((byPayee[name].totalPayments + netAmt) * 100) / 100;
                     byPayee[name].totalEWT      = Math.round((byPayee[name].totalEWT      + (t.ewtAmount  || 0)) * 100) / 100;
                   });
                   const payees = Object.values(byPayee).sort((a,b) => b.totalEWT - a.totalEWT);
