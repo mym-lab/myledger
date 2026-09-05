@@ -149,15 +149,21 @@ export async function generate2550QPDF({ client, year, quarter, prefill }) {
   draw(pg1, s2, 291, 171.5);
   draw(pg1, s3, 348, 171.5);
 
-  // Taxpayer Name (Item 9): box top=186.5 bot=196.9; pTop=187.5 centers text inside box
-  draw(pg1, String(client?.tradeName || client?.name || '').slice(0, 80), 38, 187.5);
+  // Taxpayer Name (Item 9): label box top=186.5-196.9; entry gap below: 196.9-215.1
+  // Draw in the gap (center pTop=202) not in the label box
+  draw(pg1, String(client?.tradeName || client?.name || '').slice(0, 80), 38, 202);
 
-  // Registered Address (Item 10): box top=215.1 bot=225.5; pTop=216 centers text inside box
+  // Registered Address (Item 10): label box top=215.1-225.5; entry gap below: 225.5-243.7
+  // Draw in the gap (center pTop=230) not in the label box
   const addr = String(client?.registeredAddress || client?.address || '').slice(0, 100);
-  draw(pg1, addr, 38, 216);
+  draw(pg1, addr, 38, 230);
 
-  // ZIP Code (Item 10A): inner box x0=466.8-526.9; right-align to x=524
-  if (client?.zipCode) drawR(pg1, String(client.zipCode).slice(0, 5), 524, 248.6);
+  // ZIP Code (Item 10A): inner box x0=466.8-526.9, top=247.4-257.8
+  // White-erase the "10A ZIP Code" label then draw value right-aligned
+  if (client?.zipCode) {
+    pg1.drawRectangle({ x: 467, y: H - 257.8, width: 59, height: 10.4, color: WHITE, borderWidth: 0, opacity: 1 });
+    drawR(pg1, String(client.zipCode).slice(0, 5), 524, 248.35);
+  }
 
   // Part II – Total Tax Payable; amount column right edge=591.6 (inner=586.9)
   // Item 15 (Net VAT Payable from Part IV Item 61): box top=344.9 bot=362.6 → pTop=347.5
@@ -177,31 +183,38 @@ export async function generate2550QPDF({ client, year, quarter, prefill }) {
   draw(pg2, String(client?.tradeName || client?.name || '').slice(0, 60), 228, 78.7);
 
   // Part IV – VAT Computation
-  // Columns: A = Sales/Purchases (right-align x=370), B = Output/Input Tax (right-align x=580)
+  // Col A decimal dot at x=338.4 (upper) / 338.9 (lower); split integer/cents at dot
+  // Col B: right-align to x=580 (user-confirmed correct)
+  const drawA = (pg, val, pTop, opts = {}) => {
+    if (!val) return;
+    const [whole, cts] = fmt(val).split('.');
+    drawR(pg, whole, 336, pTop, opts);
+    draw(pg, cts || '00', 341, pTop, opts);
+  };
 
   // Item 31 (VATable Sales): rect top=132.4 bot=147.9 → pTop=133.9
-  if (item31A) drawR(pg2, fmt(item31A), 370, 133.9);
+  drawA(pg2, item31A, 133.9);
   if (item31B) drawR(pg2, fmt(item31B), 580, 133.9);
 
   // Item 32 (Zero-Rated Sales): rect top=148.4 bot=163.8 → pTop=149.85
-  if (item32A) drawR(pg2, fmt(item32A), 370, 149.85);
+  drawA(pg2, item32A, 149.85);
 
   // Item 33 (Exempt Sales): rect top=164.3 bot=179.8 → pTop=165.8
-  if (item33A) drawR(pg2, fmt(item33A), 370, 165.8);
+  drawA(pg2, item33A, 165.8);
 
   // Item 34 (Total Sales & Output Tax): rect top=180.3 bot=197.5 → pTop=182.65
-  if (item34A) drawR(pg2, fmt(item34A), 370, 182.65, { bold: true });
+  drawA(pg2, item34A, 182.65, { bold: true });
   if (item34B) drawR(pg2, fmt(item34B), 580, 182.65, { bold: true });
 
   // Item 37 (Total Adjusted Output Tax Due): rect top=229.9 bot=245.3 → pTop=231.35
   if (item37B) drawR(pg2, fmt(item37B), 580, 231.35, { bold: true });
 
   // Item 44 (Domestic Purchases): rect top=366.1 bot=381.6 → pTop=367.6
-  if (item44Ar) drawR(pg2, fmt(item44Ar), 370, 367.6);
+  drawA(pg2, item44Ar, 367.6);
   if (item44Br) drawR(pg2, fmt(item44Br), 580, 367.6);
 
   // Item 50 (Total Current Purchases/Input Tax): rect top=461.9 bot=479.6 → pTop=464.5
-  if (item50A) drawR(pg2, fmt(item50A), 370, 464.5, { bold: true });
+  drawA(pg2, item50A, 464.5, { bold: true });
   if (item50B) drawR(pg2, fmt(item50B), 580, 464.5, { bold: true });
 
   // Item 51 (Total Available Input Tax): rect top=480.1 bot=495.6 → pTop=481.6
