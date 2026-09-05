@@ -4248,6 +4248,43 @@ export default function AccountantPortal({ onLogout }) {
                           Always verify with actual BIR-prescribed forms before filing.
                         </div>
                       </Card>
+
+                      {/* ── 2551Q/2551M Schedule 1 Pre-fill ── */}
+                      <Card style={{ maxWidth: 540, marginTop: 16 }}>
+                        <SectionHead>BIR Form {effectiveBirType} — Schedule 1 (Pre-filled)</SectionHead>
+                        <div style={{ fontSize: 12, color: T.muted, marginBottom: 14, fontStyle: 'italic' }}>
+                          Derived from {r.txCount} income transaction{r.txCount !== 1 ? 's' : ''}. Verify with your CPA before filing.
+                        </div>
+
+                        {/* Schedule 1 header */}
+                        <div style={{ display: 'grid', gridTemplateColumns: '90px 1fr 70px 100px',
+                          gap: '0 8px', fontSize: 11, fontWeight: 700, color: T.muted,
+                          textTransform: 'uppercase', letterSpacing: 0.5,
+                          borderBottom: `2px solid ${T.border}`, paddingBottom: 6, marginBottom: 6 }}>
+                          <span>ATC</span><span>Taxable Amount</span><span>Rate</span><span style={{ textAlign: 'right' }}>Tax Due</span>
+                        </div>
+                        <div style={{ display: 'grid', gridTemplateColumns: '90px 1fr 70px 100px',
+                          gap: '0 8px', padding: '8px 0',
+                          borderBottom: `1px solid ${T.border}`, fontSize: 13 }}>
+                          <span style={{ fontFamily: 'monospace', color: T.accent, fontWeight: 600 }}>PT 010</span>
+                          <span style={{ color: T.muted }}>Gross Sales/Receipts (Sec. 116)</span>
+                          <span style={{ color: T.text }}>{(r.optRate * 100).toFixed(0)}%</span>
+                          <span style={{ textAlign: 'right', fontWeight: 600, color: T.red }}>{peso(r.percentageTax)}</span>
+                        </div>
+                        <div style={{ display: 'grid', gridTemplateColumns: '90px 1fr 70px 100px',
+                          gap: '0 8px', padding: '10px 0 4px', fontSize: 14, fontWeight: 700 }}>
+                          <span></span>
+                          <span style={{ color: T.muted }}>Item 14 — Total Tax Due</span>
+                          <span></span>
+                          <span style={{ textAlign: 'right', color: T.red }}>{peso(r.percentageTax)}</span>
+                        </div>
+
+                        <div style={{ marginTop: 14, fontSize: 12, color: T.muted, lineHeight: 1.6,
+                          background: '#fffbeb', border: '1px solid #fcd34d', borderRadius: 8, padding: '8px 12px' }}>
+                          ℹ Item 15 (Creditable % Tax Withheld per 2307): enter manually from 2307s received from customers.
+                          Net payable = Item 14 − Item 15.
+                        </div>
+                      </Card>
                     </div>
                   );
                 })()}
@@ -4754,6 +4791,89 @@ export default function AccountantPortal({ onLogout }) {
                         );
                       })()}
                     </div>
+                  );
+                })()}
+
+                {/* ── 2307 — EWT Certificates to Issue (quarterly) ── */}
+                {(() => {
+                  const qMths = [qStart, qStart + 1, qStart + 2];
+                  const ewtTxns = txns.filter(t => {
+                    const d = new Date(t.createdAt);
+                    return d.getFullYear() === birYear
+                      && qMths.includes(d.getMonth() + 1)
+                      && t.type === 'expense'
+                      && (t.ewtAmount || 0) > 0;
+                  });
+                  if (!ewtTxns.length) return null;
+
+                  // Group by payee
+                  const byPayee = {};
+                  ewtTxns.forEach(t => {
+                    const name = t.counterpartyName || '(no payee name)';
+                    const mo   = new Date(t.createdAt).getMonth() + 1;
+                    const mIdx = qMths.indexOf(mo); // 0,1,2
+                    if (!byPayee[name]) byPayee[name] = { name, tin: t.counterpartyTin || '', months: [0,0,0], totalPayments: 0, totalEWT: 0 };
+                    byPayee[name].months[mIdx] = Math.round((byPayee[name].months[mIdx] + (t.amount_net || 0)) * 100) / 100;
+                    byPayee[name].totalPayments = Math.round((byPayee[name].totalPayments + (t.amount_net || 0)) * 100) / 100;
+                    byPayee[name].totalEWT      = Math.round((byPayee[name].totalEWT      + (t.ewtAmount  || 0)) * 100) / 100;
+                  });
+                  const payees = Object.values(byPayee).sort((a,b) => b.totalEWT - a.totalEWT);
+                  const grandPayments = Math.round(payees.reduce((s,p) => s + p.totalPayments, 0) * 100) / 100;
+                  const grandEWT      = Math.round(payees.reduce((s,p) => s + p.totalEWT, 0) * 100) / 100;
+
+                  const qLabel2307 = `Q${qMths[0] <= 3 ? 1 : qMths[0] <= 6 ? 2 : qMths[0] <= 9 ? 3 : 4} ${birYear}`;
+                  const mLabel = (m) => m ? new Date(birYear, m - 1).toLocaleString('en-PH', { month: 'short' }) : '—';
+
+                  return (
+                    <Card style={{ marginTop: 20 }}>
+                      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', flexWrap: 'wrap', gap: 8, marginBottom: 4 }}>
+                        <SectionHead style={{ margin: 0 }}>BIR Form 2307 — EWT Certificates to Issue · {qLabel2307}</SectionHead>
+                        <span style={{ fontSize: 12, color: T.muted, fontStyle: 'italic' }}>
+                          {payees.length} payee{payees.length !== 1 ? 's' : ''} · {ewtTxns.length} transactions
+                        </span>
+                      </div>
+                      <div style={{ fontSize: 12, color: T.muted, marginBottom: 14 }}>
+                        One 2307 must be issued per payee per quarter. Issue within 20 days after the end of the quarter.
+                      </div>
+
+                      <div style={{ overflowX: 'auto' }}>
+                        <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 12 }}>
+                          <thead>
+                            <tr style={{ background: T.bg }}>
+                              <th style={{ padding: '8px 10px', textAlign: 'left', fontWeight: 600, color: T.muted, borderBottom: `2px solid ${T.border}` }}>Payee / Vendor</th>
+                              <th style={{ padding: '8px 10px', textAlign: 'left', fontWeight: 600, color: T.muted, borderBottom: `2px solid ${T.border}` }}>TIN</th>
+                              <th style={{ padding: '8px 10px', textAlign: 'right', fontWeight: 600, color: T.muted, borderBottom: `2px solid ${T.border}` }}>{mLabel(qMths[0])}</th>
+                              <th style={{ padding: '8px 10px', textAlign: 'right', fontWeight: 600, color: T.muted, borderBottom: `2px solid ${T.border}` }}>{mLabel(qMths[1])}</th>
+                              <th style={{ padding: '8px 10px', textAlign: 'right', fontWeight: 600, color: T.muted, borderBottom: `2px solid ${T.border}` }}>{mLabel(qMths[2])}</th>
+                              <th style={{ padding: '8px 10px', textAlign: 'right', fontWeight: 600, color: T.muted, borderBottom: `2px solid ${T.border}` }}>Total Payments</th>
+                              <th style={{ padding: '8px 10px', textAlign: 'right', fontWeight: 600, color: T.orange, borderBottom: `2px solid ${T.border}` }}>EWT Withheld</th>
+                            </tr>
+                          </thead>
+                          <tbody>
+                            {payees.map((p, i) => (
+                              <tr key={p.name} style={{ background: i % 2 === 0 ? 'transparent' : T.bg }}>
+                                <td style={{ padding: '7px 10px', borderBottom: `1px solid ${T.border}`, fontWeight: 500 }}>{p.name}</td>
+                                <td style={{ padding: '7px 10px', borderBottom: `1px solid ${T.border}`, color: T.muted, fontFamily: 'monospace', fontSize: 11 }}>{p.tin || '—'}</td>
+                                <td style={{ padding: '7px 10px', borderBottom: `1px solid ${T.border}`, textAlign: 'right', color: p.months[0] ? T.text : T.muted }}>{p.months[0] ? peso(p.months[0]) : '—'}</td>
+                                <td style={{ padding: '7px 10px', borderBottom: `1px solid ${T.border}`, textAlign: 'right', color: p.months[1] ? T.text : T.muted }}>{p.months[1] ? peso(p.months[1]) : '—'}</td>
+                                <td style={{ padding: '7px 10px', borderBottom: `1px solid ${T.border}`, textAlign: 'right', color: p.months[2] ? T.text : T.muted }}>{p.months[2] ? peso(p.months[2]) : '—'}</td>
+                                <td style={{ padding: '7px 10px', borderBottom: `1px solid ${T.border}`, textAlign: 'right' }}>{peso(p.totalPayments)}</td>
+                                <td style={{ padding: '7px 10px', borderBottom: `1px solid ${T.border}`, textAlign: 'right', fontWeight: 700, color: T.orange }}>{peso(p.totalEWT)}</td>
+                              </tr>
+                            ))}
+                            <tr style={{ background: T.bg, fontWeight: 700 }}>
+                              <td colSpan={5} style={{ padding: '8px 10px', borderTop: `2px solid ${T.border}`, color: T.text }}>Grand Total</td>
+                              <td style={{ padding: '8px 10px', borderTop: `2px solid ${T.border}`, textAlign: 'right' }}>{peso(grandPayments)}</td>
+                              <td style={{ padding: '8px 10px', borderTop: `2px solid ${T.border}`, textAlign: 'right', color: T.orange }}>{peso(grandEWT)}</td>
+                            </tr>
+                          </tbody>
+                        </table>
+                      </div>
+                      <div style={{ marginTop: 12, fontSize: 11, color: T.muted, lineHeight: 1.6 }}>
+                        * Income payments = net amount paid (ex-VAT). EWT withheld = amount deducted from payment to vendor.
+                        Payee TIN and ATC must be confirmed before issuing the actual 2307 certificate.
+                      </div>
+                    </Card>
                   );
                 })()}
 
