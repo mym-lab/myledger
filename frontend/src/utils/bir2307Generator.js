@@ -118,7 +118,7 @@ export async function generate2307PDF({ payee, client, period, atcList }) {
   // Field 2: Payee TIN
   // Digit cell box: top=137.3 bottom=152.9 → center pTop = 139
   const [pt1, pt2, pt3, pt4] = splitTIN(payee.tin);
-  draw(pt1, 170, 139); draw(pt2, 261, 139);
+  draw(pt1, 210, 139); draw(pt2, 261, 139);
   draw(pt3, 313, 139); if (pt4) draw(pt4, 364, 139);
 
   // Field 3: Payee Name
@@ -135,7 +135,7 @@ export async function generate2307PDF({ payee, client, period, atcList }) {
   // Field 6: Payor TIN
   // Digit cell box: top=252.5 bottom=268.5 → center pTop = 254
   const [ct1, ct2, ct3, ct4] = splitTIN(client.tin);
-  draw(ct1, 170, 254); draw(ct2, 262, 254);
+  draw(ct1, 210, 254); draw(ct2, 262, 254);
   draw(ct3, 313, 254); if (ct4) draw(ct4, 364, 254);
 
   // Field 7: Payor Name
