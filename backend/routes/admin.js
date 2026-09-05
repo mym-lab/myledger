@@ -212,6 +212,60 @@ router.put('/users/:id/set-branding', (req, res, next) => {
   } catch (err) { next(err); }
 });
 
+// PUT /api/admin/users/:id/set-email
+router.put('/users/:id/set-email', (req, res, next) => {
+  try {
+    const { email } = req.body;
+    if (!email || !email.includes('@')) return res.status(400).json({ error: 'Valid email required' });
+    const normalized = email.toLowerCase().trim();
+
+    const user = rowToUser(stmtUserById.get(req.params.id));
+    if (!user) return res.status(404).json({ error: 'User not found' });
+    if (user.role === 'admin') return res.status(400).json({ error: 'Cannot change admin email here' });
+
+    const existing = db.prepare('SELECT id FROM users WHERE email = ? AND id != ?').get(normalized, req.params.id);
+    if (existing) return res.status(409).json({ error: `Email ${normalized} is already in use` });
+
+    db.prepare('UPDATE users SET email = ? WHERE id = ?').run(normalized, req.params.id);
+    res.json({ message: `Email updated to ${normalized}` });
+  } catch (err) { next(err); }
+});
+
+// DELETE /api/admin/users/:id
+// If user owns clients, requires transferToUserId in body — reassigns them first
+router.delete('/users/:id', (req, res, next) => {
+  try {
+    const { transferToUserId } = req.body || {};
+    const user = rowToUser(stmtUserById.get(req.params.id));
+    if (!user) return res.status(404).json({ error: 'User not found' });
+    if (user.role === 'admin') return res.status(400).json({ error: 'Cannot delete admin account' });
+
+    // Check for owned clients
+    const ownedClients = db.prepare('SELECT id, trade_name FROM clients WHERE owner_id = ?').all(req.params.id);
+    if (ownedClients.length > 0) {
+      if (!transferToUserId) {
+        return res.status(400).json({
+          error: 'User owns clients. Provide transferToUserId to reassign them first.',
+          clients: ownedClients,
+        });
+      }
+      const target = db.prepare('SELECT id, email FROM users WHERE id = ?').get(transferToUserId);
+      if (!target) return res.status(404).json({ error: 'Transfer target user not found' });
+      db.prepare('UPDATE clients SET owner_id = ? WHERE owner_id = ?').run(transferToUserId, req.params.id);
+    }
+
+    // Remove staff assignments and staff record if any
+    db.prepare('DELETE FROM staff_assignments WHERE staff_id = ?').run(req.params.id);
+    db.prepare('DELETE FROM accountant_staff WHERE id = ?').run(req.params.id);
+    // Remove the user
+    db.prepare('DELETE FROM users WHERE id = ?').run(req.params.id);
+
+    res.json({
+      message: `User ${user.email} deleted.${ownedClients.length > 0 ? ` ${ownedClients.length} client(s) transferred.` : ''}`,
+    });
+  } catch (err) { next(err); }
+});
+
 // PUT /api/admin/users/:id/set-role
 router.put('/users/:id/set-role', (req, res, next) => {
   try {

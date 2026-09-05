@@ -59,7 +59,7 @@ async function request(method, path, body = null, auth = false) {
 const get  = (path, auth = false)        => request('GET',    path, null, auth);
 const post = (path, body, auth = false)  => request('POST',   path, body, auth);
 const put  = (path, body, auth = false)  => request('PUT',    path, body, auth);
-const del  = (path, auth = false)        => request('DELETE', path, null, auth);
+const del  = (path, auth = false, body = null) => request('DELETE', path, body, auth);
 
 // ─── Auth ─────────────────────────────────────────────────────
 export const signup         = (data)            => post('/auth/signup',          data);
@@ -446,8 +446,10 @@ export const payBill     = (id)               => post(`/bills/${id}/pay`, {}, tr
 export const voidBill    = (id)               => post(`/bills/${id}/void`, {}, true);
 export const deleteBill  = (id)               => del(`/bills/${id}`, true);
 
-// ── Admin role management ─────────────────────────────────────────────────────
-export const adminSetUserRole = (userId, role) => put(`/admin/users/${userId}/set-role`, { role }, true);
+// ── Admin user management ─────────────────────────────────────────────────────
+export const adminSetUserRole  = (userId, role)                     => put(`/admin/users/${userId}/set-role`,  { role }, true);
+export const adminSetUserEmail = (userId, email)                    => put(`/admin/users/${userId}/set-email`, { email }, true);
+export const adminDeleteUser   = (userId, transferToUserId = null)  => del(`/admin/users/${userId}`, true, transferToUserId ? { transferToUserId } : undefined);
 
 // ── Aged AR / AP Reports ──────────────────────────────────────────────────────
 export const getAgedAR   = (clientId)         => get(`/reports/aged-ar?clientId=${clientId}`, true);

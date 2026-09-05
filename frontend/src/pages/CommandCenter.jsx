@@ -11,7 +11,7 @@ import {
   getAuditLog,
   getAllReferrals, creditReferral,
   restoreBackup,
-  adminSetUserRole,
+  adminSetUserRole, adminSetUserEmail, adminDeleteUser,
 } from '../api.js';
 
 const T = {
@@ -176,6 +176,10 @@ export default function CommandCenter({ onLogout }) {
   // Accountant tier management
   const [tierMsg,      setTierMsg]      = useState('');
   const [roleMsg,      setRoleMsg]      = useState('');
+  const [emailForms,   setEmailForms]   = useState({}); // { userId -> newEmail }
+  const [emailMsg,     setEmailMsg]     = useState('');
+  const [deleteTarget, setDeleteTarget] = useState(null); // { user, ownedClients }
+  const [transferTo,   setTransferTo]   = useState('');
   const [acctPricingForm, setAcctPricingForm] = useState({ solo: '', professional: '', firm: '', agency: '' });
   const [staffLimitForm,  setStaffLimitForm]  = useState({ free: '0', starter: '1', solo: '2', professional: '5', firm: '10', agency: '25' });
   // Referral rate settings
@@ -429,6 +433,46 @@ export default function CommandCenter({ onLogout }) {
       setRoleMsg(`✓ ${email} is now ${label}`);
       loadStats();
       setTimeout(() => setRoleMsg(''), 4000);
+    } catch (e) { alert(e.message); }
+  }
+
+  async function handleSetEmail(userId, email) {
+    if (!email || !email.includes('@')) return alert('Enter a valid email first.');
+    try {
+      await adminSetUserEmail(userId, email);
+      setEmailMsg(`✓ Email updated to ${email}`);
+      setEmailForms(f => { const n = { ...f }; delete n[userId]; return n; });
+      loadStats();
+      setTimeout(() => setEmailMsg(''), 4000);
+    } catch (e) { alert(e.message); }
+  }
+
+  async function handleDeleteUser(user) {
+    const ownedClients = (stats?.clients || []).filter(c => c.ownerId === user.id);
+    if (ownedClients.length > 0) {
+      setTransferTo('');
+      setDeleteTarget({ user, ownedClients });
+    } else {
+      if (!confirm(`Permanently delete ${user.email}? This cannot be undone.`)) return;
+      try {
+        await adminDeleteUser(user.id);
+        setEmailMsg(`✓ ${user.email} deleted`);
+        loadStats();
+        setTimeout(() => setEmailMsg(''), 4000);
+      } catch (e) { alert(e.message); }
+    }
+  }
+
+  async function confirmDeleteWithTransfer() {
+    if (!transferTo) return alert('Select a user to transfer clients to.');
+    if (!confirm(`Transfer ${deleteTarget.ownedClients.length} client(s) to selected user, then delete ${deleteTarget.user.email}? Cannot be undone.`)) return;
+    try {
+      await adminDeleteUser(deleteTarget.user.id, transferTo);
+      setEmailMsg(`✓ ${deleteTarget.user.email} deleted, clients transferred`);
+      setDeleteTarget(null);
+      setTransferTo('');
+      loadStats();
+      setTimeout(() => setEmailMsg(''), 4000);
     } catch (e) { alert(e.message); }
   }
 
@@ -1249,7 +1293,47 @@ export default function CommandCenter({ onLogout }) {
                   {roleMsg}
                 </span>
               )}
+              {emailMsg && (
+                <span style={{ fontSize: 13, fontWeight: 600, color: '#00836e', marginLeft: 12 }}>
+                  {emailMsg}
+                </span>
+              )}
             </div>
+            {/* Transfer & Delete modal */}
+            {deleteTarget && (
+              <div style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.45)', zIndex: 1000, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+                <div style={{ background: '#fff', borderRadius: 16, padding: 28, width: 480, maxWidth: '90vw', boxShadow: '0 20px 60px rgba(0,0,0,0.25)' }}>
+                  <h3 style={{ margin: '0 0 8px', fontSize: 17, fontWeight: 700, color: '#ff3b30' }}>⚠️ Delete User</h3>
+                  <p style={{ margin: '0 0 16px', fontSize: 13, color: T.muted }}>
+                    <strong>{deleteTarget.user.email}</strong> owns <strong>{deleteTarget.ownedClients.length}</strong> client business(es).
+                    Select a user to transfer them to before deleting.
+                  </p>
+                  <div style={{ background: '#f5f5f7', borderRadius: 10, padding: '10px 14px', marginBottom: 16, fontSize: 12, color: T.muted }}>
+                    {deleteTarget.ownedClients.map(c => <div key={c.id}>• {c.tradeName}</div>)}
+                  </div>
+                  <label style={{ fontSize: 12, color: T.muted, display: 'block', marginBottom: 6 }}>Transfer clients to:</label>
+                  <select value={transferTo} onChange={e => setTransferTo(e.target.value)}
+                    style={{ width: '100%', padding: '8px 12px', borderRadius: 8, border: `1px solid ${T.border}`,
+                      fontSize: 13, marginBottom: 20, fontFamily: 'inherit', background: T.surface, color: T.text }}>
+                    <option value="">— select a user —</option>
+                    {(stats?.users || []).filter(u => u.id !== deleteTarget.user.id && u.role !== 'admin').map(u => (
+                      <option key={u.id} value={u.id}>{u.name || u.email} ({u.role})</option>
+                    ))}
+                  </select>
+                  <div style={{ display: 'flex', gap: 10, justifyContent: 'flex-end' }}>
+                    <button onClick={() => { setDeleteTarget(null); setTransferTo(''); }}
+                      style={{ padding: '8px 18px', borderRadius: 8, border: `1px solid ${T.border}`, background: 'transparent', color: T.text, cursor: 'pointer', fontSize: 13, fontFamily: 'inherit' }}>
+                      Cancel
+                    </button>
+                    <button onClick={confirmDeleteWithTransfer} disabled={!transferTo}
+                      style={{ padding: '8px 18px', borderRadius: 8, border: 'none', background: '#ff3b30', color: '#fff', cursor: transferTo ? 'pointer' : 'not-allowed', fontSize: 13, fontWeight: 600, fontFamily: 'inherit', opacity: transferTo ? 1 : 0.5 }}>
+                      Transfer & Delete
+                    </button>
+                  </div>
+                </div>
+              </div>
+            )}
+
             {!stats || stats.users.length === 0 ? (
               <div style={{ color: T.muted, padding: 20 }}>No users yet.</div>
             ) : (
@@ -1349,19 +1433,61 @@ export default function CommandCenter({ onLogout }) {
                                 </div>
                               ) : <span style={{ color: T.border, fontSize: 12 }}>—</span>}
                               {u.role !== 'admin' && (
-                                <div style={{ marginTop: 6 }}>
+                                <div style={{ display: 'flex', flexDirection: 'column', gap: 4, marginTop: 6 }}>
                                   <button
                                     onClick={() => handleSetRole(u.id, u.email, u.role)}
-                                    title={`Switch to ${u.role === 'accountant' ? 'Business/Client' : 'Accountant'}`}
                                     style={{ fontSize: 11, padding: '3px 10px', borderRadius: 6, border: `1px solid ${T.border}`,
-                                      background: 'transparent', color: T.muted, cursor: 'pointer', fontFamily: 'inherit',
-                                      whiteSpace: 'nowrap' }}>
+                                      background: 'transparent', color: T.muted, cursor: 'pointer', fontFamily: 'inherit', whiteSpace: 'nowrap', textAlign: 'left' }}>
                                     ⇄ Make {u.role === 'accountant' ? 'Client' : 'Accountant'}
+                                  </button>
+                                  <button
+                                    onClick={() => setEmailForms(f => ({ ...f, [u.id]: f[u.id] === undefined ? u.email : undefined }))}
+                                    style={{ fontSize: 11, padding: '3px 10px', borderRadius: 6, border: `1px solid ${T.border}`,
+                                      background: 'transparent', color: '#0071e3', cursor: 'pointer', fontFamily: 'inherit', whiteSpace: 'nowrap', textAlign: 'left' }}>
+                                    ✎ Edit Email
+                                  </button>
+                                  <button
+                                    onClick={() => handleDeleteUser(u)}
+                                    style={{ fontSize: 11, padding: '3px 10px', borderRadius: 6, border: `1px solid #ff3b3033`,
+                                      background: '#fff0f0', color: '#ff3b30', cursor: 'pointer', fontFamily: 'inherit', whiteSpace: 'nowrap', textAlign: 'left' }}>
+                                    🗑 Delete User
                                   </button>
                                 </div>
                               )}
                             </td>
                           </tr>
+                          {emailForms[u.id] !== undefined && (
+                            <tr key={`${u.id}-email`}
+                              style={{ borderBottom: 'none', background: '#f0f7ff' }}>
+                              <td colSpan={7} style={{ padding: '10px 16px 14px 16px' }}>
+                                <div style={{ display: 'flex', alignItems: 'center', gap: 10, flexWrap: 'wrap' }}>
+                                  <span style={{ fontSize: 11, fontWeight: 700, color: '#0071e3', textTransform: 'uppercase', letterSpacing: '0.5px' }}>
+                                    ✎ Edit Email
+                                  </span>
+                                  <input
+                                    value={emailForms[u.id]}
+                                    onChange={e => setEmailForms(f => ({ ...f, [u.id]: e.target.value }))}
+                                    placeholder="new@email.com"
+                                    style={{ fontSize: 13, padding: '5px 10px', borderRadius: 7,
+                                      border: `1px solid ${T.border}`, background: T.surface,
+                                      color: T.text, fontFamily: 'inherit', width: 260 }}
+                                  />
+                                  <button onClick={() => handleSetEmail(u.id, emailForms[u.id])}
+                                    style={{ fontSize: 12, padding: '5px 14px', borderRadius: 7,
+                                      background: '#0071e3', color: '#fff', border: 'none',
+                                      cursor: 'pointer', fontWeight: 600, fontFamily: 'inherit' }}>
+                                    Save
+                                  </button>
+                                  <button onClick={() => setEmailForms(f => { const n = { ...f }; delete n[u.id]; return n; })}
+                                    style={{ fontSize: 12, padding: '5px 10px', borderRadius: 7,
+                                      background: 'transparent', color: T.muted, border: `1px solid ${T.border}`,
+                                      cursor: 'pointer', fontFamily: 'inherit' }}>
+                                    Cancel
+                                  </button>
+                                </div>
+                              </td>
+                            </tr>
+                          )}
                           {isAgency && (
                             <tr key={`${u.id}-branding`}
                               style={{ borderBottom: i < stats.users.length - 1 ? rowBorder : 'none',
