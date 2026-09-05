@@ -9,6 +9,7 @@
 import { PDFDocument, StandardFonts, rgb } from 'pdf-lib';
 
 const BLACK = rgb(0, 0, 0);
+const WHITE = rgb(1, 1, 1);
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
 
@@ -127,17 +128,21 @@ export async function generate2550QPDF({ client, year, quarter, prefill }) {
 
   // ── PAGE 1 ───────────────────────────────────────────────────────────────────
 
-  // Year Ended (Item 2): box inner top=111.5 bot=121.9 → pTop=110.45
-  draw(pg1, yearEnded, 200, 110.45);
+  // "For the" Calendar checkbox: small square x0=74.0-87.7, top=110.3-122.5 → pTop=109.9
+  draw(pg1, 'X', 78, 109.9, { bold: true });
 
-  // Quarter checkbox — draw "X" just before the quarter label
-  // Labels: 1st x=452.7, 2nd x=489.8, 3rd x=532.8, 4th x=572.5 (all top≈112.8)
-  const qCheckX = { 1: 443, 2: 480, 3: 523, 4: 563 };
-  if (qCheckX[quarter]) draw(pg1, 'X', qCheckX[quarter], 112.8, { bold: true });
+  // Year Ended (Item 2): inner box x0=196.4-299.1, top=111.5-121.9
+  // White-erase the label text "2 Year Ended (MM/YYYY)" then draw clean value
+  pg1.drawRectangle({ x: 197, y: H - 121.9, width: 101, height: 10.4, color: WHITE, borderWidth: 0, opacity: 1 });
+  drawR(pg1, yearEnded, 296, 110.45);
+
+  // Quarter checkbox: actual checkbox squares (12x12pt) measured positions
+  // Q1: x0=434.6-448.3  Q2: x0=470.4-484.1  Q3: x0=512.6-526.2  Q4: x0=554.3-567.9
+  const qCheckX = { 1: 437, 2: 473, 3: 515, 4: 557 };
+  if (qCheckX[quarter]) draw(pg1, 'X', qCheckX[quarter], 109.9, { bold: true });
 
   // Return Period From/To (Item 4):
   // "From" label at x=35 top=141.3, "To" label at x=184.4 top=141.3
-  // Date values go right of these labels
   draw(pg1, periodFrom, 60,  141.3);
   draw(pg1, periodTo,   198, 141.3);
 
@@ -148,29 +153,40 @@ export async function generate2550QPDF({ client, year, quarter, prefill }) {
   draw(pg1, s3, 348, 171.5);
 
   // Taxpayer Name (Item 9): box top=186.5 bot=196.9 → pTop=185.45
-  draw(pg1, String(client?.tradeName || client?.name || '').slice(0, 80), 30, 185.45);
+  // Draw after item number "9" (x1≈36); label text overlaps but is normal for flat-PDF overlay
+  draw(pg1, String(client?.tradeName || client?.name || '').slice(0, 80), 38, 185.45);
 
   // Registered Address (Item 10): box top=215.1 bot=225.5 → pTop=214.05
   const addr = String(client?.registeredAddress || client?.address || '').slice(0, 100);
-  draw(pg1, addr, 30, 214.05);
+  draw(pg1, addr, 38, 214.05);
 
   // ZIP Code (Item 10A): inner box x0=466.8-526.9, top=247.4 bot=257.8 → pTop=246.35
-  // Label "10A ZIP Code" is printed at x=466.8 in the outer border; data goes in inner box
   if (client?.zipCode) draw(pg1, String(client.zipCode).slice(0, 5), 487, 246.35);
 
   // Part II – Total Tax Payable
+  // Pre-printed decimal separator dot at x=552.4; right-align whole pesos to 550, cents at 555
   // Item 15 (Net VAT Payable from Part IV Item 61): box top=344.9 bot=362.6 → pTop=347.5
-  if (item15 > 0) drawR(pg1, fmt(item15), 580, 347.5, { bold: true });
+  if (item15 > 0) {
+    const [w15, c15] = fmt(item15).split('.');
+    drawR(pg1, w15, 550, 347.5, { bold: true });
+    draw(pg1, c15 || '00', 555, 347.5, { bold: true });
+  }
 
   // Item 21 (Tax Still Payable): box top=465.2 bot=483.0 → pTop=467.85
-  if (item21 > 0) drawR(pg1, fmt(item21), 580, 467.85, { bold: true });
+  if (item21 > 0) {
+    const [w21, c21] = fmt(item21).split('.');
+    drawR(pg1, w21, 550, 467.85, { bold: true });
+    draw(pg1, c21 || '00', 555, 467.85, { bold: true });
+  }
 
   // ── PAGE 2 ───────────────────────────────────────────────────────────────────
 
   // Page 2 header: TIN + Name
-  // TIN box inner: x=28-214 top=79.8 bot=90.1 → pTop=78.7
+  // TIN box: x0=27.5-214.2, top=79.8-90.1 → pTop=78.7
+  // "TIN" label at x=27.5-42.0; draw value after it. Branch "00000" pre-printed at x≈151.
   const tinFormatted = `${s1}-${s2}-${s3}`;
-  draw(pg2, tinFormatted, 30, 78.7);
+  draw(pg2, tinFormatted, 55, 78.7);
+  // Name box: x0=225.1-584.5, top=79.8-90.1 → pTop=78.7
   draw(pg2, String(client?.tradeName || client?.name || '').slice(0, 60), 228, 78.7);
 
   // Part IV – VAT Computation
