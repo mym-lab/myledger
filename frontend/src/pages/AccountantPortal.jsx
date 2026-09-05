@@ -62,8 +62,8 @@ import {
   build1601CHtml,
   buildBooksHtml,
   buildAlphalistHtml,
-  build2307Html,
 } from '../utils/printReport.js';
+import { generate2307PDF, generateAll2307PDF, download2307PDF } from '../utils/bir2307Generator.js';
 
 // ─── Design tokens ────────────────────────────────────────────────────────────
 const T = {
@@ -4848,26 +4848,29 @@ export default function AccountantPortal({ onLogout }) {
                   const mLabel = (m) => m ? new Date(birYear, m - 1).toLocaleString('en-PH', { month: 'short' }) : '—';
                   const qMonthLabels = qMths.map(m => mLabel(m));
 
-                  const printOne = (p) => {
-                    printReport({
-                      title: `BIR Form 2307 — ${p.name} — ${qLabel2307}`,
-                      subtitle: `${active.tradeName}`,
-                      bodyHtml: build2307Html({ payee: p, client: active, period: qLabel2307, atcList: Object.values(p.atcs), months: p.months, qMonthLabels }),
-                      firmLabel: firmName || 'MyLedger by Kaiman & Co.',
-                      accentColor: brandAccent,
-                    });
+                  const printOne = async (p) => {
+                    try {
+                      const bytes = await generate2307PDF({
+                        payee: p, client: active, period: qLabel2307,
+                        atcList: Object.values(p.atcs),
+                      });
+                      download2307PDF(bytes, `BIR_2307_${(p.name||'payee').replace(/[^a-zA-Z0-9]/g,'_')}_${qLabel2307.replace(/\s+/g,'_')}.pdf`);
+                    } catch(e) {
+                      console.error('2307 PDF error:', e);
+                      alert('Failed to generate 2307 PDF. See console for details.');
+                    }
                   };
-                  const printAll = () => {
-                    const allHtml = payees.map(p =>
-                      build2307Html({ payee: p, client: active, period: qLabel2307, atcList: Object.values(p.atcs), months: p.months, qMonthLabels })
-                    ).join('<div style="page-break-after:always"></div>');
-                    printReport({
-                      title: `BIR Form 2307 — ${active.tradeName} — ${qLabel2307}`,
-                      subtitle: `${payees.length} certificate${payees.length !== 1 ? 's' : ''}`,
-                      bodyHtml: allHtml,
-                      firmLabel: firmName || 'MyLedger by Kaiman & Co.',
-                      accentColor: brandAccent,
-                    });
+                  const printAll = async () => {
+                    try {
+                      const bytes = await generateAll2307PDF(
+                        payees.map(p => ({ ...p, atcList: Object.values(p.atcs) })),
+                        { client: active, period: qLabel2307 }
+                      );
+                      download2307PDF(bytes, `BIR_2307_ALL_${qLabel2307.replace(/\s+/g,'_')}.pdf`);
+                    } catch(e) {
+                      console.error('2307 PDF error:', e);
+                      alert('Failed to generate 2307 PDFs. See console for details.');
+                    }
                   };
 
                   return (
@@ -5069,14 +5072,14 @@ export default function AccountantPortal({ onLogout }) {
                 from whom EWT was withheld during {periodLbl}. Issue these to your vendors — they use it to claim tax credits.
               </div>
               <div style={{ display: 'flex', gap: 10, flexWrap: 'wrap' }}>
-                <Btn onClick={() => {
+                <Btn onClick={async () => {
                   // Build ATC_MAP from admin-configurable settings (fallback to defaults)
                   const ewtRatesList2307 = siteSettings.ewtRates || DEFAULT_EWT_RATES;
                   const ATC_MAP = {};
                   ewtRatesList2307.forEach(r => { ATC_MAP[r.rate] = { atc: r.atc, description: r.description }; });
                   const qNum = alphaQ || Math.ceil((new Date().getMonth() + 1) / 3);
                   const qEnd = ['March','June','September','December'][qNum - 1];
-                  const qLabel = `Q${qNum} (Jan–${qEnd}) ${alphaYear}`;
+                  const qLabel = `Q${qNum} ${alphaYear}`;
                   const qMths = alphaQ === 0
                     ? [1,2,3,4,5,6,7,8,9,10,11,12]
                     : [(alphaQ-1)*3+1, (alphaQ-1)*3+2, (alphaQ-1)*3+3];
@@ -5088,9 +5091,10 @@ export default function AccountantPortal({ onLogout }) {
                       && t.type === 'expense' && parseFloat(t.ewtRate) > 0 && t.ewtAmount > 0;
                   });
 
-                  // Group by payee
+                  // Group by payee, tracking per-ATC monthly amounts for the 3-column table
                   const byPayee = {};
                   ewtTxns.forEach(t => {
+                    const d   = new Date(t.createdAt);
                     const key = t.counterpartyTin || ('__'+t.counterpartyName);
                     if (!byPayee[key]) byPayee[key] = {
                       tin: t.counterpartyTin || '',
@@ -5098,26 +5102,30 @@ export default function AccountantPortal({ onLogout }) {
                       address: t.counterpartyAddress || '',
                       atcs: {}
                     };
-                    const rate = parseFloat(t.ewtRate);
-                    const info = ATC_MAP[rate] || { atc: `WC${String(Math.round(rate*100)).padStart(3,'0')}`, description: `EWT ${(rate*100).toFixed(0)}%` };
+                    const rate   = parseFloat(t.ewtRate);
+                    const info   = ATC_MAP[rate] || { atc: `WC${String(Math.round(rate*100)).padStart(3,'0')}`, description: `EWT ${(rate*100).toFixed(0)}%` };
                     const atcKey = info.atc;
-                    byPayee[key].atcs[atcKey] = byPayee[key].atcs[atcKey] || { ...info, rate, base: 0, ewt: 0 };
-                    byPayee[key].atcs[atcKey].base = Math.round((byPayee[key].atcs[atcKey].base + (t.net || t.amount_net || 0)) * 100) / 100;
+                    byPayee[key].atcs[atcKey] = byPayee[key].atcs[atcKey] || { ...info, rate, base: 0, ewt: 0, m1: 0, m2: 0, m3: 0 };
+                    const net  = t.net || t.amount_net || 0;
+                    const mIdx = qMths.indexOf(d.getMonth() + 1);
+                    byPayee[key].atcs[atcKey].base = Math.round((byPayee[key].atcs[atcKey].base + net) * 100) / 100;
                     byPayee[key].atcs[atcKey].ewt  = Math.round((byPayee[key].atcs[atcKey].ewt  + (t.ewtAmount || 0)) * 100) / 100;
+                    if (mIdx === 0) byPayee[key].atcs[atcKey].m1 = Math.round((byPayee[key].atcs[atcKey].m1 + net) * 100) / 100;
+                    if (mIdx === 1) byPayee[key].atcs[atcKey].m2 = Math.round((byPayee[key].atcs[atcKey].m2 + net) * 100) / 100;
+                    if (mIdx === 2) byPayee[key].atcs[atcKey].m3 = Math.round((byPayee[key].atcs[atcKey].m3 + net) * 100) / 100;
                   });
 
                   const payees = Object.values(byPayee);
-                  const allHtml = payees.map(p =>
-                    build2307Html({ payee: p, client: active, period: qLabel, atcList: Object.values(p.atcs) })
-                  ).join('<div style="page-break-after:always"></div>');
-
-                  printReport({
-                    title: `BIR Form 2307 — ${active.tradeName} — ${qLabel}`,
-                    subtitle: `${payees.length} certificate${payees.length!==1?'s':''}`,
-                    bodyHtml: allHtml,
-                    firmLabel: firmName || 'MyLedger by Kaiman & Co.',
-                    accentColor: brandAccent,
-                  });
+                  try {
+                    const bytes = await generateAll2307PDF(
+                      payees.map(p => ({ ...p, atcList: Object.values(p.atcs) })),
+                      { client: active, period: qLabel }
+                    );
+                    download2307PDF(bytes, `BIR_2307_ALL_${qLabel.replace(/\s+/g,'_')}.pdf`);
+                  } catch(e) {
+                    console.error('2307 PDF error:', e);
+                    alert('Failed to generate PDF. See console for details.');
+                  }
                 }}>⬇ Print All 2307s ({ewtRows.length} payee{ewtRows.length!==1?'s':''})</Btn>
               </div>
             </Card>
