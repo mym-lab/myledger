@@ -1165,6 +1165,44 @@ function computeBIRVAT(transactions, year, month, isQuarterly) {
     month: endMonth, txCount: filtered.length };
 }
 
+// ─── BIR 2550M/2550Q Form Pre-fill (line-item breakdown by vatType) ──────────
+function compute2550Prefill(transactions, year, month, isQuarterly) {
+  const q = isQuarterly ? Math.floor((month - 1) / 3) : null;
+  const filtered = transactions.filter(t => {
+    const d = new Date(t.createdAt);
+    const ty = d.getFullYear(); const m = d.getMonth() + 1;
+    if (ty !== year) return false;
+    if (isQuarterly) return Math.floor((m - 1) / 3) === q;
+    return m === month;
+  });
+  const rnd = n => Math.round((n || 0) * 100) / 100;
+  const income  = filtered.filter(t => t.type === 'income');
+  const expense = filtered.filter(t => t.type === 'expense');
+
+  // Sales breakdown by vatType
+  const vatableInc   = income.filter(t => !t.vatType || t.vatType === 'vatable');
+  const zeroRatedInc = income.filter(t => t.vatType === 'zero-rated');
+  const exemptInc    = income.filter(t => t.vatType === 'exempt');
+
+  const item31A = rnd(vatableInc.reduce((s,t)   => s + (t.net || 0), 0));  // Taxable sales (net of VAT)
+  const item31B = rnd(vatableInc.reduce((s,t)   => s + (t.vat || 0), 0));  // Output VAT (12%)
+  const item32A = rnd(zeroRatedInc.reduce((s,t) => s + (t.net || 0), 0));  // Zero-rated sales
+  const item33A = rnd(exemptInc.reduce((s,t)    => s + (t.net || 0), 0));  // Exempt sales
+  const item34  = rnd(item31A + item32A + item33A);                          // Total sales/receipts
+
+  // Purchases breakdown by supplierVatType
+  const vatableExp = expense.filter(t => !t.supplierVatType || t.supplierVatType === 'vatable');
+
+  const item44A = rnd(vatableExp.reduce((s,t) => s + (t.gross || 0), 0));  // Domestic purchases (gross)
+  const item44B = rnd(vatableExp.reduce((s,t) => s + (t.vat   || 0), 0));  // Input VAT from purchases
+
+  const vatPayable   = rnd(Math.max(0, item31B - item44B));
+  const excessInput  = rnd(Math.max(0, item44B - item31B));
+
+  return { item31A, item31B, item32A, item33A, item34, item44A, item44B,
+    vatPayable, excessInput, txCount: filtered.length };
+}
+
 // ─── BIR 2551M/2551Q helper (OPT / Percentage Tax) ───────────────────────────
 function computeOPT(transactions, client, year, month, isQuarterly) {
   const optRate = client?.optRate ?? 0.03;
@@ -4652,6 +4690,69 @@ export default function AccountantPortal({ onLogout }) {
                           Always verify with actual BIR-prescribed forms before filing.
                         </div>
                       </Card>
+
+                      {/* ── 2550Q/2550M Pre-fill Table ── */}
+                      {(() => {
+                        const p = compute2550Prefill(txns, birYear, isQuarterly ? qStart : birMonth, isQuarterly);
+                        const formLabel = effectiveBirType === '2550Q' ? '2550Q' : '2550M';
+                        const row = (item, label, value, opts = {}) => (
+                          <div key={item} style={{
+                            display: 'flex', justifyContent: 'space-between', alignItems: 'baseline',
+                            padding: '7px 0',
+                            borderBottom: opts.last ? 'none' : `1px solid ${T.border}`,
+                            paddingLeft: opts.indent ? 16 : 0,
+                            background: opts.highlight ? '#f0f7ff' : 'transparent',
+                            marginLeft: opts.indent ? 0 : 0,
+                          }}>
+                            <span style={{ fontSize: 12, color: opts.bold ? T.text : T.muted,
+                              fontWeight: opts.bold ? 700 : 400 }}>
+                              <span style={{ fontFamily: 'monospace', color: T.accent, marginRight: 8,
+                                fontSize: 11, fontWeight: 600 }}>{item}</span>
+                              {label}
+                            </span>
+                            <span style={{ fontSize: opts.bold ? 15 : 13, fontWeight: opts.bold ? 700 : 500,
+                              color: opts.color || T.text }}>{peso(value)}</span>
+                          </div>
+                        );
+                        return (
+                          <Card style={{ maxWidth: 540, marginTop: 16 }}>
+                            <SectionHead>BIR Form {formLabel} — Pre-filled Values</SectionHead>
+                            <div style={{ fontSize: 12, color: T.muted, marginBottom: 14, fontStyle: 'italic' }}>
+                              Derived from {p.txCount} transaction{p.txCount !== 1 ? 's' : ''}. Verify with your CPA before filing.
+                            </div>
+
+                            <div style={{ fontSize: 11, fontWeight: 700, color: T.muted, textTransform: 'uppercase',
+                              letterSpacing: 1, marginBottom: 6 }}>Part IV — Sales / Receipts</div>
+                            {row('31A', 'Taxable Sales — VAT-exclusive Net', p.item31A, { color: T.text })}
+                            {row('31B', 'Output VAT Due (12%)', p.item31B, { color: T.orange })}
+                            {row('32A', 'Zero-Rated Sales / Receipts', p.item32A, { color: T.text })}
+                            {row('33A', 'Exempt Sales / Receipts', p.item33A, { color: T.text })}
+                            {row('34', 'Total Sales / Receipts (31A + 32A + 33A)', p.item34, { bold: true })}
+
+                            <div style={{ fontSize: 11, fontWeight: 700, color: T.muted, textTransform: 'uppercase',
+                              letterSpacing: 1, margin: '14px 0 6px' }}>Part IV — Purchases</div>
+                            {row('44A', 'Domestic Purchases — Gross Amount', p.item44A, { color: T.text })}
+                            {row('44B', 'Allowable Input VAT (from vatable purchases)', p.item44B, { color: T.accent })}
+
+                            <div style={{ borderTop: `2px solid ${T.border}`, marginTop: 10, paddingTop: 10 }}>
+                              {p.vatPayable > 0
+                                ? row('61', 'Net VAT Payable (31B − 44B)', p.vatPayable,
+                                    { bold: true, color: T.red, last: true })
+                                : row('—', 'Excess Input VAT (carry forward)', p.excessInput,
+                                    { bold: true, color: T.green, last: true })
+                              }
+                            </div>
+
+                            {(p.item32A > 0 || p.item33A > 0) && (
+                              <div style={{ marginTop: 12, fontSize: 12, color: T.muted, lineHeight: 1.5,
+                                background: '#fffbeb', border: '1px solid #fcd34d', borderRadius: 8,
+                                padding: '8px 12px' }}>
+                                ⚠ Zero-rated / exempt transactions detected. Attach Schedules as required by BIR before filing.
+                              </div>
+                            )}
+                          </Card>
+                        );
+                      })()}
                     </div>
                   );
                 })()}
