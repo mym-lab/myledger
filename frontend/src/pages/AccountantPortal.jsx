@@ -1192,7 +1192,7 @@ function compute2550Prefill(transactions, year, month, isQuarterly) {
   const item34  = rnd(item31A + item32A + item33A);                          // Total sales/receipts
 
   // Purchases breakdown by supplierVatType
-  const vatableExp = expense.filter(t => !t.supplierVatType || t.supplierVatType === 'vatable');
+  const vatableExp = expense.filter(t => !t.supplierVatType || t.supplierVatType === 'vat');
 
   const item44A = rnd(vatableExp.reduce((s,t) => s + (t.gross || 0), 0));  // Domestic purchases (gross)
   const item44B = rnd(vatableExp.reduce((s,t) => s + (t.vat   || 0), 0));  // Input VAT from purchases

@@ -141,11 +141,11 @@ export async function generate2550QPDF({ client, year, quarter, prefill }) {
   draw(pg1, periodFrom, 60,  141.3);
   draw(pg1, periodTo,   198, 141.3);
 
-  // TIN (Item 7): box inner top=172.6 bot=182.9 → pTop=171.5
-  // Segment dashes are at x=279.4, 336.6, 393.7
-  draw(pg1, s1, 174, 171.5);
-  draw(pg1, s2, 284, 171.5);
-  draw(pg1, s3, 341, 171.5);
+  // TIN (Item 7): digit boxes at x≈234/248/263 (seg1), 290/304/319 (seg2), 348/362/376 (seg3)
+  // Dashes between segments at x=279.4, 336.6, 393.7
+  draw(pg1, s1, 235, 171.5);
+  draw(pg1, s2, 291, 171.5);
+  draw(pg1, s3, 348, 171.5);
 
   // Taxpayer Name (Item 9): box top=186.5 bot=196.9 → pTop=185.45
   draw(pg1, String(client?.tradeName || client?.name || '').slice(0, 80), 30, 185.45);
@@ -154,8 +154,9 @@ export async function generate2550QPDF({ client, year, quarter, prefill }) {
   const addr = String(client?.registeredAddress || client?.address || '').slice(0, 100);
   draw(pg1, addr, 30, 214.05);
 
-  // ZIP Code (Item 10A): box inner top=247.4 bot=257.8 → pTop=246.35
-  if (client?.zipCode) draw(pg1, String(client.zipCode).slice(0, 5), 470, 246.35);
+  // ZIP Code (Item 10A): inner box x0=466.8-526.9, top=247.4 bot=257.8 → pTop=246.35
+  // Label "10A ZIP Code" is printed at x=466.8 in the outer border; data goes in inner box
+  if (client?.zipCode) draw(pg1, String(client.zipCode).slice(0, 5), 487, 246.35);
 
   // Part II – Total Tax Payable
   // Item 15 (Net VAT Payable from Part IV Item 61): box top=344.9 bot=362.6 → pTop=347.5
