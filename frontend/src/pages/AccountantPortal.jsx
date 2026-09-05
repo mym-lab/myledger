@@ -4672,7 +4672,7 @@ export default function AccountantPortal({ onLogout }) {
                 })()}
 
                 {/* ── VAT / 2550 ── */}
-                {!isOPT && !is1601EQ && !is1604EQ && !isITForm && (() => {
+                {!isOPT && !is1601EQ && !is1604EQ && !isITForm && birType !== '1601FQ' && (() => {
                   const r = computeBIRVAT(txns, birYear, isQuarterly ? qStart : birMonth, isQuarterly);
                   return (
                     <div>
@@ -4729,7 +4729,7 @@ export default function AccountantPortal({ onLogout }) {
                       </Card>
 
                       {/* ── 2550Q/2550M Pre-fill Table ── */}
-                      {(() => {
+                      {['2550M', '2550Q'].includes(effectiveBirType) && (() => {
                         const p = compute2550Prefill(txns, birYear, isQuarterly ? qStart : birMonth, isQuarterly);
                         const formLabel = effectiveBirType === '2550Q' ? '2550Q' : '2550M';
                         const row = (item, label, value, opts = {}) => (
