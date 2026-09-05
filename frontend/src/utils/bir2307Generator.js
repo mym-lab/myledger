@@ -107,50 +107,57 @@ export async function generate2307PDF({ payee, client, period, atcList }) {
   };
 
   // ── Field 1: Period From / To ─────────────────────────────────────────────
-  // pdfplumber top ≈ 117 for the period row
+  // Box: top=106.4 bottom=122.3 → center pTop = (106.4+122.3)/2 - 6.25 = 108
+  // "To" box starts at x=399; "From" box x=151-257
   const { from: pFrom, to: pTo } = parsePeriod(period);
-  draw(pFrom, 165, 117);
-  draw(pTo,   390, 117);
+  draw(pFrom, 155, 108);
+  draw(pTo,   401, 108);
 
   // ── Part I – Payee ────────────────────────────────────────────────────────
 
-  // Field 2: Payee TIN (dash boxes at x=250, 302, 353; top=140)
+  // Field 2: Payee TIN
+  // Digit cell box: top=137.3 bottom=152.9 → center pTop = 139
   const [pt1, pt2, pt3, pt4] = splitTIN(payee.tin);
-  draw(pt1, 170, 148); draw(pt2, 255, 148);
-  draw(pt3, 307, 148); if (pt4) draw(pt4, 358, 148);
+  draw(pt1, 170, 139); draw(pt2, 261, 139);
+  draw(pt3, 313, 139); if (pt4) draw(pt4, 364, 139);
 
-  // Field 3: Payee Name (top=157 label → data at ~174)
-  draw(String(payee.name || '').slice(0, 65), 34, 174);
+  // Field 3: Payee Name
+  // Box: top=164.3 bottom=180.2 → center pTop = 166
+  draw(String(payee.name || '').slice(0, 65), 36, 166);
 
-  // Field 4: Payee Address (top=185 label → data at ~201) + 4A ZIP
-  draw(String(payee.address || '').slice(0, 70), 34, 202);
-  if (payee.zipCode) draw(String(payee.zipCode).slice(0, 6), 543, 202);
+  // Field 4: Payee Address + 4A ZIP
+  // Box: top=192.7 bottom=208.6 → center pTop = 194
+  draw(String(payee.address || '').slice(0, 70), 36, 194);
+  if (payee.zipCode) draw(String(payee.zipCode).slice(0, 6), 544, 194);
 
   // ── Part II – Payor ───────────────────────────────────────────────────────
 
-  // Field 6: Payor TIN (dashes at x=251, 302, 354; top=256)
+  // Field 6: Payor TIN
+  // Digit cell box: top=252.5 bottom=268.5 → center pTop = 254
   const [ct1, ct2, ct3, ct4] = splitTIN(client.tin);
-  draw(ct1, 170, 264); draw(ct2, 255, 264);
-  draw(ct3, 307, 264); if (ct4) draw(ct4, 358, 264);
+  draw(ct1, 170, 254); draw(ct2, 262, 254);
+  draw(ct3, 313, 254); if (ct4) draw(ct4, 364, 254);
 
   // Field 7: Payor Name
-  draw(String(client.tradeName || client.name || '').slice(0, 65), 34, 290);
+  // Box: top=279.5 bottom=295.4 → center pTop = 281
+  draw(String(client.tradeName || client.name || '').slice(0, 65), 36, 281);
 
   // Field 8: Payor Address + 8A ZIP
+  // Box: top=307.9 bottom=323.8 → center pTop = 310
   const payorAddr = String(client.registeredAddress || client.address || '').slice(0, 70);
-  draw(payorAddr, 34, 316);
-  if (client.zipCode) draw(String(client.zipCode).slice(0, 6), 543, 316);
+  draw(payorAddr, 36, 310);
+  if (client.zipCode) draw(String(client.zipCode).slice(0, 6), 544, 310);
 
   // ── Part III – EWT Table ──────────────────────────────────────────────────
   // Column right-edge x values (from pdfplumber vertical lines):
   //   Description: ≤176   ATC: ≤219   M1: ≤291   M2: ≤365   M3: ≤438
   //   Total:       ≤510   TaxWithheld: ≤596
   // Data rows start at pdfplumber top≈370, row height ≈ 13.7 pts, max 9 rows.
-  // Total row: pdfplumber top≈506.
+  // Total row: pdfplumber top≈505 (aligned with "Total" label text).
 
   const ROW_H = 13.7;
   const DATA_TOP = 370;
-  const TOTAL_TOP = 508;
+  const TOTAL_TOP = 503;
   const COL_SZ = 7.5;
 
   let totM1 = 0, totM2 = 0, totM3 = 0, totBase = 0, totEWT = 0;
