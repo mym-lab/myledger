@@ -4806,32 +4806,74 @@ export default function AccountantPortal({ onLogout }) {
                   });
                   if (!ewtTxns.length) return null;
 
-                  // Group by payee
+                  // Build ATC map
+                  const ewtRates2307 = siteSettings.ewtRates || DEFAULT_EWT_RATES;
+                  const ATC_MAP2307 = {};
+                  ewtRates2307.forEach(r => { ATC_MAP2307[r.rate] = { atc: r.atc, description: r.description }; });
+
+                  // Group by payee — track months + ATCs for certificate generation
                   const byPayee = {};
                   ewtTxns.forEach(t => {
+                    const key  = t.counterpartyTin || ('__' + (t.counterpartyName || ''));
                     const name = t.counterpartyName || '(no payee name)';
                     const mo   = new Date(t.createdAt).getMonth() + 1;
-                    const mIdx = qMths.indexOf(mo); // 0,1,2
-                    if (!byPayee[name]) byPayee[name] = { name, tin: t.counterpartyTin || '', months: [0,0,0], totalPayments: 0, totalEWT: 0 };
+                    const mIdx = qMths.indexOf(mo);
+                    if (!byPayee[key]) byPayee[key] = {
+                      name, tin: t.counterpartyTin || '', address: t.counterpartyAddress || '',
+                      months: [0,0,0], totalPayments: 0, totalEWT: 0, atcs: {}
+                    };
                     const netAmt = t.net || t.amount_net || 0;
-                    byPayee[name].months[mIdx] = Math.round((byPayee[name].months[mIdx] + netAmt) * 100) / 100;
-                    byPayee[name].totalPayments = Math.round((byPayee[name].totalPayments + netAmt) * 100) / 100;
-                    byPayee[name].totalEWT      = Math.round((byPayee[name].totalEWT      + (t.ewtAmount  || 0)) * 100) / 100;
+                    byPayee[key].months[mIdx] = Math.round((byPayee[key].months[mIdx] + netAmt) * 100) / 100;
+                    byPayee[key].totalPayments = Math.round((byPayee[key].totalPayments + netAmt) * 100) / 100;
+                    byPayee[key].totalEWT      = Math.round((byPayee[key].totalEWT + (t.ewtAmount || 0)) * 100) / 100;
+                    // ATC breakdown
+                    const rate = parseFloat(t.ewtRate);
+                    const info = ATC_MAP2307[rate] || { atc: `WC${String(Math.round(rate*100)).padStart(3,'0')}`, description: `EWT ${(rate*100).toFixed(0)}%` };
+                    const atcKey = info.atc;
+                    byPayee[key].atcs[atcKey] = byPayee[key].atcs[atcKey] || { ...info, rate, base: 0, ewt: 0 };
+                    byPayee[key].atcs[atcKey].base = Math.round((byPayee[key].atcs[atcKey].base + netAmt) * 100) / 100;
+                    byPayee[key].atcs[atcKey].ewt  = Math.round((byPayee[key].atcs[atcKey].ewt + (t.ewtAmount || 0)) * 100) / 100;
                   });
                   const payees = Object.values(byPayee).sort((a,b) => b.totalEWT - a.totalEWT);
                   const grandPayments = Math.round(payees.reduce((s,p) => s + p.totalPayments, 0) * 100) / 100;
                   const grandEWT      = Math.round(payees.reduce((s,p) => s + p.totalEWT, 0) * 100) / 100;
 
-                  const qLabel2307 = `Q${qMths[0] <= 3 ? 1 : qMths[0] <= 6 ? 2 : qMths[0] <= 9 ? 3 : 4} ${birYear}`;
+                  const qNum2307   = qMths[0] <= 3 ? 1 : qMths[0] <= 6 ? 2 : qMths[0] <= 9 ? 3 : 4;
+                  const qLabel2307 = `Q${qNum2307} ${birYear}`;
                   const mLabel = (m) => m ? new Date(birYear, m - 1).toLocaleString('en-PH', { month: 'short' }) : '—';
+
+                  const printOne = (p) => {
+                    printReport({
+                      title: `BIR Form 2307 — ${p.name} — ${qLabel2307}`,
+                      subtitle: `${active.tradeName}`,
+                      bodyHtml: build2307Html({ payee: p, client: active, period: qLabel2307, atcList: Object.values(p.atcs) }),
+                      firmLabel: firmName || 'MyLedger by Kaiman & Co.',
+                      accentColor: brandAccent,
+                    });
+                  };
+                  const printAll = () => {
+                    const allHtml = payees.map(p =>
+                      build2307Html({ payee: p, client: active, period: qLabel2307, atcList: Object.values(p.atcs) })
+                    ).join('<div style="page-break-after:always"></div>');
+                    printReport({
+                      title: `BIR Form 2307 — ${active.tradeName} — ${qLabel2307}`,
+                      subtitle: `${payees.length} certificate${payees.length !== 1 ? 's' : ''}`,
+                      bodyHtml: allHtml,
+                      firmLabel: firmName || 'MyLedger by Kaiman & Co.',
+                      accentColor: brandAccent,
+                    });
+                  };
 
                   return (
                     <Card style={{ marginTop: 20 }}>
-                      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', flexWrap: 'wrap', gap: 8, marginBottom: 4 }}>
+                      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: 8, marginBottom: 4 }}>
                         <SectionHead style={{ margin: 0 }}>BIR Form 2307 — EWT Certificates to Issue · {qLabel2307}</SectionHead>
-                        <span style={{ fontSize: 12, color: T.muted, fontStyle: 'italic' }}>
-                          {payees.length} payee{payees.length !== 1 ? 's' : ''} · {ewtTxns.length} transactions
-                        </span>
+                        <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
+                          <span style={{ fontSize: 12, color: T.muted, fontStyle: 'italic' }}>
+                            {payees.length} payee{payees.length !== 1 ? 's' : ''} · {ewtTxns.length} transaction{ewtTxns.length !== 1 ? 's' : ''}
+                          </span>
+                          <Btn size="sm" variant="neutral" onClick={printAll}>⬇ Print All ({payees.length})</Btn>
+                        </div>
                       </div>
                       <div style={{ fontSize: 12, color: T.muted, marginBottom: 14 }}>
                         One 2307 must be issued per payee per quarter. Issue within 20 days after the end of the quarter.
@@ -4848,6 +4890,7 @@ export default function AccountantPortal({ onLogout }) {
                               <th style={{ padding: '8px 10px', textAlign: 'right', fontWeight: 600, color: T.muted, borderBottom: `2px solid ${T.border}` }}>{mLabel(qMths[2])}</th>
                               <th style={{ padding: '8px 10px', textAlign: 'right', fontWeight: 600, color: T.muted, borderBottom: `2px solid ${T.border}` }}>Total Payments</th>
                               <th style={{ padding: '8px 10px', textAlign: 'right', fontWeight: 600, color: T.orange, borderBottom: `2px solid ${T.border}` }}>EWT Withheld</th>
+                              <th style={{ padding: '8px 10px', borderBottom: `2px solid ${T.border}` }}></th>
                             </tr>
                           </thead>
                           <tbody>
@@ -4860,19 +4903,23 @@ export default function AccountantPortal({ onLogout }) {
                                 <td style={{ padding: '7px 10px', borderBottom: `1px solid ${T.border}`, textAlign: 'right', color: p.months[2] ? T.text : T.muted }}>{p.months[2] ? peso(p.months[2]) : '—'}</td>
                                 <td style={{ padding: '7px 10px', borderBottom: `1px solid ${T.border}`, textAlign: 'right' }}>{peso(p.totalPayments)}</td>
                                 <td style={{ padding: '7px 10px', borderBottom: `1px solid ${T.border}`, textAlign: 'right', fontWeight: 700, color: T.orange }}>{peso(p.totalEWT)}</td>
+                                <td style={{ padding: '7px 10px', borderBottom: `1px solid ${T.border}`, textAlign: 'right' }}>
+                                  <Btn size="sm" variant="neutral" onClick={() => printOne(p)}>⬇ 2307</Btn>
+                                </td>
                               </tr>
                             ))}
                             <tr style={{ background: T.bg, fontWeight: 700 }}>
                               <td colSpan={5} style={{ padding: '8px 10px', borderTop: `2px solid ${T.border}`, color: T.text }}>Grand Total</td>
                               <td style={{ padding: '8px 10px', borderTop: `2px solid ${T.border}`, textAlign: 'right' }}>{peso(grandPayments)}</td>
                               <td style={{ padding: '8px 10px', borderTop: `2px solid ${T.border}`, textAlign: 'right', color: T.orange }}>{peso(grandEWT)}</td>
+                              <td style={{ padding: '8px 10px', borderTop: `2px solid ${T.border}` }}></td>
                             </tr>
                           </tbody>
                         </table>
                       </div>
                       <div style={{ marginTop: 12, fontSize: 11, color: T.muted, lineHeight: 1.6 }}>
-                        * Income payments = net amount paid (ex-VAT). EWT withheld = amount deducted from payment to vendor.
-                        Payee TIN and ATC must be confirmed before issuing the actual 2307 certificate.
+                        * Income payments = net amount paid (ex-VAT). EWT withheld = amount deducted from payment.
+                        Confirm payee TIN and ATC before issuing the signed certificate.
                       </div>
                     </Card>
                   );
