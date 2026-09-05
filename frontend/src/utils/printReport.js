@@ -398,7 +398,7 @@ function birField(label, value, width = 'flex:1') {
   return `<div class="bir-cell" style="${width}"><span class="bir-label">${label}</span><span class="bir-value">${value || '—'}</span></div>`;
 }
 
-export function buildBIRReturnHtml({ isOPT, effectiveBirType, periodLabel, birYear, r, client }) {
+export function buildBIRReturnHtml({ isOPT, effectiveBirType, periodLabel, birYear, r, client, prefill }) {
   // Support old call signature (clientName string) for safety
   if (typeof client === 'string') client = { tradeName: client };
   const c = client || {};
@@ -746,6 +746,15 @@ export function buildBIRReturnHtml({ isOPT, effectiveBirType, periodLabel, birYe
   // ── 2551M / 2551Q (Percentage Tax — OPT) ─────────────────────────────────
   if (isOPT) {
     const optPct = (r.optRate * 100).toFixed(0);
+    const peso = n => `₱ ${(+(n || 0)).toLocaleString('en-PH', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
+    const schRow = (atc, nature, taxBase, rate, taxDue, cls = '') => `
+      <tr class="${cls}">
+        <td style="padding:4px 8px;border:1px solid #ccc;">${atc}</td>
+        <td style="padding:4px 8px;border:1px solid #ccc;">${nature}</td>
+        <td style="padding:4px 8px;border:1px solid #ccc;text-align:right;">${typeof taxBase === 'number' ? peso(taxBase) : taxBase}</td>
+        <td style="padding:4px 8px;border:1px solid #ccc;text-align:center;">${rate}</td>
+        <td style="padding:4px 8px;border:1px solid #ccc;text-align:right;">${typeof taxDue === 'number' ? peso(taxDue) : taxDue}</td>
+      </tr>`;
     return `${birCss}
     <div class="bir-wrap">
       <div class="bir-header">
@@ -757,22 +766,41 @@ export function buildBIRReturnHtml({ isOPT, effectiveBirType, periodLabel, birYe
       </div>
       ${partI}
       <div class="bir-part">
+        <div class="bir-part-title">Schedule 1 — Breakdown of Gross Sales/Receipts (by ATC)</div>
+        <table style="width:100%;border-collapse:collapse;font-size:12px;margin-top:6px;">
+          <thead>
+            <tr style="background:#f0f0f0;">
+              <th style="padding:4px 8px;border:1px solid #ccc;text-align:left;">ATC</th>
+              <th style="padding:4px 8px;border:1px solid #ccc;text-align:left;">Nature of Income Payment</th>
+              <th style="padding:4px 8px;border:1px solid #ccc;text-align:right;">Taxable Amount (₱)</th>
+              <th style="padding:4px 8px;border:1px solid #ccc;text-align:center;">Rate</th>
+              <th style="padding:4px 8px;border:1px solid #ccc;text-align:right;">Tax Due (₱)</th>
+            </tr>
+          </thead>
+          <tbody>
+            ${schRow('PT 010', 'Gross Sales/Receipts/Revenues/Fees — Sec. 116', r.grossSales, `${optPct}%`, r.percentageTax)}
+            ${schRow('', '<strong>Item 14 — Total (from Schedule 1)</strong>', r.grossSales, '', r.percentageTax, 'bir-total')}
+          </tbody>
+        </table>
+        <p style="font-size:11px;color:#666;margin:4px 0 0;">
+          Item 15 (Less: Tax Credits/Payments from BIR 2307 received) — enter manually on the actual form.
+        </p>
+      </div>
+      <div class="bir-part">
         <div class="bir-part-title">Part II — Computation of Tax</div>
-        ${birRow(1, 'Gross Sales / Receipts / Revenues / Fees', r.grossSales)}
-        ${birRow(2, `Rate of Tax (${optPct}% — Section 116, NIRC)`, optPct + '%')}
-        ${birRow(3, 'Percentage Tax Due (Line 1 × Rate)', r.percentageTax, 'bir-total')}
-        ${birRow(4, 'Less: Tax Credits / Payments', 0)}
-        ${birRow(5, 'Tax Still Due / (Overpayment)', r.percentageTax, 'bir-payable')}
+        ${birRow(14, 'Total Percentage Tax Due (from Schedule 1)', r.percentageTax, 'bir-total')}
+        ${birRow(15, 'Less: Tax Credits / Payments (from 2307s received)', 0)}
+        ${birRow(16, 'Tax Still Due / (Overpayment)  (Item 14 − Item 15)', r.percentageTax, 'bir-payable')}
       </div>
       <div class="bir-part">
         <div class="bir-part-title">Part III — Penalties</div>
-        ${birRow(6, 'Surcharge', 0)}
-        ${birRow(7, 'Interest', 0)}
-        ${birRow(8, 'Compromise', 0)}
+        ${birRow(17, 'Surcharge', 0)}
+        ${birRow(18, 'Interest', 0)}
+        ${birRow(19, 'Compromise', 0)}
       </div>
       <div class="bir-part">
         <div class="bir-part-title">Part IV — Summary</div>
-        ${birRow('', 'Total Amount Payable / (Overpayment)  (Sum of Lines 5, 6, 7, 8)', r.percentageTax, 'bir-payable')}
+        ${birRow(20, 'Total Amount Payable / (Overpayment)  (Items 16 + 17 + 18 + 19)', r.percentageTax, 'bir-payable')}
       </div>
       <div class="bir-sig">
         <div class="bir-sig-box">Signature over Printed Name of Authorized Representative</div>
@@ -784,13 +812,20 @@ export function buildBIRReturnHtml({ isOPT, effectiveBirType, periodLabel, birYe
     </div>`;
   }
 
-  // ── 2550M / 2550Q (VAT) ───────────────────────────────────────────────────
-  const taxableSales = r.grossSales - r.outputVAT;   // VAT-exclusive NET
-  const zeroRated    = r.zeroRated  || 0;
-  const exempt       = r.exempt     || 0;
-  const totalSales   = taxableSales + zeroRated + exempt;
-  const netVAT       = r.netVATDue  || 0;
-  const excessInput  = r.excessInputVAT || 0;
+  // ── 2550M / 2550Q (VAT) — official BIR item numbers ──────────────────────
+  // Use prefill (vatType-aware breakdown) when available, else fall back to r
+  const p31A = prefill ? prefill.item31A : Math.max(0, r.grossSales - r.outputVAT);
+  const p31B = prefill ? prefill.item31B : (r.outputVAT || 0);
+  const p32A = prefill ? prefill.item32A : (r.zeroRated  || 0);
+  const p33A = prefill ? prefill.item33A : (r.exempt || 0);
+  const p34  = prefill ? prefill.item34  : (p31A + p32A + p33A);
+  const p44A = prefill ? prefill.item44A : (r.grossPurchases || 0);
+  const p44B = prefill ? prefill.item44B : (r.inputVAT || 0);
+  const p46  = p44B;   // Total available input tax (no carryover assumed)
+  const p47  = p44B;   // Allowable input tax
+  const p60  = Math.max(0, p31B - p47);   // Output tax less allowable input
+  const p61V = prefill ? prefill.vatPayable  : (r.netVATDue       || 0);
+  const p61E = prefill ? prefill.excessInput : (r.excessInputVAT  || 0);
 
   return `${birCss}
   <div class="bir-wrap">
@@ -803,37 +838,39 @@ export function buildBIRReturnHtml({ isOPT, effectiveBirType, periodLabel, birYe
     </div>
     ${partI}
     <div class="bir-part">
-      <div class="bir-part-title">Part II — Computation of Output Tax</div>
-      ${birRow('A', 'Vatable Sales / Receipts (VAT-exclusive)', taxableSales)}
-      ${birRow('B', 'Zero-Rated Sales / Receipts', zeroRated)}
-      ${birRow('C', 'VAT-Exempt Sales / Receipts', exempt)}
-      ${birRow('D', 'Total Sales / Receipts  (A + B + C)', totalSales, 'bir-total')}
-      ${birRow('E', 'Output Tax  (A × 12%)', r.outputVAT)}
+      <div class="bir-part-title">Part IV — Sales/Receipts &amp; Output Tax</div>
+      ${birRow('31A', 'Taxable Sales / Receipts (VAT-exclusive)', p31A)}
+      ${birRow('31B', 'Output Tax on Taxable Sales  (31A × 12%)', p31B)}
+      ${birRow('32A', 'Zero-Rated Sales / Receipts', p32A)}
+      ${birRow('33A', 'VAT-Exempt Sales / Receipts', p33A)}
+      ${birRow('34',  'Total Sales / Receipts  (31A + 32A + 33A)', p34, 'bir-total')}
     </div>
     <div class="bir-part">
-      <div class="bir-part-title">Part III — Computation of Input Tax</div>
-      ${birRow('F', 'Purchases Subject to Input Tax (Gross)', r.grossPurchases)}
-      ${birRow('G', 'Input Tax from Current Period Purchases', r.inputVAT)}
-      ${birRow('H', 'Input Tax Carried Over from Previous Period', 0)}
-      ${birRow('I', 'Total Available Input Tax  (G + H)', r.inputVAT, 'bir-total')}
-      ${birRow('J', 'Allowable Input Tax', r.inputVAT)}
+      <div class="bir-part-title">Part IV — Purchases &amp; Input Tax</div>
+      ${birRow('44A', 'Purchases Subject to Input Tax (Gross Amount)', p44A)}
+      ${birRow('44B', 'Input Tax from Current Period Purchases  (44A × 12/112)', p44B)}
+      ${birRow('45',  'Input Tax Carried Over from Previous Period', 0)}
+      ${birRow('46',  'Total Available Input Tax  (44B + 45)', p46, 'bir-total')}
+      ${birRow('47',  'Allowable Input Tax', p47)}
     </div>
     <div class="bir-part">
       <div class="bir-part-title">Part IV — Net VAT Payable / Excess Input Tax</div>
-      ${birRow('K', 'VAT Payable  (E − J)', netVAT > 0 ? netVAT : 0, netVAT > 0 ? 'bir-payable' : '')}
-      ${birRow('L', 'Excess Input Tax Carried Over to Next Period', excessInput > 0 ? excessInput : 0)}
-      ${birRow('M', 'Less: Tax Credits / Payments', 0)}
-      ${birRow('N', 'Tax Still Due / (Overpayment)', netVAT > 0 ? netVAT : 0, 'bir-payable')}
+      ${birRow('60',  'Output Tax Less Allowable Input Tax  (31B − 47)', p60)}
+      ${birRow('61',  p61V > 0 ? 'VAT Payable  (Item 60)' : 'Excess Input Tax Carried Over to Next Period',
+                      p61V > 0 ? p61V : p61E,
+                      p61V > 0 ? 'bir-payable' : '')}
+      ${birRow('62',  'Less: Tax Credits / Payments (from 2307s issued to you)', 0)}
+      ${birRow('63',  'Tax Still Due / (Overpayment)  (61 − 62)', p61V > 0 ? p61V : 0, 'bir-payable')}
     </div>
     <div class="bir-part">
       <div class="bir-part-title">Part V — Penalties</div>
-      ${birRow('', 'Surcharge', 0)}
-      ${birRow('', 'Interest', 0)}
-      ${birRow('', 'Compromise', 0)}
+      ${birRow('64', 'Surcharge', 0)}
+      ${birRow('65', 'Interest', 0)}
+      ${birRow('66', 'Compromise', 0)}
     </div>
     <div class="bir-part">
       <div class="bir-part-title">Part VI — Summary</div>
-      ${birRow('', 'Total Amount Payable / (Overpayment)', netVAT > 0 ? netVAT : 0, 'bir-payable')}
+      ${birRow('67', 'Total Amount Payable / (Overpayment)  (Items 63 + 64 + 65 + 66)', p61V > 0 ? p61V : 0, 'bir-payable')}
     </div>
     <div class="bir-sig">
       <div class="bir-sig-box">Signature over Printed Name of Authorized Representative</div>
@@ -841,7 +878,7 @@ export function buildBIRReturnHtml({ isOPT, effectiveBirType, periodLabel, birYe
       <div class="bir-sig-box">TIN of Signatory</div>
       <div class="bir-sig-box">Date</div>
     </div>
-    <p class="bir-note">${r.txCount} transaction(s) included · ${dueNote} · All amounts are in Philippine Peso (₱).</p>
+    <p class="bir-note">${(prefill || r).txCount} transaction(s) included · ${dueNote} · All amounts are in Philippine Peso (₱).</p>
   </div>`;
 }
 

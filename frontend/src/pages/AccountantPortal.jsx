@@ -3997,7 +3997,8 @@ export default function AccountantPortal({ onLogout }) {
                       bodyHtml = buildBIRReturnHtml({ isOPT, effectiveBirType, periodLabel, birYear, r, client: active });
                     } else {
                       r = computeBIRVAT(txns, birYear, isQuarterly ? qStart : birMonth, isQuarterly);
-                      bodyHtml = buildBIRReturnHtml({ isOPT, effectiveBirType, periodLabel, birYear, r, client: active });
+                      const prefill = compute2550Prefill(txns, birYear, isQuarterly ? qStart : birMonth, isQuarterly);
+                      bodyHtml = buildBIRReturnHtml({ isOPT, effectiveBirType, periodLabel, birYear, r, client: active, prefill });
                     }
                     printReport({
                       title: `BIR Form ${effectiveBirType} — ${active.tradeName}`,
