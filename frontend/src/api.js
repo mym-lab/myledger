@@ -346,9 +346,10 @@ export async function downloadBirXml(clientId, form, year, month) {
   const res = await fetch(`${BASE}/bir/export-xml?${qs}`, {
     headers: { 'Authorization': `Bearer ${getToken()}` },
   });
-  if (res.status === 401 || res.status === 403) {
+  if (res.status === 401) {
     localStorage.removeItem('ml_token');
     localStorage.removeItem('ml_user');
+    setTimeout(() => { window.location.href = '/'; }, 300);
     throw new Error('Session expired. Please log in again.');
   }
   if (!res.ok) {
@@ -380,9 +381,10 @@ export async function downloadCSV(path, filename) {
   const res = await fetch(BASE + path + sep + 'format=csv', {
     headers: { 'Authorization': `Bearer ${getToken()}` },
   });
-  if (res.status === 401 || res.status === 403) {
+  if (res.status === 401) {
     localStorage.removeItem('ml_token');
     localStorage.removeItem('ml_user');
+    setTimeout(() => { window.location.href = '/'; }, 300);
     throw new Error('Session expired. Please log in again.');
   }
   if (!res.ok) {
