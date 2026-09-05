@@ -64,6 +64,7 @@ import {
   buildAlphalistHtml,
 } from '../utils/printReport.js';
 import { generate2307PDF, generateAll2307PDF, download2307PDF } from '../utils/bir2307Generator.js';
+import { generate2550QPDF, downloadBIRPDF } from '../utils/birReturnGenerator.js';
 
 // ─── Design tokens ────────────────────────────────────────────────────────────
 const T = {
@@ -3982,31 +3983,42 @@ export default function AccountantPortal({ onLogout }) {
                         } catch (e) { alert('XML export failed: ' + e.message); }
                       }}>Export XML</Btn>
                     )}
-                  <Btn size="sm" variant="neutral" onClick={() => {
+                  <Btn size="sm" variant="neutral" onClick={async () => {
                     let r, bodyHtml;
                     if (is1604EQ) {
                       bodyHtml = build1604EQHtml({ txns, client: active, birYear });
+                      printReport({ title: `BIR Form ${effectiveBirType} — ${active.tradeName}`, subtitle: periodLabel, bodyHtml, firmLabel: firmName || 'MyLedger by Kaiman & Co.', accentColor: brandAccent });
                     } else if (is1601EQ) {
                       bodyHtml = build1601EQHtml({ txns, client: active, birYear, qStart, periodLabel });
+                      printReport({ title: `BIR Form ${effectiveBirType} — ${active.tradeName}`, subtitle: periodLabel, bodyHtml, firmLabel: firmName || 'MyLedger by Kaiman & Co.', accentColor: brandAccent });
                     } else if (isITForm) {
                       const qNum = ['1702Q'].includes(effectiveBirType) ? itQuarter : null;
                       r = computeIncomeTax(txns, active, birYear, qNum);
                       bodyHtml = buildBIRReturnHtml({ effectiveBirType, periodLabel, birYear, r, client: active });
+                      printReport({ title: `BIR Form ${effectiveBirType} — ${active.tradeName}`, subtitle: periodLabel, bodyHtml, firmLabel: firmName || 'MyLedger by Kaiman & Co.', accentColor: brandAccent });
                     } else if (isOPT) {
                       r = computeOPT(txns, active, birYear, isQuarterly ? qStart : birMonth, isQuarterly);
                       bodyHtml = buildBIRReturnHtml({ isOPT, effectiveBirType, periodLabel, birYear, r, client: active });
+                      printReport({ title: `BIR Form ${effectiveBirType} — ${active.tradeName}`, subtitle: periodLabel, bodyHtml, firmLabel: firmName || 'MyLedger by Kaiman & Co.', accentColor: brandAccent });
+                    } else if (effectiveBirType === '2550Q') {
+                      // ── BIR 2550Q: pdf-lib overlay on official template ──
+                      try {
+                        const prefill = compute2550Prefill(txns, birYear, qStart, true);
+                        const qNum = Math.floor((qStart - 1) / 3) + 1; // 1..4
+                        const bytes = await generate2550QPDF({ client: active, year: birYear, quarter: qNum, prefill });
+                        const safeName = (active.tradeName || 'client').replace(/[^a-zA-Z0-9]/g, '_');
+                        downloadBIRPDF(bytes, `BIR_2550Q_${safeName}_Q${qNum}_${birYear}.pdf`);
+                      } catch (e) {
+                        console.error('2550Q PDF error:', e);
+                        alert('Failed to generate 2550Q PDF. Check console for details.');
+                      }
                     } else {
-                      r = computeBIRVAT(txns, birYear, isQuarterly ? qStart : birMonth, isQuarterly);
-                      const prefill = compute2550Prefill(txns, birYear, isQuarterly ? qStart : birMonth, isQuarterly);
+                      // 2550M — HTML print
+                      r = computeBIRVAT(txns, birYear, birMonth, false);
+                      const prefill = compute2550Prefill(txns, birYear, birMonth, false);
                       bodyHtml = buildBIRReturnHtml({ isOPT, effectiveBirType, periodLabel, birYear, r, client: active, prefill });
+                      printReport({ title: `BIR Form ${effectiveBirType} — ${active.tradeName}`, subtitle: periodLabel, bodyHtml, firmLabel: firmName || 'MyLedger by Kaiman & Co.', accentColor: brandAccent });
                     }
-                    printReport({
-                      title: `BIR Form ${effectiveBirType} — ${active.tradeName}`,
-                      subtitle: periodLabel,
-                      bodyHtml,
-                      firmLabel: firmName || 'MyLedger by Kaiman & Co.',
-                      accentColor: brandAccent,
-                    });
                   }}>⬇ Export PDF</Btn>
                   </div>
                 </div>
