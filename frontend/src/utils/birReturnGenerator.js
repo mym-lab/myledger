@@ -128,56 +128,43 @@ export async function generate2550QPDF({ client, year, quarter, prefill }) {
 
   // ── PAGE 1 ───────────────────────────────────────────────────────────────────
 
-  // "For the" Calendar checkbox: small square x0=74.0-87.7, top=110.3-122.5 → pTop=109.9
-  draw(pg1, 'X', 78, 109.9, { bold: true });
+  // Calendar checkbox: x0=74.0-87.7, top=110.3-122.5; center X at (80.85, 891.6 pdf-lib)
+  draw(pg1, 'X', 79, 107.9, { bold: true, size: 10 });
 
   // Year Ended (Item 2): inner box x0=196.4-299.1, top=111.5-121.9
-  // White-erase the label text "2 Year Ended (MM/YYYY)" then draw clean value
-  pg1.drawRectangle({ x: 197, y: H - 121.9, width: 101, height: 10.4, color: WHITE, borderWidth: 0, opacity: 1 });
+  // White-erase label "2 Year Ended (MM/YYYY)" (starts at x=195.3) then draw clean value
+  pg1.drawRectangle({ x: 195, y: H - 121.9, width: 103, height: 10.4, color: WHITE, borderWidth: 0, opacity: 1 });
   drawR(pg1, yearEnded, 296, 110.45);
 
-  // Quarter checkbox: actual checkbox squares (12x12pt) measured positions
-  // Q1: x0=434.6-448.3  Q2: x0=470.4-484.1  Q3: x0=512.6-526.2  Q4: x0=554.3-567.9
+  // Quarter checkboxes: x0=434.6-448.3 / 470.4-484.1 / 512.6-526.2 / 554.3-567.9
   const qCheckX = { 1: 437, 2: 473, 3: 515, 4: 557 };
-  if (qCheckX[quarter]) draw(pg1, 'X', qCheckX[quarter], 109.9, { bold: true });
+  if (qCheckX[quarter]) draw(pg1, 'X', qCheckX[quarter], 107.9, { bold: true, size: 10 });
 
-  // Return Period From/To (Item 4):
-  // "From" label at x=35 top=141.3, "To" label at x=184.4 top=141.3
-  draw(pg1, periodFrom, 60,  141.3);
-  draw(pg1, periodTo,   198, 141.3);
+  // Return Period (Item 4): "From" label box ends x=58.9; "To" label box ends x=199.3
+  draw(pg1, periodFrom, 70,  141.3);   // start clear of "From" label
+  draw(pg1, periodTo,   205, 141.3);   // start clear of "To" label
 
-  // TIN (Item 7): digit boxes at x≈234/248/263 (seg1), 290/304/319 (seg2), 348/362/376 (seg3)
-  // Dashes between segments at x=279.4, 336.6, 393.7
+  // TIN (Item 7): digit boxes at x=234/289/347
   draw(pg1, s1, 235, 171.5);
   draw(pg1, s2, 291, 171.5);
   draw(pg1, s3, 348, 171.5);
 
-  // Taxpayer Name (Item 9): box top=186.5 bot=196.9 → pTop=185.45
-  // Draw after item number "9" (x1≈36); label text overlaps but is normal for flat-PDF overlay
-  draw(pg1, String(client?.tradeName || client?.name || '').slice(0, 80), 38, 185.45);
+  // Taxpayer Name (Item 9): box top=186.5 bot=196.9; pTop=187.5 centers text inside box
+  draw(pg1, String(client?.tradeName || client?.name || '').slice(0, 80), 38, 187.5);
 
-  // Registered Address (Item 10): box top=215.1 bot=225.5 → pTop=214.05
+  // Registered Address (Item 10): box top=215.1 bot=225.5; pTop=216 centers text inside box
   const addr = String(client?.registeredAddress || client?.address || '').slice(0, 100);
-  draw(pg1, addr, 38, 214.05);
+  draw(pg1, addr, 38, 216);
 
-  // ZIP Code (Item 10A): inner box x0=466.8-526.9, top=247.4 bot=257.8 → pTop=246.35
-  if (client?.zipCode) draw(pg1, String(client.zipCode).slice(0, 5), 487, 246.35);
+  // ZIP Code (Item 10A): inner box x0=466.8-526.9; right-align to x=524
+  if (client?.zipCode) drawR(pg1, String(client.zipCode).slice(0, 5), 524, 248.6);
 
-  // Part II – Total Tax Payable
-  // Pre-printed decimal separator dot at x=552.4; right-align whole pesos to 550, cents at 555
+  // Part II – Total Tax Payable; amount column right edge=591.6 (inner=586.9)
   // Item 15 (Net VAT Payable from Part IV Item 61): box top=344.9 bot=362.6 → pTop=347.5
-  if (item15 > 0) {
-    const [w15, c15] = fmt(item15).split('.');
-    drawR(pg1, w15, 550, 347.5, { bold: true });
-    draw(pg1, c15 || '00', 555, 347.5, { bold: true });
-  }
+  if (item15 > 0) drawR(pg1, fmt(item15), 585, 347.5, { bold: true });
 
   // Item 21 (Tax Still Payable): box top=465.2 bot=483.0 → pTop=467.85
-  if (item21 > 0) {
-    const [w21, c21] = fmt(item21).split('.');
-    drawR(pg1, w21, 550, 467.85, { bold: true });
-    draw(pg1, c21 || '00', 555, 467.85, { bold: true });
-  }
+  if (item21 > 0) drawR(pg1, fmt(item21), 585, 467.85, { bold: true });
 
   // ── PAGE 2 ───────────────────────────────────────────────────────────────────
 
