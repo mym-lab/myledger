@@ -1425,19 +1425,29 @@ export function buildAlphalistHtml({ rows, clientName, period }) {
   </div>`;
 }
 
-export function build2307Html({ payee, client, period, atcList }) {
+export function build2307Html({ payee, client, period, atcList, months, qMonthLabels }) {
   const c = client || {};
   const p = payee  || {};
   const tinFmt = tin => (tin || '').replace(/[^0-9]/g, '').replace(/(\d{3})(\d{3})(\d{3})(\d*)/, '$1-$2-$3-$4').replace(/-$/, '');
   const totalEWT  = Math.round(atcList.reduce((s, a) => s + (a.ewt || 0), 0) * 100) / 100;
   const totalBase = Math.round(atcList.reduce((s, a) => s + (a.base || 0), 0) * 100) / 100;
 
+  // Monthly labels: use passed-in labels or derive from period string
+  const mLabels = qMonthLabels || ['Month 1', 'Month 2', 'Month 3'];
+  const mAmts   = months || [0, 0, 0];  // net payment per month
+
+  // ATC table — 7 columns when monthly breakdown available
+  const hasMonths = mAmts.some(m => m > 0);
   const atcRows = atcList.length === 0
-    ? `<tr><td colspan="5" style="text-align:center;color:#999;font-style:italic;padding:10px">No EWT transactions</td></tr>`
+    ? `<tr><td colspan="${hasMonths ? 7 : 5}" style="text-align:center;color:#999;font-style:italic;padding:10px">No EWT transactions</td></tr>`
     : atcList.map(a => `
       <tr>
         <td style="padding:5px 8px;border:1px solid #ddd;font-family:monospace;font-weight:700;color:#003087">${a.atc}</td>
         <td style="padding:5px 8px;border:1px solid #ddd">${a.description}</td>
+        ${hasMonths ? `
+        <td style="padding:5px 8px;border:1px solid #ddd;text-align:right">${peso(a.m1 || 0)}</td>
+        <td style="padding:5px 8px;border:1px solid #ddd;text-align:right">${peso(a.m2 || 0)}</td>
+        <td style="padding:5px 8px;border:1px solid #ddd;text-align:right">${peso(a.m3 || 0)}</td>` : ''}
         <td style="padding:5px 8px;border:1px solid #ddd;text-align:right">${peso(a.base)}</td>
         <td style="padding:5px 8px;border:1px solid #ddd;text-align:right">${(a.rate * 100).toFixed(0)}%</td>
         <td style="padding:5px 8px;border:1px solid #ddd;text-align:right;font-weight:700">${peso(a.ewt)}</td>
@@ -1487,15 +1497,23 @@ export function build2307Html({ payee, client, period, atcList }) {
           <tr style="background:#f0f0f0">
             <th style="padding:6px 8px;text-align:left;border:1px solid #ccc;width:90px">ATC</th>
             <th style="padding:6px 8px;text-align:left;border:1px solid #ccc">Nature of Income Payment</th>
-            <th style="padding:6px 8px;text-align:right;border:1px solid #ccc;width:120px">Income Payment</th>
-            <th style="padding:6px 8px;text-align:right;border:1px solid #ccc;width:70px">Rate</th>
-            <th style="padding:6px 8px;text-align:right;border:1px solid #ccc;width:120px">Tax Withheld</th>
+            ${hasMonths ? `
+            <th style="padding:6px 8px;text-align:right;border:1px solid #ccc;width:90px">${mLabels[0]}</th>
+            <th style="padding:6px 8px;text-align:right;border:1px solid #ccc;width:90px">${mLabels[1]}</th>
+            <th style="padding:6px 8px;text-align:right;border:1px solid #ccc;width:90px">${mLabels[2]}</th>` : ''}
+            <th style="padding:6px 8px;text-align:right;border:1px solid #ccc;width:110px">Total Income Payment</th>
+            <th style="padding:6px 8px;text-align:right;border:1px solid #ccc;width:55px">Rate</th>
+            <th style="padding:6px 8px;text-align:right;border:1px solid #ccc;width:110px">Tax Withheld</th>
           </tr>
         </thead>
         <tbody>${atcRows}</tbody>
         <tfoot>
           <tr style="background:#f8f8f8;font-weight:700">
             <td colspan="2" style="padding:7px 8px;border:1px solid #ccc">TOTAL</td>
+            ${hasMonths ? `
+            <td style="padding:7px 8px;border:1px solid #ccc;text-align:right">${peso(mAmts[0])}</td>
+            <td style="padding:7px 8px;border:1px solid #ccc;text-align:right">${peso(mAmts[1])}</td>
+            <td style="padding:7px 8px;border:1px solid #ccc;text-align:right">${peso(mAmts[2])}</td>` : ''}
             <td style="padding:7px 8px;border:1px solid #ccc;text-align:right">${peso(totalBase)}</td>
             <td style="border:1px solid #ccc"></td>
             <td style="padding:7px 8px;border:1px solid #ccc;text-align:right">${peso(totalEWT)}</td>
@@ -1510,7 +1528,7 @@ export function build2307Html({ payee, client, period, atcList }) {
       <div class="bir-sig-box">Title / Position</div>
       <div class="bir-sig-box">Date</div>
     </div>
-    <p class="bir-note">This certificate is issued by the withholding agent to the payee. Keep this for your records — use it to claim tax credits on your income tax return.</p>
+    <p class="bir-note">This certificate is issued by the withholding agent to the payee. The payee may use this to claim creditable withholding tax on their income tax return (BIR Form 1701/1702/2551Q).</p>
   </div>`;
 }
 

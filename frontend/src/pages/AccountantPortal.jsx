@@ -4831,9 +4831,13 @@ export default function AccountantPortal({ onLogout }) {
                     const rate = parseFloat(t.ewtRate);
                     const info = ATC_MAP2307[rate] || { atc: `WC${String(Math.round(rate*100)).padStart(3,'0')}`, description: `EWT ${(rate*100).toFixed(0)}%` };
                     const atcKey = info.atc;
-                    byPayee[key].atcs[atcKey] = byPayee[key].atcs[atcKey] || { ...info, rate, base: 0, ewt: 0 };
+                    byPayee[key].atcs[atcKey] = byPayee[key].atcs[atcKey] || { ...info, rate, base: 0, ewt: 0, m1: 0, m2: 0, m3: 0 };
                     byPayee[key].atcs[atcKey].base = Math.round((byPayee[key].atcs[atcKey].base + netAmt) * 100) / 100;
                     byPayee[key].atcs[atcKey].ewt  = Math.round((byPayee[key].atcs[atcKey].ewt + (t.ewtAmount || 0)) * 100) / 100;
+                    // per-ATC monthly amounts for 2307 certificate columns
+                    if (mIdx === 0) byPayee[key].atcs[atcKey].m1 = Math.round((byPayee[key].atcs[atcKey].m1 + netAmt) * 100) / 100;
+                    if (mIdx === 1) byPayee[key].atcs[atcKey].m2 = Math.round((byPayee[key].atcs[atcKey].m2 + netAmt) * 100) / 100;
+                    if (mIdx === 2) byPayee[key].atcs[atcKey].m3 = Math.round((byPayee[key].atcs[atcKey].m3 + netAmt) * 100) / 100;
                   });
                   const payees = Object.values(byPayee).sort((a,b) => b.totalEWT - a.totalEWT);
                   const grandPayments = Math.round(payees.reduce((s,p) => s + p.totalPayments, 0) * 100) / 100;
@@ -4842,19 +4846,20 @@ export default function AccountantPortal({ onLogout }) {
                   const qNum2307   = qMths[0] <= 3 ? 1 : qMths[0] <= 6 ? 2 : qMths[0] <= 9 ? 3 : 4;
                   const qLabel2307 = `Q${qNum2307} ${birYear}`;
                   const mLabel = (m) => m ? new Date(birYear, m - 1).toLocaleString('en-PH', { month: 'short' }) : '—';
+                  const qMonthLabels = qMths.map(m => mLabel(m));
 
                   const printOne = (p) => {
                     printReport({
                       title: `BIR Form 2307 — ${p.name} — ${qLabel2307}`,
                       subtitle: `${active.tradeName}`,
-                      bodyHtml: build2307Html({ payee: p, client: active, period: qLabel2307, atcList: Object.values(p.atcs) }),
+                      bodyHtml: build2307Html({ payee: p, client: active, period: qLabel2307, atcList: Object.values(p.atcs), months: p.months, qMonthLabels }),
                       firmLabel: firmName || 'MyLedger by Kaiman & Co.',
                       accentColor: brandAccent,
                     });
                   };
                   const printAll = () => {
                     const allHtml = payees.map(p =>
-                      build2307Html({ payee: p, client: active, period: qLabel2307, atcList: Object.values(p.atcs) })
+                      build2307Html({ payee: p, client: active, period: qLabel2307, atcList: Object.values(p.atcs), months: p.months, qMonthLabels })
                     ).join('<div style="page-break-after:always"></div>');
                     printReport({
                       title: `BIR Form 2307 — ${active.tradeName} — ${qLabel2307}`,
@@ -5097,8 +5102,8 @@ export default function AccountantPortal({ onLogout }) {
                     const info = ATC_MAP[rate] || { atc: `WC${String(Math.round(rate*100)).padStart(3,'0')}`, description: `EWT ${(rate*100).toFixed(0)}%` };
                     const atcKey = info.atc;
                     byPayee[key].atcs[atcKey] = byPayee[key].atcs[atcKey] || { ...info, rate, base: 0, ewt: 0 };
-                    byPayee[key].atcs[atcKey].base = Math.round((byPayee[key].atcs[atcKey].base + (t.amount_net||0)) * 100) / 100;
-                    byPayee[key].atcs[atcKey].ewt  = Math.round((byPayee[key].atcs[atcKey].ewt  + (t.ewtAmount||0))  * 100) / 100;
+                    byPayee[key].atcs[atcKey].base = Math.round((byPayee[key].atcs[atcKey].base + (t.net || t.amount_net || 0)) * 100) / 100;
+                    byPayee[key].atcs[atcKey].ewt  = Math.round((byPayee[key].atcs[atcKey].ewt  + (t.ewtAmount || 0)) * 100) / 100;
                   });
 
                   const payees = Object.values(byPayee);
