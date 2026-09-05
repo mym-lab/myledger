@@ -5,7 +5,7 @@ const getToken = () => localStorage.getItem('ml_token');
 // Network timeout: abort after 20 seconds so slow PH connections don't hang forever
 const FETCH_TIMEOUT_MS = 20_000;
 
-async function request(method, path, body = null, auth = false) {
+async function request(method, path, body = null, auth = false, { silent = false } = {}) {
   const headers = {};
   if (body) headers['Content-Type'] = 'application/json';
   if (auth) headers['Authorization'] = `Bearer ${getToken()}`;
@@ -35,19 +35,22 @@ async function request(method, path, body = null, auth = false) {
   // 403 = valid token but not authorized for this resource → do NOT log out;
   //       let the UI handle it (show error, blur the feature, etc.)
   if (res.status === 401) {
-    const tok = localStorage.getItem('ml_token');
-    let justIssued = false;
-    try {
-      const payload = JSON.parse(atob(tok.split('.')[1]));
-      justIssued = payload.iat && (Date.now() / 1000 - payload.iat) < 30;
-    } catch { /* ignore */ }
+    // silent = background poll (e.g. notification bell) — don't nuke the session
+    if (!silent) {
+      const tok = localStorage.getItem('ml_token');
+      let justIssued = false;
+      try {
+        const payload = JSON.parse(atob(tok.split('.')[1]));
+        justIssued = payload.iat && (Date.now() / 1000 - payload.iat) < 30;
+      } catch { /* ignore */ }
 
-    if (!justIssued) {
-      localStorage.removeItem('ml_token');
-      localStorage.removeItem('ml_user');
-      setTimeout(() => {
-        window.location.href = window.location.pathname.startsWith('/admin') ? '/admin' : '/';
-      }, 300);
+      if (!justIssued) {
+        localStorage.removeItem('ml_token');
+        localStorage.removeItem('ml_user');
+        setTimeout(() => {
+          window.location.href = window.location.pathname.startsWith('/admin') ? '/admin' : '/';
+        }, 300);
+      }
     }
     throw new Error(data?.error || 'Session expired. Please sign in again.');
   }
@@ -56,10 +59,11 @@ async function request(method, path, body = null, auth = false) {
   return data;
 }
 
-const get  = (path, auth = false)        => request('GET',    path, null, auth);
-const post = (path, body, auth = false)  => request('POST',   path, body, auth);
-const put  = (path, body, auth = false)  => request('PUT',    path, body, auth);
-const del  = (path, auth = false, body = null) => request('DELETE', path, body, auth);
+const get       = (path, auth = false)             => request('GET',    path, null, auth);
+const silentGet = (path, auth = false)             => request('GET',    path, null, auth, { silent: true });
+const post      = (path, body, auth = false)       => request('POST',   path, body, auth);
+const put       = (path, body, auth = false)       => request('PUT',    path, body, auth);
+const del       = (path, auth = false, body = null) => request('DELETE', path, body, auth);
 
 // ─── Auth ─────────────────────────────────────────────────────
 export const signup         = (data)            => post('/auth/signup',          data);
@@ -400,7 +404,7 @@ export async function downloadCSV(path, filename) {
   URL.revokeObjectURL(url);
 }
 
-export const getNotifications = () => get('/notifications');
+export const getNotifications = () => silentGet('/notifications', true);
 
 export const globalSearch = (params = {}) => {
   const qs = new URLSearchParams(Object.fromEntries(
