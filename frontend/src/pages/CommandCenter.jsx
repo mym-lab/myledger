@@ -161,6 +161,7 @@ export default function CommandCenter({ onLogout }) {
   const [pricingForm,  setPricingForm]  = useState({ starter: '', professional: '', enterprise: '' });
   const [paymentForm,  setPaymentForm]  = useState({
     mayaName: '', mayaNumber: '', gcashName: '', gcashNumber: '',
+    bankName: '', bankAccountName: '', bankAccountNumber: '',
   });
   const [emailForm,    setEmailForm]    = useState('');
   const [saving,       setSaving]       = useState(false);
@@ -369,6 +370,9 @@ export default function CommandCenter({ onLogout }) {
         mayaNumber:  s.payment?.maya?.number  ?? '',
         gcashName:   s.payment?.gcash?.name   ?? 'Kaiman & Co.',
         gcashNumber: s.payment?.gcash?.number ?? '',
+        bankName:          s.payment?.bank?.bankName      ?? '',
+        bankAccountName:   s.payment?.bank?.accountName   ?? 'Kaiman & Co.',
+        bankAccountNumber: s.payment?.bank?.accountNumber ?? '',
       });
       setEmailForm(s.contactEmail ?? 'mym@kaimanco.com');
       setAcctPricingForm({
@@ -545,6 +549,9 @@ export default function CommandCenter({ onLogout }) {
         payment: {
           maya:  { name: paymentForm.mayaName,  number: paymentForm.mayaNumber  },
           gcash: { name: paymentForm.gcashName, number: paymentForm.gcashNumber },
+          bank:  { bankName:      paymentForm.bankName,
+                   accountName:   paymentForm.bankAccountName,
+                   accountNumber: paymentForm.bankAccountNumber },
         },
         contactEmail: emailForm,
         accountantPricing: {
@@ -1825,6 +1832,35 @@ export default function CommandCenter({ onLogout }) {
                       <label style={{ fontSize: 12, color: T.muted, display: 'block', marginBottom: 4 }}>Mobile Number</label>
                       <input style={inp} value={paymentForm.gcashNumber} placeholder="09XXXXXXXXX"
                         onChange={e => setPaymentForm(f => ({ ...f, gcashNumber: e.target.value }))} />
+                    </div>
+                  </div>
+                </div>
+
+                {/* Bank Transfer */}
+                <div style={{ padding: '14px', background: '#f6f7f9',
+                  borderRadius: 10, border: `1px solid ${T.border}` }}>
+                  <div style={{ fontWeight: 700, color: T.text, marginBottom: 4, fontSize: 14 }}>
+                    Bank Transfer
+                  </div>
+                  <div style={{ fontSize: 11, color: T.muted, marginBottom: 10 }}>
+                    Shown to clients and accountants on the upgrade screen. Leave blank and they
+                    are asked to email for details instead.
+                  </div>
+                  <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
+                    <div>
+                      <label style={{ fontSize: 12, color: T.muted, display: 'block', marginBottom: 4 }}>Bank</label>
+                      <input style={inp} value={paymentForm.bankName} placeholder="e.g. BDO"
+                        onChange={e => setPaymentForm(f => ({ ...f, bankName: e.target.value }))} />
+                    </div>
+                    <div>
+                      <label style={{ fontSize: 12, color: T.muted, display: 'block', marginBottom: 4 }}>Account Name</label>
+                      <input style={inp} value={paymentForm.bankAccountName}
+                        onChange={e => setPaymentForm(f => ({ ...f, bankAccountName: e.target.value }))} />
+                    </div>
+                    <div>
+                      <label style={{ fontSize: 12, color: T.muted, display: 'block', marginBottom: 4 }}>Account Number</label>
+                      <input style={inp} value={paymentForm.bankAccountNumber} placeholder="e.g. 0012-3456-7890"
+                        onChange={e => setPaymentForm(f => ({ ...f, bankAccountNumber: e.target.value }))} />
                     </div>
                   </div>
                 </div>

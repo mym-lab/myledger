@@ -10,6 +10,7 @@
 import { Router } from 'express';
 import { db, rowToClient, rowToTx, rowToJE, rowToAsset, rowToContact } from '../db.js';
 import { authenticate, noEncoder } from '../middleware/auth.js';
+import { journalLinesAsTransactions, journalNetByCode, journalSupplierEntries } from '../lib/journal-lines.js';
 import { requireTier } from '../middleware/tierGuard.js';
 
 const router = Router();
@@ -41,10 +42,18 @@ function canAccess(client, userId) {
   return client.ownerId === userId || client.accountantId === userId;
 }
 
-function getClientAndTx(clientId, userId) {
+// Journal lines (income/expense accounts) shared with the Transactions screen
+function journalAsTransactions(clientId) {
+  return journalLinesAsTransactions(clientId);
+}
+
+// includeJournal: also count journal entries as P&L items (income,
+// balance, cash flow reports only). Other reports keep transactions only.
+function getClientAndTx(clientId, userId, { includeJournal = false } = {}) {
   const client = rowToClient(stmtClientById.get(clientId));
   if (!client || !canAccess(client, userId)) return { client: null, txns: [] };
-  const txns = stmtTxByClient.all(clientId).map(rowToTx);
+  let txns = stmtTxByClient.all(clientId).map(rowToTx);
+  if (includeJournal) txns = txns.concat(journalAsTransactions(clientId));
   return { client, txns };
 }
 
@@ -59,9 +68,10 @@ function filterByDate(txns, from, to) {
 // ── Income Statement ──────────────────────────────────────────────────────────
 router.get('/income', (req, res, next) => {
   try {
-    const { clientId, from, to } = req.query;
+    const { clientId, from, to, basis } = req.query;
     if (!clientId) return res.status(400).json({ error: 'clientId required' });
-    const { client, txns } = getClientAndTx(clientId, req.userId);
+    // basis=cash: transactions only (journal accruals excluded). Default includes journal lines.
+    const { client, txns } = getClientAndTx(clientId, req.userId, { includeJournal: basis !== 'cash' });
     if (!client) return res.status(404).json({ error: 'Client not found' });
 
     const filtered = filterByDate(txns, from, to);
@@ -124,8 +134,17 @@ router.get('/balance', (req, res, next) => {
     const income   = filtered.filter(t => t.type === 'income');
     const expense  = filtered.filter(t => t.type === 'expense');
 
-    const inputVAT  = round(sum(expense.filter(t => !t.supplierVatType || t.supplierVatType === 'vat'), 'amount_vat'));
-    const outputVAT = round(sum(income.filter(t => t.vatType === 'vatable' || !t.vatType), 'amount_vat'));
+    // Journal entries: VAT lines (1110 input, 2010 output), cash lines, and other
+    // asset/liability lines. Equity is the residual, so journal P&L lines are reflected.
+    const jb = journalNetByCode(clientId, { asOf: asOf || undefined });
+    const jNet = (code) => jb[code]?.net || 0;
+    const JOURNAL_CASH = ['1000', '1010', '1020'];
+    const jOther = (cat, skip) => round(Object.entries(jb)
+      .filter(([code, v]) => v.category === cat && !skip.includes(code))
+      .reduce((s, [, v]) => s + (cat === 'Liabilities' ? -v.net : v.net), 0));
+
+    let inputVAT  = round(sum(expense.filter(t => !t.supplierVatType || t.supplierVatType === 'vat'), 'amount_vat') + jNet('1110'));
+    let outputVAT = round(sum(income.filter(t => t.vatType === 'vatable' || !t.vatType), 'amount_vat') - jNet('2010'));
     const netVAT    = round(outputVAT - inputVAT);
 
     const ar = round(sum(income.filter(t => t.settlement === 'ar'), 'amount_gross'));
@@ -149,13 +168,15 @@ router.get('/balance', (req, res, next) => {
       assets: {
         input_vat:           inputVAT,
         accounts_receivable: ar,
-        cash_net:            round(cashIn - cashOut),
+        cash_net:            round(cashIn - cashOut + JOURNAL_CASH.reduce((s, c) => s + jNet(c), 0)),
+        journal_other:       jOther('Assets', ['1110', ...JOURNAL_CASH]),
         fixed_assets_net:    round(totalAssetCost - totalAccumDep),
         note: 'Input VAT Recoverable — claimable from BIR',
       },
       liabilities: {
         vat_payable:      outputVAT,
         accounts_payable: ap,
+        journal_other:    jOther('Liabilities', ['2010']),
         note: 'Output VAT Payable — remittable to BIR',
       },
       net_vat_position: netVAT,
@@ -367,6 +388,21 @@ router.get('/slsp', (req, res, next) => {
         };
       });
 
+    // Journal-entry purchases: an expense line with a supplier, or with input VAT
+    const jePurchases = journalSupplierEntries(clientId, { year: y, months: qMonths })
+      .filter(j => j.expense > 0 && (j.cp || j.inputVat > 0))
+      .map(j => ({
+        date: j.date, referenceNo: j.je.referenceNo || '',
+        supplierName: j.cp?.name || '(Unknown Supplier)',
+        supplierTin: j.cp?.tin || '', supplierAddr: j.cp?.address || '',
+        netPurchases: j.expense, inputVAT: j.inputVat,
+        grossPurchases: round(j.expense + j.inputVat),
+        supplierVatType: j.cp?.vatType || (j.inputVat > 0 ? 'vat' : 'non-vat'),
+        source: 'journal',
+      }));
+    purchases.push(...jePurchases);
+    purchases.sort((a, b) => a.date.localeCompare(b.date));
+
     if (req.query.format === 'csv') {
       const list = req.query.list || 'sales';
       const fname = `${client.tradeName.replace(/\s+/g,'_')}_SLSP_${list}_Q${q}_${y}.csv`;
@@ -559,7 +595,7 @@ router.get('/income-compare', (req, res, next) => {
       period = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}`;
     }
 
-    const { client, txns } = getClientAndTx(clientId, req.userId);
+    const { client, txns } = getClientAndTx(clientId, req.userId, { includeJournal: true });
     if (!client) return res.status(404).json({ error: 'Client not found' });
 
     const [y, m] = period.split('-').map(Number);

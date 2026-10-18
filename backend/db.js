@@ -306,6 +306,7 @@ try { db.exec("ALTER TABLE clients ADD COLUMN tax_types TEXT NOT NULL DEFAULT '[
 catch (_) { /* column already exists — safe to ignore */ }
 try { db.exec("ALTER TABLE users ADD COLUMN referral_code TEXT"); }
 catch (_) { /* column already exists */ }
+try { db.exec("ALTER TABLE journal_entries ADD COLUMN counterparty TEXT NOT NULL DEFAULT 'null'"); } catch (_) {}
 try { db.exec("ALTER TABLE transactions ADD COLUMN invoice_id TEXT DEFAULT ''"); }
 catch (_) { /* column already exists */ }
 try { db.exec("ALTER TABLE users ADD COLUMN referral_balance REAL NOT NULL DEFAULT 0"); }
@@ -482,6 +483,12 @@ const DEFAULT_SETTINGS = {
   payment: {
     maya:  { name: 'Kaiman & Co.', number: '09989919660' },
     gcash: { name: 'Kaiman & Co.', number: '09989919660' },
+    // Bank transfer — fill these in via Admin -> Settings -> Payment.
+    // NOTE: DEFAULT_SETTINGS is applied with INSERT OR IGNORE, so an existing
+    // install keeps its stored `payment` object and will NOT pick this up.
+    // Saving the payment form in the admin panel writes the whole object,
+    // including bank, which is how existing installs get these fields.
+    bank:  { bankName: '', accountName: 'Kaiman & Co.', accountNumber: '' },
   },
   contactEmail: 'mym@kaimanco.com',
   referral: {
@@ -605,6 +612,7 @@ export function rowToJE(r) {
     id: r.id, clientId: r.client_id, userId: r.user_id,
     date: r.date, description: r.description, referenceNo: r.reference_no,
     entries: JSON.parse(r.entries || '[]'),
+    counterparty: JSON.parse(r.counterparty || 'null') || null,
     createdAt: r.created_at,
   };
 }

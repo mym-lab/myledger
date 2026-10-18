@@ -36,10 +36,22 @@
     <script type="module" src="/src/main.jsx"></script>
     <!-- Register service worker -->
     <script>
+      // Service worker is for production only. On localhost, Vite's dev
+      // modules (/src/...) have no content hash, so cache-first caching
+      // keeps serving stale code. Unregister any worker left behind.
       if ('serviceWorker' in navigator) {
-        window.addEventListener('load', () => {
-          navigator.serviceWorker.register('/sw.js').catch(() => {});
-        });
+        if (location.hostname === 'localhost' || location.hostname === '127.0.0.1') {
+          navigator.serviceWorker.getRegistrations()
+            .then(rs => rs.forEach(r => r.unregister()))
+            .catch(() => {});
+          if ('caches' in window) {
+            caches.keys().then(ks => ks.forEach(k => caches.delete(k))).catch(() => {});
+          }
+        } else {
+          window.addEventListener('load', () => {
+            navigator.serviceWorker.register('/sw.js').catch(() => {});
+          });
+        }
       }
     </script>
   </body>

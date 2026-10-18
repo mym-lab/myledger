@@ -13,7 +13,7 @@ import PricingModal       from '../components/PricingModal.jsx';
 import { printReport, build2307Html } from '../utils/printReport.js';
 import {
   getClients, createClient, updateClient, deleteClient, backupClient,
-  getTransactions, createTransaction, voidTransaction,
+  getTransactions, getJournalLines, createTransaction, voidTransaction,
   getIncomeReport, getBalanceReport, getCashFlowReport, getBooksReport, getCashFlowForecast,
   getReceipts, uploadReceipt, deleteReceipt,
   getAssets, createAsset, deleteAsset, getLapsing,
@@ -22,8 +22,6 @@ import {
   getPendingInvite, cancelPendingInvite,
   getPublicSettings,
   createUpgradeRequest,
-  createPaymongoLink,
-  pollPaymongoStatus,
   scanReceipt,
   getMyReferrals,
   downloadCSV,
@@ -215,8 +213,11 @@ function UpgradeGate({ tier, required, onUpgrade, children }) {
 }
 
 // ─── PaymentModal ─────────────────────────────────────────────────────────────
-// Payment via Maya or GCash (manual transfer → upgrade request).
-// PayMongo removed — users found it confusing. Maya/GCash are the standard PH wallets.
+// Payment via Maya, GCash, or bank transfer (manual transfer → upgrade request).
+// PayMongo removed — users found it confusing. Maya/GCash are the standard PH
+// wallets; bank transfer covers anyone paying from a business account.
+// Bank details come from Admin → Settings → Payment; the bank option is hidden
+// until an account number is set there, so the flow never dead-ends.
 function PaymentModal({ clientId, currentTier, settings, onClose, onUpgradeSuccess }) {
   const isMobile = useMobile();
   const pricing      = settings?.pricing      || DEFAULT_SETTINGS.pricing;
@@ -233,7 +234,7 @@ function PaymentModal({ clientId, currentTier, settings, onClose, onUpgradeSucce
   const [selTier,      setSelTier]      = useState(upgradeable[0]?.value || 'starter');
   const [billingCycle, setBillingCycle] = useState('monthly'); // 'monthly' | 'annual'
   const [step,         setStep]         = useState(1);   // 1=pick tier, 2=pick method, 'manual'=transfer details, 3=done
-  const [method,       setMethod]       = useState(null);  // 'maya' | 'gcash'
+  const [method,       setMethod]       = useState(null);  // 'maya' | 'gcash' | 'bank'
   const [refNo,        setRefNo]        = useState('');
   const [submitting,   setSubmitting]   = useState(false);
 
@@ -241,8 +242,17 @@ function PaymentModal({ clientId, currentTier, settings, onClose, onUpgradeSucce
   const monthlyPrice = tierObj?.price || 0;
   const annualPrice  = Math.round(monthlyPrice * 12 * 0.80);
   const displayPrice = billingCycle === 'annual' ? annualPrice : monthlyPrice;
-  const acct         = method ? { ...payAccts[method], type: method === 'maya' ? 'Maya' : 'GCash' } : null;
-  const methodColor  = method === 'maya' ? '#00a8e0' : '#007dff';
+  const bankAcct     = payAccts.bank || {};
+  const bankReady    = Boolean(bankAcct.accountNumber);
+  const acct = !method ? null
+    : method === 'bank'
+      ? { type:   'Bank Transfer',
+          number: bankAcct.accountNumber || '',
+          name:   [bankAcct.bankName, bankAcct.accountName].filter(Boolean).join(' — ') }
+      : { ...payAccts[method], type: method === 'maya' ? 'Maya' : 'GCash' };
+  const methodColor  = method === 'maya' ? '#00a8e0'
+                     : method === 'bank' ? '#475569'
+                     : '#007dff';
 
   function goMethod(m) {
     setMethod(m);
@@ -315,7 +325,9 @@ function PaymentModal({ clientId, currentTier, settings, onClose, onUpgradeSucce
           <p style={{ fontSize: 13, color: T.muted, marginBottom: 12, fontWeight: 600 }}>
             Pay via:
           </p>
-          <div style={{ display: 'grid', gridTemplateColumns: isMobile ? '1fr' : '1fr 1fr', gap: 12, marginBottom: 20 }}>
+          <div style={{ display: 'grid',
+            gridTemplateColumns: isMobile ? '1fr' : (bankReady ? '1fr 1fr 1fr' : '1fr 1fr'),
+            gap: 12, marginBottom: 20 }}>
             <button onClick={() => goMethod('maya')}
               style={{ borderRadius: 14, padding: '20px 16px', cursor: 'pointer', border: '2px solid #00a8e0',
                 background: '#f0fbff', textAlign: 'center', fontFamily: 'inherit',
@@ -332,6 +344,16 @@ function PaymentModal({ clientId, currentTier, settings, onClose, onUpgradeSucce
               <div style={{ fontWeight: 800, fontSize: 20, color: '#007dff', marginBottom: 2 }}>GCash</div>
               <div style={{ fontSize: 12, color: T.muted }}>Globe GCash</div>
             </button>
+            {bankReady && (
+              <button onClick={() => goMethod('bank')}
+                style={{ borderRadius: 14, padding: '20px 16px', cursor: 'pointer', border: '2px solid #475569',
+                  background: '#f8fafc', textAlign: 'center', fontFamily: 'inherit',
+                  transition: 'all .15s', boxShadow: '0 2px 8px #47556920' }}>
+                <div style={{ fontSize: 28, marginBottom: 4 }}>🏦</div>
+                <div style={{ fontWeight: 800, fontSize: 20, color: '#475569', marginBottom: 2 }}>Bank</div>
+                <div style={{ fontSize: 12, color: T.muted }}>{bankAcct.bankName || 'Bank transfer'}</div>
+              </button>
+            )}
           </div>
 
           <div style={{ display: 'flex', justifyContent: 'flex-end' }}>
@@ -1665,6 +1687,13 @@ const TAB_TIER = {
 };
 
 // ─── Main Component ───────────────────────────────────────────────────────────
+// Merge read-only journal lines into the Transactions list, newest first.
+// Journal lines are display-only here: no void, no receipts.
+function txRowsFor(txns, jrnLines) {
+  const jrn = jrnLines.map(j => ({ ...j, net: j.amount_net, vat: 0, gross: j.amount_gross, settlement: 'journal', voided: false }));
+  return [...txns, ...jrn].sort((a, b) => String(b.createdAt).localeCompare(String(a.createdAt)));
+}
+
 export default function ClientInterface({ onLogout }) {
   const isMobile = useMobile();
   const [sidebarOpen, setSidebarOpen] = useState(false);
@@ -1682,6 +1711,7 @@ export default function ClientInterface({ onLogout }) {
   // Transactions tab
   const [txns,   setTxns]   = useState([]);
   const [txLoad, setTxLoad] = useState(false);
+  const [jrnLines, setJrnLines] = useState([]);
   // BIR 2307 period picker
   const now0 = new Date();
   const [ewt2307Year, setEwt2307Year] = useState(now0.getFullYear());
@@ -1764,7 +1794,7 @@ export default function ClientInterface({ onLogout }) {
   useEffect(() => {
     if (!active) return;
     if (tab === 'Overview')      { loadOverview(); loadNarrative(); }
-    if (tab === 'Transactions')  loadTxns();
+    if (tab === 'Transactions')  { loadTxns(); loadJrnLines(); }
     if (tab === 'BIR Reminders') loadBIR();
     if (tab === 'Assets')        loadAssets();
     if (tab === 'Referral')      loadReferrals();
@@ -1808,19 +1838,21 @@ export default function ClientInterface({ onLogout }) {
   async function loadOverview() {
     setOverviewErr('');
     try {
-      const [inc, vat, txRes, dl] = await Promise.all([
+      const [inc, vat, txRes, dl, cashInc] = await Promise.all([
         getIncomeReport(active.id),
         getBirVatBalance(active.id),
         getTransactions(active.id),
         getBirDeadlines(active.id),
+        getIncomeReport(active.id, undefined, undefined, 'cash'),
       ]);
       setIncome(inc); setVatBal(vat);
       setOverTxns(txRes.transactions || []);
       setDL(dl.deadlines || []);
       // Cash Position — derived from income + VAT balance
       if (inc) {
+        const cb = cashInc || inc; // cash basis: no accrual journal lines
         setCashPos({
-          cash:       (inc.grossRevenue || inc.revenue * 1.12 || 0) - (inc.grossExpenses || inc.expenses * 1.12 || 0),
+          cash:       (cb.grossRevenue || cb.revenue * 1.12 || 0) - (cb.grossExpenses || cb.expenses * 1.12 || 0),
           netProfit:  inc.profit || 0,
           vatPayable: Math.max(0, (vat?.outputVAT || 0) - (vat?.inputVAT || 0)),
         });
@@ -1830,6 +1862,11 @@ export default function ClientInterface({ onLogout }) {
       console.error('Overview load failed:', e);
       setOverviewErr(e.message || 'Failed to load dashboard data. Please refresh.');
     }
+  }
+
+  async function loadJrnLines() {
+    try { const r = await getJournalLines(active.id); setJrnLines(r.transactions || []); }
+    catch (e) { console.error(e); }
   }
 
   async function loadTxns() {
@@ -2553,9 +2590,9 @@ export default function ClientInterface({ onLogout }) {
                       </tr>
                     </thead>
                     <tbody>
-                      {txns.map((t, i) => (
+                      {txRowsFor(txns, jrnLines).map((t, i, arr) => (
                         <tr key={t.id} style={{
-                          borderBottom: i < txns.length - 1 ? `1px solid ${T.border}` : 'none',
+                          borderBottom: i < arr.length - 1 ? `1px solid ${T.border}` : 'none',
                           opacity: t.voided ? 0.5 : 1,
                           background: t.voided ? '#fafafa' : undefined,
                         }}
@@ -2569,6 +2606,7 @@ export default function ClientInterface({ onLogout }) {
                                   <span style={{ background: t.type === 'income' ? '#e3f7ed' : '#fff0f0',
                                     color: t.type === 'income' ? T.green : T.red,
                                     padding: '2px 8px', borderRadius: 6, fontSize: 11, fontWeight: 600 }}>{t.type}</span>
+                                  {t.source === 'journal' && <div style={{ fontSize: 10, color: T.accent, marginTop: 2 }}>📒 journal entry</div>}
                                   {t.vatType && t.vatType !== 'vatable' && (
                                     <div style={{ fontSize: 10, color: T.muted, marginTop: 2 }}>{t.vatType.replace('_',' ')}</div>
                                   )}
@@ -2602,18 +2640,18 @@ export default function ClientInterface({ onLogout }) {
                           </td>
                           <td style={{ padding: '10px 14px' }}>
                             <div style={{ display: 'flex', gap: 4, alignItems: 'center' }}>
-                              {!t.voided && (
+                              {!t.voided && t.source !== 'journal' && (
                                 <button onClick={() => voidTx(t.id)}
                                   style={{ background: 'none', border: 'none', cursor: 'pointer',
                                     color: T.red, fontSize: 13, padding: '3px 6px', borderRadius: 5 }}>
                                   ⊘ Void
                                 </button>
                               )}
-                              <button onClick={() => openReceipts(t)}
+                              {t.source !== 'journal' && <button onClick={() => openReceipts(t)}
                                 style={{ background: 'none', border: 'none', cursor: 'pointer',
                                   color: T.muted, fontSize: 14, padding: '3px 6px', borderRadius: 5 }}>
                                 📎
-                              </button>
+                              </button>}
                             </div>
                           </td>
                         </tr>

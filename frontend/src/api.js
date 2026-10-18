@@ -104,10 +104,11 @@ export const voidTransaction    = (id, reason) => put(`/transactions/${id}/void`
 export const deleteTransaction  = (id)         => put(`/transactions/${id}/void`, { reason: '' }, true);
 
 // ─── Reports ──────────────────────────────────────────────────
-export const getIncomeReport   = (clientId, from, to) => {
+export const getIncomeReport   = (clientId, from, to, basis) => {
   let url = `/reports/income?clientId=${clientId}`;
   if (from) url += `&from=${from}`;
   if (to)   url += `&to=${to}`;
+  if (basis) url += `&basis=${basis}`;
   return get(url, true);
 };
 export const getBalanceReport  = (clientId, asOf) => {
@@ -198,8 +199,10 @@ export const getIncomeCompare = (clientId, period) => {
 };
 
 // ─── Journal Entries ──────────────────────────────────────────
+export const getJournalLines     = (clientId)  => get(`/transactions/journal-lines?clientId=${clientId}`, true);
 export const getJournalEntries  = (clientId)  => get(`/journal-entries?clientId=${clientId}`, true);
 export const createJournalEntry = (data)      => post('/journal-entries', data, true);
+export const updateJournalEntry = (id, data)  => put(`/journal-entries/${id}`, data, true);
 export const deleteJournalEntry = (id)        => del(`/journal-entries/${id}`, true);
 
 // ─── Upgrade Requests ─────────────────────────────────────────
@@ -301,6 +304,15 @@ export const pauseRecurringInvoice   = (id)        => post(`/recurring-invoices/
 export const resumeRecurringInvoice  = (id)        => post(`/recurring-invoices/${id}/resume`, {}, true);
 export const cancelRecurringInvoice  = (id)        => del(`/recurring-invoices/${id}`, true);
 
+// ── Recurring Journal Entries (rent accrual, depreciation, custom) ───────────
+export const getRecurringEntries    = (clientId)  => get(`/recurring-entries?clientId=${clientId}`, true);
+export const createRecurringEntry   = (data)      => post('/recurring-entries', data, true);
+export const updateRecurringEntry   = (id, data)  => put(`/recurring-entries/${id}`, data, true);
+export const deleteRecurringEntry   = (id)        => del(`/recurring-entries/${id}`, true);
+export const runRecurringEntry      = (id, data)  => post(`/recurring-entries/${id}/run`, data || {}, true);
+export const createAssetDepSchedule = (assetId, data) => post(`/recurring-entries/from-asset/${assetId}`, data || {}, true);
+export const createRecurringFromEntry = (jeId, data) => post(`/recurring-entries/from-entry/${jeId}`, data || {}, true);
+
 // ─── Payroll / 1601-C ────────────────────────────────────────
 export const getEmployees      = (clientId)   => get(`/payroll/employees?clientId=${clientId}`, true);
 export const createEmployee    = (data)       => post('/payroll/employees', data, true);
@@ -371,13 +383,6 @@ export async function downloadBirXml(clientId, form, year, month) {
   document.body.removeChild(a);
   URL.revokeObjectURL(url);
 }
-
-// ─── PayMongo Payments ────────────────────────────────────────
-export const createPaymongoLink = (clientId, targetTier, requestType = 'client') =>
-  post('/payments/paymongo/create-link', { clientId, targetTier, requestType }, true);
-
-export const pollPaymongoStatus = (linkId) =>
-  get(`/payments/paymongo/status/${linkId}`, true);
 
 // ─── CSV Downloads ────────────────────────────────────────────
 export async function downloadCSV(path, filename) {

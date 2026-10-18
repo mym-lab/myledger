@@ -16,6 +16,7 @@ import { Router }          from 'express';
 import { db, rowToClient, rowToTx } from '../db.js';
 import { authenticate, noEncoder } from '../middleware/auth.js';
 import { requireTier } from '../middleware/tierGuard.js';
+import { journalSupplierEntries } from '../lib/journal-lines.js';
 
 const router = Router();
 router.use(authenticate);
@@ -442,7 +443,15 @@ function xml1601C(client, year, month) {
 function xml1601EQ(client, txns, year, month) {
   const { from, to, q } = quarterBounds(year, month);
   const period   = filterPeriod(txns, from, to);
-  const expense  = period.filter(t => t.type === 'expense' && (t.ewtAmount || 0) > 0);
+  const expenseTx = period.filter(t => t.type === 'expense' && (t.ewtAmount || 0) > 0);
+  // Journal-entry withholding (2030 credits), shaped like transaction rows
+  const jeRows = journalSupplierEntries(client.id, { year, months: [(q-1)*3+1, (q-1)*3+2, (q-1)*3+3] })
+    .filter(j => j.ewt > 0)
+    .map(j => ({
+      createdAt: j.date, counterpartyName: j.cp?.name || '', counterpartyTin: j.cp?.tin || '',
+      amount_gross: round(j.expense + j.inputVat), ewtRate: (j.cp?.ewtRate || 0) / 100, ewtAmount: j.ewt,
+    }));
+  const expense  = [...expenseTx, ...jeRows];
   const totalEWT = round(sum(expense, 'ewtAmount'));
 
   const ewtRows = expense.map(e => `

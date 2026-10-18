@@ -31,6 +31,7 @@ import invitationRoutes      from './routes/invitations.js';
 import referralRoutes        from './routes/referrals.js';
 import invoiceRoutes         from './routes/invoices.js';
 import recurringInvoiceRoutes, { generateDueRecurringInvoices } from './routes/recurring-invoices.js';
+import recurringEntriesRoutes, { generateDueRecurringEntries } from './routes/recurring-entries.js';
 import payrollRoutes         from './routes/payroll.js';
 import paymentRoutes         from './routes/payments.js';
 import monitoringRoutes, { trackActivity } from './routes/monitoring.js';
@@ -89,6 +90,7 @@ app.use('/api/invitations',      invitationRoutes);
 app.use('/api/referrals',        referralRoutes);
 app.use('/api/invoices',            invoiceRoutes);
 app.use('/api/recurring-invoices',  recurringInvoiceRoutes);
+app.use('/api/recurring-entries',   recurringEntriesRoutes);
 app.use('/api/payroll',             payrollRoutes);
 app.use('/api/payments',         paymentRoutes);
 app.use('/api/monitoring',       monitoringRoutes);
@@ -409,6 +411,21 @@ function scheduleRecurringInvoices() {
 // Run on startup to catch any missed generations, then every hour
 runRecurringInvoices();
 setInterval(scheduleRecurringInvoices, 60 * 60 * 1000);
+
+// -- Recurring Journal Entry Scheduler ------------------------------------
+// Rent accrual, depreciation, and any other scheduled journal entry.
+// Same cadence as recurring invoices: catch-up on startup, then hourly.
+// generateDueRecurringEntries() is idempotent per day -- it advances each
+// schedule's next_run_date as it posts, so a double tick cannot double-post.
+function runRecurringEntries() {
+  try {
+    generateDueRecurringEntries();
+  } catch (e) {
+    console.error('Recurring journal entry scheduler error:', e.message);
+  }
+}
+runRecurringEntries();
+setInterval(runRecurringEntries, 60 * 60 * 1000);
 
 // ── Daily Database Backup ─────────────────────────────────────────────────────
 // Runs daily at 2:00 AM Philippine time (UTC 18:00 previous day).

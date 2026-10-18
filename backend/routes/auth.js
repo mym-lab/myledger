@@ -211,13 +211,13 @@ router.post('/forgot-password', async (req, res, next) => {
     db.prepare('UPDATE users SET reset_token=?, reset_token_expires=? WHERE id=?')
       .run(token, expires, user.id);
 
-    const baseUrl  = process.env.APP_URL || 'http://localhost:5173';
+    const baseUrl  = process.env.APP_URL || 'https://app.kaimanco.com';
     const resetUrl = `${baseUrl}?reset=${token}`;
 
     // Always log so it works even without email configured
     console.log(`🔑 Password reset for ${email}: ${resetUrl}`);
 
-    await sendEmail({
+    const mailResult = await sendEmail({
       to: email,
       subject: 'MyLedger — Reset Your Password',
       html: `
@@ -241,6 +241,13 @@ router.post('/forgot-password', async (req, res, next) => {
         </div>`,
       text: `Reset your MyLedger password: ${resetUrl}\n\nThis link expires in 1 hour.`,
     });
+
+    // The response is deliberately generic (never reveal whether an address
+    // exists), so a send failure is invisible to the user -- log it loudly.
+    if (!mailResult?.sent) {
+      console.warn(`\u26a0\ufe0f  Reset email NOT sent to ${email}: ${mailResult?.reason || 'unknown'}`);
+      console.warn(`    Use the reset link logged above.`);
+    }
 
     res.json({ message: 'If this email is registered, a reset link has been sent.' });
   } catch (err) { next(err); }
