@@ -16,17 +16,19 @@ import PricingModal           from '../components/PricingModal.jsx';
 import BalanceSheetImport    from '../components/BalanceSheetImport.jsx';
 import {
   getClients, updateClient, getNarrative,
-  getTransactions, createTransaction, updateTransaction, voidTransaction,
+  getTransactions, getJournalLines, createTransaction, updateTransaction, voidTransaction,
   getIncomeReport, getBalanceReport, getCashFlowReport, getCashFlowForecast,
   getReceipts, uploadReceipt, deleteReceipt,
   getBirCalendar,
   getBooksReport, getGeneralJournal, getGeneralLedger,
   getCOA, seedCOA, createAccount, updateAccount, deleteAccount,
+  getRecurringEntries, createRecurringEntry, deleteRecurringEntry,
+  runRecurringEntry, updateRecurringEntry, createAssetDepSchedule, createRecurringFromEntry,
   getPeriodLocks, lockPeriod, unlockPeriod,
   getAuditLog,
   getBirDeadlines, getBirVatBalance, getBirFilingSummary, updateBirFilingStatus, getBirPortfolio,
   getIncomeCompare,
-  getJournalEntries, createJournalEntry, deleteJournalEntry,
+  getJournalEntries, createJournalEntry, updateJournalEntry, deleteJournalEntry,
   assignEncoder, removeEncoder,
   getAssets, createAsset, deleteAsset, getLapsing,
   getContacts, createContact, updateContact, deleteContact,
@@ -42,8 +44,6 @@ import {
   getAgedAR, getAgedAP,
   downloadCSV,
   downloadBirXml,
-  createPaymongoLink,
-  pollPaymongoStatus,
   createAccountantUpgradeRequest,
   getMyUpgradeRequests,
   getMe,
@@ -205,7 +205,7 @@ function SectionHead({ children }) {
 
 // Paid-only tabs — free tier is locked out
 const PRO_TABS = new Set([
-  'Journal Entries', 'Trial Balance', 'Books', 'General Journal', 'General Ledger', 'COA', 'Period Lock', 'Audit Log',
+  'Journal Entries', 'Trial Balance', 'Books', 'General Journal', 'General Ledger', 'COA', 'Recurring Entries', 'Period Lock', 'Audit Log',
   'BIR Returns', 'Payroll', 'Alphalist',
   'Income Statement', 'Balance Sheet', 'Cash Flow', 'Assets', 'Contacts', 'SLSP', 'Budget', 'Aged AR/AP', 'Consolidated',
 ]);
@@ -815,15 +815,41 @@ function TxModal({ clientId, client, onSaved, onClose }) {
 }
 
 // ─── JournalEntryModal (module-level) ────────────────────────────────────────
-function JournalEntryModal({ clientId, onSaved, onClose }) {
+// Next posting date after `dateStr` for a frequency. UTC arithmetic so the
+// result never shifts a day in timezones ahead of UTC (matches the server).
+function addJournalPeriod(dateStr, freq) {
+  if (!dateStr) return '';
+  const [y, m, d] = dateStr.split('-').map(Number);
+  if (freq === 'weekly') return new Date(Date.UTC(y, m - 1, d + 7)).toISOString().slice(0, 10);
+  const months = freq === 'quarterly' ? 3 : freq === 'annual' ? 12 : 1;
+  const first = new Date(Date.UTC(y, m - 1 + months, 1));
+  const last = new Date(Date.UTC(first.getUTCFullYear(), first.getUTCMonth() + 1, 0)).getUTCDate();
+  first.setUTCDate(Math.min(d, last));
+  return first.toISOString().slice(0, 10);
+}
+
+function JournalEntryModal({ clientId, existing = null, onSaved, onClose }) {
   const isMobile = useMobile();
   const blank = () => ({ account: '', debit: '', credit: '' });
+  const cpX = existing?.counterparty || {};
   const [form,  setForm]  = useState({
-    date: new Date().toISOString().substring(0, 10),
-    description: '', referenceNo: '',
+    date: existing?.date || new Date().toISOString().substring(0, 10),
+    description: existing?.description || '', referenceNo: existing?.referenceNo || '',
+    cpName: cpX.name || '', cpTin: cpX.tin || '', cpAddr: cpX.address || '',
+    cpVat: cpX.vatType || 'vat', cpAtc: cpX.ewtAtc || '', cpRate: cpX.ewtRate ? String(cpX.ewtRate) : '',
   });
-  const [lines,  setLines]  = useState([blank(), blank()]);
+  const [lines,  setLines]  = useState(existing?.entries?.length
+    ? existing.entries.map(e => ({ account: String(e.account || ''), debit: e.debit ? String(e.debit) : '', credit: e.credit ? String(e.credit) : '' }))
+    : [blank(), blank()]);
+  const [coaList, setCoaList] = useState([]);
+  const [newAcct, setNewAcct] = useState({ code: '', name: '', category: 'Expenses' });
+  useEffect(() => {
+    getCOA(clientId).then(r => setCoaList(r.accounts || [])).catch(() => {});
+  }, [clientId]);
   const [saving, setSaving] = useState(false);
+  const [recur,   setRecur]   = useState(false);
+  const [recFreq, setRecFreq] = useState('monthly');
+  const [recEnd,  setRecEnd]  = useState('');
 
   const setF = key => e => setForm(f => ({ ...f, [key]: e.target.value }));
   const setL = (i, key) => e =>
@@ -833,23 +859,58 @@ function JournalEntryModal({ clientId, onSaved, onClose }) {
   const totalCredit = lines.reduce((s, l) => s + (parseFloat(l.credit) || 0), 0);
   const balanced    = Math.abs(totalDebit - totalCredit) < 0.01;
 
+  async function handleAddAccount() {
+    if (!newAcct.code.trim() || !newAcct.name.trim()) return alert('Enter a code and a name for the new account.');
+    try {
+      await createAccount({ clientId, code: newAcct.code.trim(), name: newAcct.name.trim(), category: newAcct.category });
+      const r = await getCOA(clientId);
+      setCoaList(r.accounts || []);
+      setNewAcct({ code: '', name: '', category: 'Expenses' });
+    } catch (err) { alert(err.message); }
+  }
+
   async function handleSubmit(e) {
     e.preventDefault();
     if (!balanced) return alert('Journal entry must balance — Debits must equal Credits.');
+    const known = new Set(coaList.map(c => String(c.code)));
+    const unknown = lines
+      .filter(l => (l.account || parseFloat(l.debit) || parseFloat(l.credit)) && !known.has(String(l.account || '').trim()))
+      .map(l => l.account || '(blank)');
+    if (unknown.length) return alert(`Pick accounts from the list. Not found: ${unknown.join(', ')}. Use "+ Add account" to create one.`);
     setSaving(true);
     try {
-      await createJournalEntry({
+      const payload = {
         clientId, date: form.date, description: form.description, referenceNo: form.referenceNo,
+        counterparty: (form.cpName || form.cpTin) ? {
+          name: form.cpName, tin: form.cpTin, address: form.cpAddr,
+          vatType: form.cpVat, ewtAtc: form.cpAtc, ewtRate: parseFloat(form.cpRate) || 0,
+        } : null,
         entries: lines
           .filter(l => l.account || parseFloat(l.debit) || parseFloat(l.credit))
           .map(l => ({ account: l.account, debit: parseFloat(l.debit) || 0, credit: parseFloat(l.credit) || 0 })),
-      });
+      };
+      if (existing) {
+        await updateJournalEntry(existing.id, payload);
+      } else {
+        const created = await createJournalEntry(payload);
+        if (recur) {
+          try {
+            await createRecurringFromEntry(created.journalEntry.id, {
+              frequency: recFreq, endDate: recEnd || null,
+            });
+          } catch (err) {
+            alert(`The journal entry was posted, but the recurring schedule was not created: ${err.message}`);
+          }
+        }
+      }
       onSaved(); onClose();
     } catch (err) { alert(err.message); setSaving(false); }
   }
 
+  const nextPostDate = addJournalPeriod(form.date, recFreq);
+
   return (
-    <ModalShell title="New Journal Entry" onClose={onClose} wide>
+    <ModalShell title={existing ? 'Edit Journal Entry' : 'New Journal Entry'} onClose={onClose} wide>
       <form onSubmit={handleSubmit}>
         <div style={{ display: 'grid', gridTemplateColumns: isMobile ? '1fr' : '160px 1fr 1fr', gap: '0 16px' }}>
           <Fld label="Date">
@@ -863,6 +924,37 @@ function JournalEntryModal({ clientId, onSaved, onClose }) {
           </Fld>
         </div>
 
+        {/* Optional supplier / lessor details: needed for SLSP purchases and withholding (1601-EQ) */}
+        <div style={{ marginTop: 10, padding: 12, border: `1px solid ${T.border}`, borderRadius: 10 }}>
+          <div style={{ fontSize: 12, fontWeight: 600, color: T.muted, marginBottom: 8 }}>
+            Supplier / Lessor (optional, for SLSP and withholding)
+          </div>
+          <div style={{ display: 'grid', gridTemplateColumns: isMobile ? '1fr' : '1fr 1fr 1fr', gap: '0 16px' }}>
+            <Fld label="Name">
+              <input style={inp} value={form.cpName} onChange={setF('cpName')} placeholder="e.g. Juan dela Cruz" />
+            </Fld>
+            <Fld label="TIN">
+              <input style={inp} value={form.cpTin} onChange={setF('cpTin')} placeholder="000-000-000-000" />
+            </Fld>
+            <Fld label="Address">
+              <input style={inp} value={form.cpAddr} onChange={setF('cpAddr')} />
+            </Fld>
+            <Fld label="VAT type">
+              <select style={inp} value={form.cpVat} onChange={setF('cpVat')}>
+                <option value="vat">VAT-registered supplier</option>
+                <option value="non-vat">Non-VAT</option>
+                <option value="exempt">VAT-exempt</option>
+              </select>
+            </Fld>
+            <Fld label="EWT ATC code">
+              <input style={inp} value={form.cpAtc} onChange={setF('cpAtc')} placeholder="as on your 2307 / BIR ATC table" />
+            </Fld>
+            <Fld label="EWT rate (%)">
+              <input style={inp} type="number" step="0.01" value={form.cpRate} onChange={setF('cpRate')} placeholder="e.g. 5" />
+            </Fld>
+          </div>
+        </div>
+
         <div style={{ marginTop: 4 }}>
           <div style={{ display: 'grid', gridTemplateColumns: '1fr 130px 130px 32px', gap: '0 8px', marginBottom: 6 }}>
             {['Account Name', 'Debit (₱)', 'Credit (₱)', ''].map(h => (
@@ -871,10 +963,24 @@ function JournalEntryModal({ clientId, onSaved, onClose }) {
             ))}
           </div>
 
+          <datalist id="je-coa-codes">
+            {coaList.map(c => <option key={c.code} value={c.code}>{c.name}</option>)}
+          </datalist>
+          <div style={{ fontSize: 12, color: T.muted, marginBottom: 8 }}>
+            Account: type a code or pick from the list. Accounts must exist in your chart of accounts.
+          </div>
+          <div style={{ display: 'grid', gridTemplateColumns: isMobile ? '1fr' : '110px 1fr 150px auto', gap: 8, marginBottom: 12, alignItems: 'center' }}>
+            <input style={inp} placeholder="Code" value={newAcct.code} onChange={e => setNewAcct(n => ({ ...n, code: e.target.value }))} />
+            <input style={inp} placeholder="New account name" value={newAcct.name} onChange={e => setNewAcct(n => ({ ...n, name: e.target.value }))} />
+            <select style={inp} value={newAcct.category} onChange={e => setNewAcct(n => ({ ...n, category: e.target.value }))}>
+              {['Assets', 'Liabilities', 'Equity', 'Income', 'Expenses'].map(c => <option key={c} value={c}>{c}</option>)}
+            </select>
+            <Btn size="sm" variant="ghost" type="button" onClick={handleAddAccount}>+ Add account</Btn>
+          </div>
           {lines.map((line, i) => (
             <div key={i} style={{ display: 'grid', gridTemplateColumns: '1fr 130px 130px 32px', gap: '0 8px', marginBottom: 8 }}>
-              <input style={inp} value={line.account} onChange={setL(i, 'account')}
-                placeholder={i === 0 ? 'e.g. Cash / Bank Account' : 'e.g. Sales Revenue'} />
+              <input style={inp} value={line.account} onChange={setL(i, 'account')} list="je-coa-codes"
+                placeholder={i === 0 ? 'Code, e.g. 1010' : 'Code, e.g. 5110'} />
               <input style={{ ...inp, textAlign: 'right' }} type="number" step="0.01" min="0"
                 value={line.debit} onChange={setL(i, 'debit')} placeholder="0.00" />
               <input style={{ ...inp, textAlign: 'right' }} type="number" step="0.01" min="0"
@@ -907,6 +1013,37 @@ function JournalEntryModal({ clientId, onSaved, onClose }) {
             <div style={{ fontSize: 12, color: T.accent, marginTop: 6 }}>✓ Balanced</div>
           )}
         </div>
+
+        {!existing && (
+          <div style={{ marginTop: 14, padding: 12, border: `1px solid ${T.border}`, borderRadius: 10 }}>
+            <label style={{ display: 'flex', alignItems: 'center', gap: 8, fontSize: 13, fontWeight: 600, cursor: 'pointer' }}>
+              <input type="checkbox" checked={recur} onChange={e => setRecur(e.target.checked)} />
+              Make this recurring
+            </label>
+            {recur && (
+              <>
+                <div style={{ display: 'grid', gridTemplateColumns: isMobile ? '1fr' : '1fr 1fr', gap: '0 16px', marginTop: 10 }}>
+                  <Fld label="Frequency">
+                    <select style={inp} value={recFreq} onChange={e => setRecFreq(e.target.value)}>
+                      <option value="weekly">Weekly</option>
+                      <option value="monthly">Monthly</option>
+                      <option value="quarterly">Quarterly</option>
+                      <option value="annual">Annual</option>
+                    </select>
+                  </Fld>
+                  <Fld label="End date (optional)">
+                    <input style={inp} type="date" value={recEnd} min={nextPostDate}
+                      onChange={e => setRecEnd(e.target.value)} />
+                  </Fld>
+                </div>
+                <div style={{ fontSize: 12, color: T.muted, marginTop: 8 }}>
+                  This entry posts now as the first one. The next copy posts on {nextPostDate}
+                  {' '}and repeats {recFreq}. The supplier / lessor and VAT / EWT details are copied to each copy.
+                </div>
+              </>
+            )}
+          </div>
+        )}
 
         <div style={{ display: 'flex', justifyContent: 'space-between', marginTop: 16, alignItems: 'center' }}>
           <Btn variant="ghost" size="sm" type="button"
@@ -1354,13 +1491,13 @@ function computeIncomeTax(transactions, client, year, quarter /* null = annual *
   };
 }
 
-const TABS = ['Dashboard', 'Transactions', 'Invoices', 'Journal Entries', 'Trial Balance', 'Books', 'General Journal', 'General Ledger', 'COA', 'Period Lock', 'Audit Log', 'BIR Returns', 'Payroll', 'Alphalist', 'SLSP', 'Income Statement', 'Balance Sheet', 'Cash Flow', 'Assets', 'Contacts', 'BIR Reminders', 'Filing Calendar', 'Compare', 'Budget', 'Aged AR/AP', 'Consolidated', 'Portfolio', 'Business Setup', 'Referral', 'My Team'];
+const TABS = ['Dashboard', 'Transactions', 'Invoices', 'Journal Entries', 'Trial Balance', 'Books', 'General Journal', 'General Ledger', 'COA', 'Recurring Entries', 'Period Lock', 'Audit Log', 'BIR Returns', 'Payroll', 'Alphalist', 'SLSP', 'Income Statement', 'Balance Sheet', 'Cash Flow', 'Assets', 'Contacts', 'BIR Reminders', 'Filing Calendar', 'Compare', 'Budget', 'Aged AR/AP', 'Consolidated', 'Portfolio', 'Business Setup', 'Referral', 'My Team'];
 
 // Grouped navigation — replaces the flat 26-tab bar with 6 category groups
 const TAB_GROUPS = [
   { label: '📊 Overview',    tabs: ['Dashboard', 'Portfolio'] },
   { label: '📝 Data Entry',  tabs: ['Transactions', 'Invoices', 'Contacts'] },
-  { label: '📒 Books',       tabs: ['Journal Entries', 'Trial Balance', 'Books', 'General Journal', 'General Ledger', 'COA', 'Assets'] },
+  { label: '📒 Books',       tabs: ['Journal Entries', 'Trial Balance', 'Books', 'General Journal', 'General Ledger', 'COA', 'Recurring Entries', 'Assets'] },
   { label: '📈 Reports',     tabs: ['Income Statement', 'Balance Sheet', 'Cash Flow', 'Compare', 'Budget', 'Aged AR/AP', 'Consolidated'] },
   { label: '🏛 BIR & Tax',   tabs: ['BIR Reminders', 'Filing Calendar', 'BIR Returns', 'Payroll', 'Alphalist', 'SLSP'] },
   { label: '⚙️ Settings',    tabs: ['Period Lock', 'Audit Log', 'Business Setup', 'Referral', 'My Team'] },
@@ -2135,6 +2272,13 @@ function DST2000OTCalc() {
   );
 }
 
+// Merge read-only journal lines into the Transactions list, newest first.
+// Journal lines are display-only here: no edit, no void, no receipts.
+function txRowsFor(txns, jrnLines) {
+  const jrn = jrnLines.map(j => ({ ...j, net: j.amount_net, vat: 0, gross: j.amount_gross, settlement: 'journal', voided: false }));
+  return [...txns, ...jrn].sort((a, b) => String(b.createdAt).localeCompare(String(a.createdAt)));
+}
+
 export default function AccountantPortal({ onLogout }) {
   const isMobile = useMobile();
   const [sidebarOpen, setSidebarOpen] = useState(false);
@@ -2143,13 +2287,17 @@ export default function AccountantPortal({ onLogout }) {
   const [accountantTier, setAccountantTier] = useState(storedUser?.accountantTier || 'free');
   const [meData, setMeData]                 = useState(storedUser);
   const tierInfo       = ACCT_TIERS[accountantTier] || ACCT_TIERS.free;
-  // During active trial → full professional access regardless of stored tier
-  const isPro    = accountantTier !== 'free' || (trialStatus?.isTrialActive ?? false);
-  const isAgency = accountantTier === 'agency' || (trialStatus?.isTrialActive ?? false);
   const maxClients     = tierInfo.maxClients;          // number = hard limit per tier
   const [showFirmSettings, setShowFirmSettings] = useState(false);
   const [showPricing,     setShowPricing]     = useState(false);
   const [trialStatus,     setTrialStatus]     = useState(null);
+  // During active trial → full professional access regardless of stored tier.
+  // These MUST stay below the trialStatus declaration: `const` is hoisted but
+  // left uninitialised, so reading it earlier throws
+  // "Cannot access 'trialStatus' before initialization" and the portal
+  // white-screens on first render.
+  const isPro    = accountantTier !== 'free' || (trialStatus?.isTrialActive ?? false);
+  const isAgency = accountantTier === 'agency' || (trialStatus?.isTrialActive ?? false);
   const firmName       = isAgency && meData?.firmName    ? meData.firmName    : null;
   const accentOverride = isAgency && meData?.accentColor ? meData.accentColor : null;
   // Dynamic accent: agency accountants with a custom color override T.accent site-wide in header/badges
@@ -2168,6 +2316,7 @@ export default function AccountantPortal({ onLogout }) {
   const [vatBal,    setVatBal]  = useState(null);
   const [txns,      setTxns]    = useState([]);
   const [txLoad,    setTxLoad]  = useState(false);
+  const [jrnLines, setJrnLines] = useState([]);
   const [deadlines, setDL]      = useState([]);
   const [birLoad,   setBirLoad] = useState(false);
 
@@ -2225,6 +2374,7 @@ export default function AccountantPortal({ onLogout }) {
   const [journals,  setJournals]  = useState([]);
   const [jLoad,     setJLoad]     = useState(false);
   const [showJE,    setShowJE]    = useState(false);
+  const [editJE,    setEditJE]    = useState(null);
   // BIR Returns period picker
   const now0          = new Date();
   const [birYear,   setBirYear]   = useState(now0.getFullYear());
@@ -2301,6 +2451,25 @@ export default function AccountantPortal({ onLogout }) {
   const [coaData,     setCoaData]     = useState([]);
   const [coaLoad,     setCoaLoad]     = useState(false);
   const [coaFilter,   setCoaFilter]   = useState('');
+  // Recurring journal entries (rent accrual / depreciation / custom)
+  const [recEntries,  setRecEntries]  = useState([]);
+  const [recLoad,     setRecLoad]     = useState(false);
+  const [recBusy,     setRecBusy]     = useState(null);
+  const [showRentRec, setShowRentRec] = useState(false);
+  const [showAssetRec, setShowAssetRec] = useState(false);
+  const [showCustomRec, setShowCustomRec] = useState(false);
+  const [rentRec, setRentRec] = useState({
+    amount: '', debitAccount: '5110', creditAccount: '2200',
+    startDate: new Date().toISOString().slice(0, 10), frequency: 'monthly', endDate: '',
+  });
+  const [assetRec, setAssetRec] = useState({
+    assetId: '', debitAccount: '5200', creditAccount: '1510', startDate: '',
+  });
+  const [customRec, setCustomRec] = useState({
+    name: '', description: '', frequency: 'monthly', entryType: 'other',
+    startDate: new Date().toISOString().slice(0, 10), endDate: '',
+    lines: [{ account: '', debit: '', credit: '' }, { account: '', debit: '', credit: '' }],
+  });
   const [showAddAcct, setShowAddAcct] = useState(false);
   const [newAcct,     setNewAcct]     = useState({ code: '', name: '', category: 'Assets', normalBalance: 'debit' });
   // General Ledger
@@ -2325,14 +2494,6 @@ export default function AccountantPortal({ onLogout }) {
   const [upgradeMsg,     setUpgradeMsg]     = useState('');
   const [myUpgradeReqs,  setMyUpgradeReqs]  = useState([]);
   const [tierUpgradedMsg, setTierUpgradedMsg] = useState(''); // success banner after admin approves tier
-  // PayMongo online payment state (accountant upgrade modal)
-  const [pmLinkId,      setPmLinkId]      = useState(null);
-  const [pmCheckoutUrl, setPmCheckoutUrl] = useState(null);
-  const [pmCreating,    setPmCreating]    = useState(false);
-  const [pmPolling,     setPmPolling]     = useState(false);
-  const [pmPollTimer,   setPmPollTimer]   = useState(null);
-  const [pmError,       setPmError]       = useState('');
-  const [showManual,    setShowManual]    = useState(false);
   // Site settings — EWT rates and other admin-configurable values
   const [siteSettings, setSiteSettings] = useState({});
   // CSV / Balance Sheet import modals
@@ -2485,7 +2646,7 @@ export default function AccountantPortal({ onLogout }) {
   useEffect(() => {
     if (!active) return;
     if (tab === 'Dashboard')        { loadDashboard(); loadNarrative(); }
-    if (tab === 'Transactions')     loadTxns();
+    if (tab === 'Transactions')     { loadTxns(); loadJrnLines(); }
     if (tab === 'BIR Reminders')    loadBIR();
     // Pro-only tabs
     if (!isPro) return;
@@ -2500,6 +2661,7 @@ export default function AccountantPortal({ onLogout }) {
     if (tab === 'General Journal')  loadGJ();
     if (tab === 'General Ledger')   loadGL();
     if (tab === 'COA')              loadCOA();
+    if (tab === 'Recurring Entries') loadRecurringEntries();
     if (tab === 'Period Lock')      loadPeriods();
     if (tab === 'Audit Log')        { setAuditStaffFilter(''); loadAudit(''); }
     if (tab === 'Assets')           loadAssets();
@@ -2538,9 +2700,10 @@ export default function AccountantPortal({ onLogout }) {
 
   async function loadDashboard() {
     try {
-      const [inc, bal, vat, txr] = await Promise.all([
+      const [inc, bal, vat, txr, cashInc] = await Promise.all([
         getIncomeReport(active.id), getBalanceReport(active.id),
         getBirVatBalance(active.id), getTransactions(active.id),
+        getIncomeReport(active.id, undefined, undefined, 'cash'),
       ]);
       setIncome(inc); setBalance(bal); setVatBal(vat);
       setTxns(txr.transactions || []);
@@ -2556,8 +2719,9 @@ export default function AccountantPortal({ onLogout }) {
       } catch (e) { /* forecast optional */ }
       // Cash position derived from income report
       if (inc) {
+        const cb = cashInc || inc; // cash basis: no accrual journal lines
         setCashPos({
-          cash:       (inc.grossRevenue || inc.revenue * 1.12 || 0) - (inc.grossExpenses || inc.expenses * 1.12 || 0),
+          cash:       (cb.grossRevenue || cb.revenue * 1.12 || 0) - (cb.grossExpenses || cb.expenses * 1.12 || 0),
           netProfit:  inc.profit || 0,
           vatPayable: Math.max(0, (vat?.outputVAT || 0) - (vat?.inputVAT || 0)),
         });
@@ -2573,6 +2737,11 @@ export default function AccountantPortal({ onLogout }) {
       setNarrative(data);
     } catch (e) { console.error('Narrative load failed', e); }
     finally { setNarrativeLoad(false); }
+  }
+
+  async function loadJrnLines() {
+    try { const r = await getJournalLines(active.id); setJrnLines(r.transactions || []); }
+    catch (e) { console.error(e); }
   }
 
   async function loadTxns() {
@@ -2782,6 +2951,116 @@ export default function AccountantPortal({ onLogout }) {
       setLockMsg(`🔓 Period ${period} unlocked`);
       loadPeriods();
     } catch (e) { setLockMsg(`❌ ${e.message}`); }
+  }
+
+  async function loadRecurringEntries() {
+    if (!active) return;
+    setRecLoad(true);
+    try {
+      const [r, a, c] = await Promise.all([
+        getRecurringEntries(active.id),
+        getAssets(active.id).catch(() => ({ assets: [] })),
+        getCOA(active.id).catch(() => ({ accounts: [] })),
+      ]);
+      setRecEntries(r.schedules || []);
+      setAssets(a.assets || []);
+      setCoaData(c.accounts || []);
+    } catch (e) { console.error(e); }
+    finally { setRecLoad(false); }
+  }
+
+  // Rent accrual: Dr Rent Expense / Cr Accrued Liabilities
+  async function handleCreateRentRec() {
+    const amt = Number(rentRec.amount);
+    if (!(amt > 0)) return alert('Enter a monthly rent amount.');
+    try {
+      await createRecurringEntry({
+        clientId:   active.id,
+        name:       'Rent Accrual',
+        description:'Monthly rent accrual',
+        entryType:  'accrual',
+        frequency:  rentRec.frequency,
+        startDate:  rentRec.startDate,
+        endDate:    rentRec.endDate || null,
+        entries: [
+          { account: rentRec.debitAccount,  debit: amt, credit: 0 },
+          { account: rentRec.creditAccount, debit: 0,   credit: amt },
+        ],
+      });
+      setShowRentRec(false);
+      setRentRec(p => ({ ...p, amount: '', endDate: '' }));
+      loadRecurringEntries();
+    } catch (e) { alert(e.message); }
+  }
+
+  // Depreciation: amount derived from the asset on every run
+  async function handleCreateAssetRec() {
+    if (!assetRec.assetId) return alert('Pick an asset.');
+    try {
+      const r = await createAssetDepSchedule(assetRec.assetId, {
+        debitAccount:  assetRec.debitAccount,
+        creditAccount: assetRec.creditAccount,
+        startDate:     assetRec.startDate || undefined,
+      });
+      setShowAssetRec(false);
+      setAssetRec(p => ({ ...p, assetId: '', startDate: '' }));
+      loadRecurringEntries();
+      alert(`Schedule created — ₱${(r.monthlyDepreciation || 0).toLocaleString('en-PH', { minimumFractionDigits: 2 })}/month for ${r.periods} months.`);
+    } catch (e) { alert(e.message); }
+  }
+
+  async function handleCreateCustomRec() {
+    const lines = customRec.lines
+      .filter(l => l.account && (Number(l.debit) > 0 || Number(l.credit) > 0))
+      .map(l => ({ account: l.account, debit: Number(l.debit) || 0, credit: Number(l.credit) || 0 }));
+    if (!customRec.name) return alert('Give the entry a name.');
+    if (lines.length < 2) return alert('Add at least two lines (one debit, one credit).');
+    const dr = lines.reduce((t, l) => t + l.debit, 0);
+    const cr = lines.reduce((t, l) => t + l.credit, 0);
+    if (Math.abs(dr - cr) > 0.01)
+      return alert(`Unbalanced: debits ₱${dr.toFixed(2)} ≠ credits ₱${cr.toFixed(2)}`);
+    try {
+      await createRecurringEntry({
+        clientId:    active.id,
+        name:        customRec.name,
+        description: customRec.description || customRec.name,
+        entryType:   customRec.entryType,
+        frequency:   customRec.frequency,
+        startDate:   customRec.startDate,
+        endDate:     customRec.endDate || null,
+        entries:     lines,
+      });
+      setShowCustomRec(false);
+      setCustomRec(p => ({ ...p, name: '', description: '', endDate: '',
+        lines: [{ account: '', debit: '', credit: '' }, { account: '', debit: '', credit: '' }] }));
+      loadRecurringEntries();
+    } catch (e) { alert(e.message); }
+  }
+
+  async function handleRunRec(id) {
+    setRecBusy(id);
+    try {
+      const r = await runRecurringEntry(id);
+      loadRecurringEntries();
+      loadJournals();
+      alert(`Posted ₱${(r.amount || 0).toLocaleString('en-PH', { minimumFractionDigits: 2 })} on ${r.date}. Next run: ${r.nextRunDate}.`);
+    } catch (e) { alert(e.message); }
+    finally { setRecBusy(null); }
+  }
+
+  async function handleToggleRec(s) {
+    try {
+      await updateRecurringEntry(s.id, { status: s.status === 'active' ? 'paused' : 'active' });
+      loadRecurringEntries();
+    } catch (e) { alert(e.message); }
+  }
+
+  async function handleDeleteRec(s) {
+    if (!window.confirm(`Delete the schedule "${s.name}"?\n\nJournal entries it already posted (${s.total_generated}) are kept.`)) return;
+    try {
+      await deleteRecurringEntry(s.id);
+      loadRecurringEntries();
+    } catch (e) { alert(e.message); }
   }
 
   async function loadCOA() {
@@ -3616,9 +3895,9 @@ export default function AccountantPortal({ onLogout }) {
                       </tr>
                     </thead>
                     <tbody>
-                      {txns.map((t, i) => (
+                      {txRowsFor(txns, jrnLines).map((t, i, arr) => (
                         <tr key={t.id} style={{
-                          borderBottom: i < txns.length - 1 ? `1px solid ${T.border}` : 'none',
+                          borderBottom: i < arr.length - 1 ? `1px solid ${T.border}` : 'none',
                           opacity: t.voided ? 0.5 : 1,
                           background: t.voided ? '#fafafa' : undefined,
                         }}>
@@ -3637,6 +3916,7 @@ export default function AccountantPortal({ onLogout }) {
                             textDecoration: t.voided ? 'line-through' : 'none' }}>{t.category}</td>
                           <td style={{ padding: '11px 14px', maxWidth: 200 }}>
                             <div style={{ textDecoration: t.voided ? 'line-through' : 'none' }}>{t.description}</div>
+                            {t.source === 'journal' && <div style={{ fontSize: 11, color: T.accent, marginTop: 2 }}>📒 journal entry</div>}
                             {t.voided && t.voidReason && <div style={{ fontSize: 11, color: T.red, marginTop: 2 }}>Void: {t.voidReason}</div>}
                             {!t.voided && t.notes && <div style={{ fontSize: 11, color: T.muted, marginTop: 2, fontStyle: 'italic' }}>{t.notes}</div>}
                           </td>
@@ -3656,7 +3936,7 @@ export default function AccountantPortal({ onLogout }) {
                             textDecoration: t.voided ? 'line-through' : 'none' }}>{peso(t.gross)}</td>
                           <td style={{ padding: '11px 14px' }}>
                             <div style={{ display: 'flex', gap: 4, flexWrap: 'wrap', alignItems: 'center' }}>
-                              {!t.voided && (<>
+                              {!t.voided && t.source !== 'journal' && (<>
                                 <button onClick={() => setEditTx(t)}
                                   style={{ background: 'none', border: 'none', cursor: 'pointer',
                                     color: T.blue, fontSize: 13, padding: '3px 6px', borderRadius: 5 }}>
@@ -3668,11 +3948,11 @@ export default function AccountantPortal({ onLogout }) {
                                   ⊘ Void
                                 </button>
                               </>)}
-                              <button onClick={() => openReceipts(t)}
+                              {t.source !== 'journal' && <button onClick={() => openReceipts(t)}
                                 style={{ background: 'none', border: 'none', cursor: 'pointer',
                                   color: T.muted, fontSize: 13, padding: '3px 6px', borderRadius: 5 }}>
                                 📎
-                              </button>
+                              </button>}
                             </div>
                           </td>
                         </tr>
@@ -3763,7 +4043,7 @@ export default function AccountantPortal({ onLogout }) {
           !isPro ? <ProLock onUpgrade={(tier) => { setUpgradeTarget(tier || 'solo'); setShowUpgrade(true); }} trialExpired={trialStatus?.isExpired ?? false} /> : <div>
             <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 20 }}>
               <h2 style={{ margin: 0, fontSize: 22, fontWeight: 600 }}>Journal Entries — {active.tradeName}</h2>
-              <Btn onClick={() => setShowJE(true)}>+ New Journal Entry</Btn>
+              <Btn onClick={() => { setEditJE(null); setShowJE(true); }}>+ New Journal Entry</Btn>
             </div>
 
             <div style={{ fontSize: 13, color: T.muted, marginBottom: 20 }}>
@@ -3794,6 +4074,11 @@ export default function AccountantPortal({ onLogout }) {
                           &nbsp;·&nbsp;Posted {fmtDt(je.createdAt)}
                         </div>
                       </div>
+                      <button onClick={() => { setEditJE(je); setShowJE(true); }}
+                        style={{ background: 'none', border: 'none', cursor: 'pointer', color: T.blue,
+                          fontSize: 13, padding: '4px 8px', borderRadius: 6, marginRight: 4 }}>
+                        ✎ Edit
+                      </button>
                       <button onClick={() => deleteJE(je.id)}
                         style={{ background: 'none', border: 'none', cursor: 'pointer',
                           color: T.red, fontSize: 14, padding: '4px 8px', borderRadius: 6,
@@ -3801,6 +4086,12 @@ export default function AccountantPortal({ onLogout }) {
                         ✕ Delete
                       </button>
                     </div>
+
+                    {je.unmapped > 0 && (
+                      <div style={{ fontSize: 12, color: T.red, marginBottom: 10 }}>
+                        ⚠ {je.unmapped} line(s) use an account that is not in the chart of accounts. Click Edit and pick the account.
+                      </div>
+                    )}
 
                     {/* Line items table */}
                     <div style={{ overflowX: 'auto' }}>
@@ -5372,6 +5663,308 @@ export default function AccountantPortal({ onLogout }) {
           </div>
         )}
 
+        {/* ════════════ RECURRING ENTRIES ════════════ */}
+        {tab === 'Recurring Entries' && active && (
+          !isPro ? <ProLock onUpgrade={(tier) => { setUpgradeTarget(tier || 'solo'); setShowUpgrade(true); }} trialExpired={trialStatus?.isExpired ?? false} /> : <div>
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 8, flexWrap: 'wrap', gap: 12 }}>
+              <h2 style={{ margin: 0, fontSize: 22, fontWeight: 600 }}>Recurring Entries — {active.tradeName}</h2>
+              <div style={{ display: 'flex', gap: 10, flexWrap: 'wrap' }}>
+                <Btn size="sm" variant="ghost" onClick={() => setShowRentRec(true)}>🏠 Rent Accrual</Btn>
+                <Btn size="sm" variant="ghost" onClick={() => setShowAssetRec(true)}>📉 Depreciation</Btn>
+                <Btn size="sm" onClick={() => setShowCustomRec(true)}>+ Custom</Btn>
+              </div>
+            </div>
+            <div style={{ color: T.muted, fontSize: 13, marginBottom: 20 }}>
+              Schedules post automatically once their next run date arrives, and are checked hourly.
+              Each posting lands in Journal Entries, where you can review it.
+            </div>
+
+            {recLoad ? <div style={{ color: T.muted }}>Loading…</div>
+            : recEntries.length === 0 ? (
+              <div style={{ textAlign: 'center', padding: '60px 20px', color: T.muted }}>
+                <div style={{ fontSize: 40, marginBottom: 12 }}>🔁</div>
+                <div style={{ marginBottom: 6 }}>No recurring entries yet.</div>
+                <div style={{ fontSize: 13, marginBottom: 16 }}>
+                  Set up rent accrual, or generate a depreciation schedule from an asset.
+                </div>
+                <div style={{ display: 'flex', gap: 10, justifyContent: 'center', flexWrap: 'wrap' }}>
+                  <Btn onClick={() => setShowRentRec(true)}>🏠 Rent Accrual</Btn>
+                  <Btn variant="ghost" onClick={() => setShowAssetRec(true)}>📉 Depreciation</Btn>
+                </div>
+              </div>
+            ) : (
+              <Card style={{ padding: 0, overflow: 'auto' }}>
+                <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 13 }}>
+                  <thead>
+                    <tr style={{ background: T.bg }}>
+                      {['Name', 'Type', 'Entry', 'Frequency', 'Amount', 'Next Run', 'Posted', 'Status', ''].map(h => (
+                        <th key={h} style={{ padding: '9px 14px', textAlign: 'left', fontWeight: 600,
+                          color: T.muted, fontSize: 11, borderBottom: `1px solid ${T.border}`, whiteSpace: 'nowrap' }}>{h}</th>
+                      ))}
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {recEntries.map((sc, i) => {
+                      const lines  = sc.entries || [];
+                      const amount = lines.reduce((t, l) => t + (Number(l.debit) || 0), 0);
+                      const drAcct = lines.find(l => Number(l.debit)  > 0)?.account || '—';
+                      const crAcct = lines.find(l => Number(l.credit) > 0)?.account || '—';
+                      const statusColor = sc.status === 'active' ? T.green
+                                        : sc.status === 'paused' ? T.muted : T.red;
+                      const statusBg    = sc.status === 'active' ? '#e3f7ed'
+                                        : sc.status === 'paused' ? T.bg : '#fff0f0';
+                      return (
+                        <tr key={sc.id} style={{ borderBottom: i < recEntries.length - 1 ? `1px solid ${T.border}` : 'none' }}>
+                          <td style={{ padding: '10px 14px', fontWeight: 600 }}>{sc.name}</td>
+                          <td style={{ padding: '10px 14px' }}>
+                            <span style={{ background: '#f5f0ff', color: T.purple,
+                              padding: '2px 7px', borderRadius: 5, fontSize: 11 }}>{sc.entry_type}</span>
+                          </td>
+                          <td style={{ padding: '10px 14px', color: T.muted, fontSize: 12, whiteSpace: 'nowrap' }}>
+                            Dr {drAcct} / Cr {crAcct}
+                          </td>
+                          <td style={{ padding: '10px 14px', color: T.muted, fontSize: 12 }}>{sc.frequency}</td>
+                          <td style={{ padding: '10px 14px', fontWeight: 600, whiteSpace: 'nowrap' }}>
+                            ₱{amount.toLocaleString('en-PH', { minimumFractionDigits: 2 })}
+                            {sc.source_kind === 'asset' && (
+                              <span style={{ color: T.muted, fontWeight: 400, fontSize: 11, display: 'block' }}>
+                                from asset
+                              </span>
+                            )}
+                          </td>
+                          <td style={{ padding: '10px 14px', fontSize: 12, whiteSpace: 'nowrap' }}>{sc.next_run_date}</td>
+                          <td style={{ padding: '10px 14px', color: T.muted, fontSize: 12 }}>
+                            {sc.total_generated}{sc.max_entries ? ` / ${sc.max_entries}` : ''}
+                          </td>
+                          <td style={{ padding: '10px 14px' }}>
+                            <span style={{ background: statusBg, color: statusColor,
+                              padding: '2px 8px', borderRadius: 5, fontSize: 11 }}>{sc.status}</span>
+                          </td>
+                          <td style={{ padding: '10px 14px', whiteSpace: 'nowrap' }}>
+                            {sc.status !== 'cancelled' && (
+                              <>
+                                <Btn size="sm" variant="ghost" disabled={recBusy === sc.id}
+                                  onClick={() => handleRunRec(sc.id)}>
+                                  {recBusy === sc.id ? '…' : '▶ Post now'}
+                                </Btn>{' '}
+                                <button onClick={() => handleToggleRec(sc)}
+                                  title={sc.status === 'active' ? 'Pause' : 'Resume'}
+                                  style={{ background: 'none', border: 'none', cursor: 'pointer', fontSize: 13 }}>
+                                  {sc.status === 'active' ? '⏸' : '▶'}
+                                </button>{' '}
+                              </>
+                            )}
+                            <button onClick={() => handleDeleteRec(sc)}
+                              style={{ background: 'none', border: 'none', cursor: 'pointer', color: T.red, fontSize: 13 }}>✕</button>
+                          </td>
+                        </tr>
+                      );
+                    })}
+                  </tbody>
+                </table>
+              </Card>
+            )}
+
+            {/* ── Rent accrual ── */}
+            {showRentRec && (
+              <ModalShell title="Set Up Rent Accrual" onClose={() => setShowRentRec(false)}>
+                <div style={{ color: T.muted, fontSize: 13, marginBottom: 14 }}>
+                  Posts <strong>Dr Rent Expense / Cr Accrued Liabilities</strong> each period.
+                  When you pay the rent, record it against the accrual account.
+                </div>
+                <Fld label="Amount per period (₱)">
+                  <input style={inp} type="number" step="0.01" placeholder="50000.00"
+                    value={rentRec.amount}
+                    onChange={e => setRentRec(p => ({ ...p, amount: e.target.value }))} />
+                </Fld>
+                <Fld label="Debit — Rent Expense">
+                  <select style={inp} value={rentRec.debitAccount}
+                    onChange={e => setRentRec(p => ({ ...p, debitAccount: e.target.value }))}>
+                    {coaData.filter(a => a.category === 'Expenses').map(a => (
+                      <option key={a.id} value={a.code}>{a.code} — {a.name}</option>
+                    ))}
+                  </select>
+                </Fld>
+                <Fld label="Credit — Accrued Liability">
+                  <select style={inp} value={rentRec.creditAccount}
+                    onChange={e => setRentRec(p => ({ ...p, creditAccount: e.target.value }))}>
+                    {coaData.filter(a => a.category === 'Liabilities').map(a => (
+                      <option key={a.id} value={a.code}>{a.code} — {a.name}</option>
+                    ))}
+                  </select>
+                </Fld>
+                <Fld label="Frequency">
+                  <select style={inp} value={rentRec.frequency}
+                    onChange={e => setRentRec(p => ({ ...p, frequency: e.target.value }))}>
+                    <option value="monthly">Monthly</option>
+                    <option value="quarterly">Quarterly</option>
+                    <option value="annual">Annual</option>
+                  </select>
+                </Fld>
+                <Fld label="First posting date">
+                  <input style={inp} type="date" value={rentRec.startDate}
+                    onChange={e => setRentRec(p => ({ ...p, startDate: e.target.value }))} />
+                </Fld>
+                <Fld label="Lease end date (optional — stops the schedule)">
+                  <input style={inp} type="date" value={rentRec.endDate}
+                    onChange={e => setRentRec(p => ({ ...p, endDate: e.target.value }))} />
+                </Fld>
+                {coaData.length === 0 && (
+                  <div style={{ color: T.red, fontSize: 12, marginBottom: 10 }}>
+                    No chart of accounts yet — seed it in the COA tab first.
+                  </div>
+                )}
+                <div style={{ display: 'flex', gap: 10, justifyContent: 'flex-end', marginTop: 8 }}>
+                  <Btn variant="ghost" onClick={() => setShowRentRec(false)}>Cancel</Btn>
+                  <Btn onClick={handleCreateRentRec}>Create Schedule</Btn>
+                </div>
+              </ModalShell>
+            )}
+
+            {/* ── Depreciation from asset ── */}
+            {showAssetRec && (
+              <ModalShell title="Set Up Depreciation" onClose={() => setShowAssetRec(false)}>
+                <div style={{ color: T.muted, fontSize: 13, marginBottom: 14 }}>
+                  Straight-line, derived from the asset each period, so editing the asset's
+                  cost or useful life corrects future postings automatically. Stops on its own
+                  once the asset is fully depreciated.
+                </div>
+                <Fld label="Asset">
+                  <select style={inp} value={assetRec.assetId}
+                    onChange={e => setAssetRec(p => ({ ...p, assetId: e.target.value }))}>
+                    <option value="">Select an asset…</option>
+                    {assets.map(a => (
+                      <option key={a.id} value={a.id}>
+                        {a.name} — ₱{(a.cost || 0).toLocaleString('en-PH')} / {a.usefulLifeMonths}mo
+                      </option>
+                    ))}
+                  </select>
+                </Fld>
+                <Fld label="Debit — Depreciation Expense">
+                  <select style={inp} value={assetRec.debitAccount}
+                    onChange={e => setAssetRec(p => ({ ...p, debitAccount: e.target.value }))}>
+                    {coaData.filter(a => a.category === 'Expenses').map(a => (
+                      <option key={a.id} value={a.code}>{a.code} — {a.name}</option>
+                    ))}
+                  </select>
+                </Fld>
+                <Fld label="Credit — Accumulated Depreciation">
+                  <select style={inp} value={assetRec.creditAccount}
+                    onChange={e => setAssetRec(p => ({ ...p, creditAccount: e.target.value }))}>
+                    {coaData.filter(a => a.category === 'Assets').map(a => (
+                      <option key={a.id} value={a.code}>{a.code} — {a.name}</option>
+                    ))}
+                  </select>
+                </Fld>
+                <Fld label="First posting date (defaults to the asset's start date)">
+                  <input style={inp} type="date" value={assetRec.startDate}
+                    onChange={e => setAssetRec(p => ({ ...p, startDate: e.target.value }))} />
+                </Fld>
+                {assets.length === 0 && (
+                  <div style={{ color: T.red, fontSize: 12, marginBottom: 10 }}>
+                    No assets yet — add one in the Assets tab first.
+                  </div>
+                )}
+                <div style={{ display: 'flex', gap: 10, justifyContent: 'flex-end', marginTop: 8 }}>
+                  <Btn variant="ghost" onClick={() => setShowAssetRec(false)}>Cancel</Btn>
+                  <Btn onClick={handleCreateAssetRec}>Create Schedule</Btn>
+                </div>
+              </ModalShell>
+            )}
+
+            {/* ── Custom recurring entry ── */}
+            {showCustomRec && (() => {
+              const dr = customRec.lines.reduce((t, l) => t + (Number(l.debit)  || 0), 0);
+              const cr = customRec.lines.reduce((t, l) => t + (Number(l.credit) || 0), 0);
+              const balanced = Math.abs(dr - cr) < 0.01 && dr > 0;
+              return (
+                <ModalShell title="Custom Recurring Entry" onClose={() => setShowCustomRec(false)}>
+                  <Fld label="Name">
+                    <input style={inp} value={customRec.name} placeholder="e.g. Insurance Amortisation"
+                      onChange={e => setCustomRec(p => ({ ...p, name: e.target.value }))} />
+                  </Fld>
+                  <Fld label="Description">
+                    <input style={inp} value={customRec.description} placeholder="Appears on the journal entry"
+                      onChange={e => setCustomRec(p => ({ ...p, description: e.target.value }))} />
+                  </Fld>
+                  <div style={{ display: 'flex', gap: 10 }}>
+                    <Fld label="Type">
+                      <select style={inp} value={customRec.entryType}
+                        onChange={e => setCustomRec(p => ({ ...p, entryType: e.target.value }))}>
+                        <option value="accrual">Accrual</option>
+                        <option value="depreciation">Depreciation</option>
+                        <option value="other">Other</option>
+                      </select>
+                    </Fld>
+                    <Fld label="Frequency">
+                      <select style={inp} value={customRec.frequency}
+                        onChange={e => setCustomRec(p => ({ ...p, frequency: e.target.value }))}>
+                        <option value="weekly">Weekly</option>
+                        <option value="monthly">Monthly</option>
+                        <option value="quarterly">Quarterly</option>
+                        <option value="annual">Annual</option>
+                      </select>
+                    </Fld>
+                  </div>
+                  <div style={{ display: 'flex', gap: 10 }}>
+                    <Fld label="First posting date">
+                      <input style={inp} type="date" value={customRec.startDate}
+                        onChange={e => setCustomRec(p => ({ ...p, startDate: e.target.value }))} />
+                    </Fld>
+                    <Fld label="End date (optional)">
+                      <input style={inp} type="date" value={customRec.endDate}
+                        onChange={e => setCustomRec(p => ({ ...p, endDate: e.target.value }))} />
+                    </Fld>
+                  </div>
+
+                  <SectionHead>Entry Lines</SectionHead>
+                  {customRec.lines.map((l, idx) => (
+                    <div key={idx} style={{ display: 'flex', gap: 8, marginBottom: 8, alignItems: 'center' }}>
+                      <select style={{ ...inp, flex: 2 }} value={l.account}
+                        onChange={e => setCustomRec(p => ({ ...p,
+                          lines: p.lines.map((x, j) => j === idx ? { ...x, account: e.target.value } : x) }))}>
+                        <option value="">Account…</option>
+                        {coaData.map(a => (
+                          <option key={a.id} value={a.code}>{a.code} — {a.name}</option>
+                        ))}
+                      </select>
+                      <input style={{ ...inp, flex: 1 }} type="number" step="0.01" placeholder="Debit"
+                        value={l.debit}
+                        onChange={e => setCustomRec(p => ({ ...p,
+                          lines: p.lines.map((x, j) => j === idx ? { ...x, debit: e.target.value, credit: '' } : x) }))} />
+                      <input style={{ ...inp, flex: 1 }} type="number" step="0.01" placeholder="Credit"
+                        value={l.credit}
+                        onChange={e => setCustomRec(p => ({ ...p,
+                          lines: p.lines.map((x, j) => j === idx ? { ...x, credit: e.target.value, debit: '' } : x) }))} />
+                      {customRec.lines.length > 2 && (
+                        <button onClick={() => setCustomRec(p => ({ ...p, lines: p.lines.filter((_, j) => j !== idx) }))}
+                          style={{ background: 'none', border: 'none', cursor: 'pointer', color: T.red, fontSize: 13 }}>✕</button>
+                      )}
+                    </div>
+                  ))}
+                  <Btn size="sm" variant="ghost"
+                    onClick={() => setCustomRec(p => ({ ...p, lines: [...p.lines, { account: '', debit: '', credit: '' }] }))}>
+                    + Add line
+                  </Btn>
+
+                  <div style={{ marginTop: 14, padding: '10px 12px', borderRadius: 6,
+                    background: balanced ? '#e3f7ed' : T.bg,
+                    color: balanced ? T.green : T.muted, fontSize: 13 }}>
+                    Debits ₱{dr.toLocaleString('en-PH', { minimumFractionDigits: 2 })}
+                    {' · '}Credits ₱{cr.toLocaleString('en-PH', { minimumFractionDigits: 2 })}
+                    {balanced ? ' — balanced' : ' — must balance before saving'}
+                  </div>
+
+                  <div style={{ display: 'flex', gap: 10, justifyContent: 'flex-end', marginTop: 12 }}>
+                    <Btn variant="ghost" onClick={() => setShowCustomRec(false)}>Cancel</Btn>
+                    <Btn disabled={!balanced} onClick={handleCreateCustomRec}>Create Schedule</Btn>
+                  </div>
+                </ModalShell>
+              );
+            })()}
+          </div>
+        )}
+
         {/* ════════════ GENERAL JOURNAL ════════════ */}
         {tab === 'General Journal' && active && (
           !isPro ? <ProLock onUpgrade={(tier) => { setUpgradeTarget(tier || 'solo'); setShowUpgrade(true); }} trialExpired={trialStatus?.isExpired ?? false} /> : <div>
@@ -5667,8 +6260,8 @@ export default function AccountantPortal({ onLogout }) {
             ) : (() => {
               const a = balance.assets || {};
               const l = balance.liabilities || {};
-              const totalCurrentAssets = (a.input_vat || 0) + (a.accounts_receivable || 0) + (a.cash_net > 0 ? a.cash_net : 0);
-              const totalCurrentLiab   = (l.vat_payable || 0) + (l.accounts_payable || 0);
+              const totalCurrentAssets = (a.input_vat || 0) + (a.accounts_receivable || 0) + (a.cash_net > 0 ? a.cash_net : 0) + (a.journal_other || 0);
+              const totalCurrentLiab   = (l.vat_payable || 0) + (l.accounts_payable || 0) + (l.journal_other || 0);
               const totalAssets        = totalCurrentAssets + (a.fixed_assets_net || 0);
               const netEquity          = totalAssets - totalCurrentLiab;
               return (
@@ -5680,6 +6273,7 @@ export default function AccountantPortal({ onLogout }) {
                       { label: 'Cash & Cash Equivalents', value: a.cash_net,           color: T.text  },
                       { label: 'Trade Receivables (AR)',   value: a.accounts_receivable,color: T.text  },
                       { label: 'Input VAT Recoverable',    value: a.input_vat,          color: T.green },
+                      { label: 'Other Assets (journal entries)', value: a.journal_other,  color: T.text  },
                       { label: 'Fixed Assets (Net)',        value: a.fixed_assets_net,  color: T.text  },
                     ].filter(r => r.value > 0).map(r => (
                       <div key={r.label} style={{ display: 'flex', justifyContent: 'space-between', padding: '7px 0',
@@ -5701,6 +6295,7 @@ export default function AccountantPortal({ onLogout }) {
                     {[
                       { label: 'Output VAT Payable',      value: l.vat_payable,       color: T.orange },
                       { label: 'Trade Payables (AP)',      value: l.accounts_payable,  color: T.text   },
+                      { label: 'Other Liabilities (journal entries)', value: l.journal_other, color: T.text },
                     ].filter(r => r.value > 0).map(r => (
                       <div key={r.label} style={{ display: 'flex', justifyContent: 'space-between', padding: '7px 0',
                         borderBottom: `1px solid ${T.border}`, fontSize: 13 }}>
@@ -8249,10 +8844,11 @@ export default function AccountantPortal({ onLogout }) {
       {/* JournalEntryModal */}
       {showJE && (
         <JournalEntryModal
-          key={active?.id + '-je'}
+          key={active?.id + '-je-' + (editJE?.id || 'new')}
           clientId={active?.id}
+          existing={editJE}
           onSaved={() => { loadJournals(); }}
-          onClose={() => setShowJE(false)}
+          onClose={() => { setShowJE(false); setEditJE(null); }}
         />
       )}
 
@@ -8371,12 +8967,6 @@ export default function AccountantPortal({ onLogout }) {
             </div>
 
             {/* Status messages */}
-            {pmError && (
-              <div style={{ marginBottom: 12, padding: '10px 14px', borderRadius: 9, fontSize: 13,
-                background: '#fff5f5', color: '#d32f2f', border: '1px solid #d32f2f30' }}>
-                {pmError}
-              </div>
-            )}
             {upgradeMsg && (
               <div style={{ marginBottom: 12, padding: '10px 14px', borderRadius: 9, fontSize: 13,
                 background: upgradeMsg.startsWith('✓') ? '#f0fff4' : '#fff5f5',
@@ -8386,79 +8976,38 @@ export default function AccountantPortal({ onLogout }) {
               </div>
             )}
 
-            {/* PayMongo — primary payment */}
-            {pmPolling ? (
-              <div style={{ textAlign: 'center', padding: '18px 0', marginBottom: 16 }}>
-                <div style={{ fontSize: 14, color: T.muted, marginBottom: 6 }}>
-                  Waiting for payment confirmation...
-                </div>
-                <div style={{ fontSize: 12, color: T.muted, marginBottom: 10 }}>
-                  Complete payment in the tab that opened. This page updates automatically.
-                </div>
-                <button onClick={() => { clearInterval(pmPollTimer); setPmPolling(false); setPmLinkId(null); }}
-                  style={{ fontSize: 12, color: T.muted, background: 'none', border: 'none',
-                    cursor: 'pointer', textDecoration: 'underline' }}>
-                  Cancel / use bank transfer instead
-                </button>
-              </div>
-            ) : !pmLinkId ? (
-              <div style={{ marginBottom: 18 }}>
-                <button disabled={pmCreating}
-                  onClick={async () => {
-                    setPmCreating(true); setPmError('');
-                    try {
-                      const r = await createPaymongoLink(null, upgradeTarget, 'accountant');
-                      setPmLinkId(r.linkId);
-                      window.open(r.checkoutUrl, '_blank', 'noopener');
-                      setPmPolling(true);
-                      const timer = setInterval(async () => {
-                        try {
-                          const s = await pollPaymongoStatus(r.linkId);
-                          if (s.status === 'paid') {
-                            clearInterval(timer); setPmPolling(false);
-                            setUpgradeMsg('✓ Payment confirmed! Your plan has been upgraded.');
-                            setTimeout(() => {
-                              setShowUpgrade(false); setUpgradeMsg('');
-                              getMe().then(u => localStorage.setItem('ml_user', JSON.stringify(u))).catch(() => {});
-                            }, 2500);
-                          }
-                        } catch (_) {}
-                      }, 4000);
-                      setPmPollTimer(timer);
-                    } catch (e) { setPmError('Payment error: ' + e.message); }
-                    finally { setPmCreating(false); }
-                  }}
-                  style={{ width: '100%', padding: '14px', borderRadius: 12, border: 'none',
-                    background: pmCreating ? '#ccc' : '#00a551', color: '#fff',
-                    fontSize: 15, fontWeight: 700,
-                    cursor: pmCreating ? 'not-allowed' : 'pointer', fontFamily: 'inherit' }}>
-                  {pmCreating ? 'Creating link...' : 'Pay Online — GCash / Maya / Card'}
-                </button>
-                <div style={{ marginTop: 6, fontSize: 11, color: T.muted, textAlign: 'center' }}>
-                  Powered by PayMongo · Secure checkout · Plan activates instantly
-                </div>
-              </div>
-            ) : null}
-
-            {/* Manual bank transfer fallback */}
-            <div style={{ textAlign: 'center', marginBottom: 12 }}>
-              <button onClick={() => setShowManual(m => !m)}
-                style={{ fontSize: 12, color: T.muted, background: 'none', border: 'none',
-                  cursor: 'pointer', textDecoration: 'underline' }}>
-                {showManual ? 'Hide manual transfer option' : 'Already paid via GCash / bank transfer?'}
-              </button>
-            </div>
-            {showManual && (
-              <>
-                <div style={{ background: '#f0f8ff', border: '1px solid #0071e330', borderRadius: 10,
-                  padding: '14px 16px', marginBottom: 14, fontSize: 13 }}>
-                  <div style={{ fontWeight: 700, marginBottom: 6, color: T.text }}>Manual Transfer</div>
-                  <div style={{ color: T.muted, lineHeight: 1.7 }}>
-                    <strong style={{ color: T.text }}>GCash / Maya:</strong> 0998-991-9660 (Kaiman and Co.)<br />
-                    <strong style={{ color: T.text }}>Bank transfer:</strong> BDO — Kaiman and Co. (email for account details)<br />
-                    Enter reference and amount below — we verify and upgrade within 1 business day.
-                  </div>
-                </div>
+            {/* Payment — Maya, GCash, or bank transfer (manual, admin-verified) */}
+            <>
+                {(() => {
+                  const pay  = siteSettings?.payment || {};
+                  const bank = pay.bank || {};
+                  const hasBankDetails = bank.bankName || bank.accountNumber;
+                  return (
+                    <div style={{ background: '#f0f8ff', border: '1px solid #0071e330', borderRadius: 10,
+                      padding: '14px 16px', marginBottom: 14, fontSize: 13 }}>
+                      <div style={{ fontWeight: 700, marginBottom: 6, color: T.text }}>Where to send payment</div>
+                      <div style={{ color: T.muted, lineHeight: 1.7 }}>
+                        {pay.gcash?.number && (
+                          <><strong style={{ color: T.text }}>GCash:</strong> {pay.gcash.number}
+                            {pay.gcash.name ? ` (${pay.gcash.name})` : ''}<br /></>
+                        )}
+                        {pay.maya?.number && (
+                          <><strong style={{ color: T.text }}>Maya:</strong> {pay.maya.number}
+                            {pay.maya.name ? ` (${pay.maya.name})` : ''}<br /></>
+                        )}
+                        {hasBankDetails ? (
+                          <><strong style={{ color: T.text }}>Bank transfer:</strong>{' '}
+                            {[bank.bankName, bank.accountName, bank.accountNumber].filter(Boolean).join(' — ')}<br /></>
+                        ) : (
+                          <><strong style={{ color: T.text }}>Bank transfer:</strong>{' '}
+                            email {siteSettings?.contactEmail || 'mym@kaimanco.com'} for account details<br /></>
+                        )}
+                        Transfer the amount, then enter the reference below — we verify and upgrade
+                        within 1 business day.
+                      </div>
+                    </div>
+                  );
+                })()}
                 <div style={{ display: 'flex', gap: 8, marginBottom: 12 }}>
                   {['gcash', 'maya', 'bank'].map(m => (
                     <button key={m} onClick={() => setUpgradeMethod(m)}
@@ -8491,7 +9040,7 @@ export default function AccountantPortal({ onLogout }) {
                       outline: 'none', boxSizing: 'border-box' }} />
                 </div>
                 <div style={{ display: 'flex', gap: 10, marginBottom: 4 }}>
-                  <button onClick={() => { setShowUpgrade(false); setShowManual(false); }}
+                  <button onClick={() => setShowUpgrade(false)}
                     style={{ flex: 1, padding: '11px', borderRadius: 10, border: `1px solid ${T.border}`,
                       background: T.surface, color: T.muted, fontSize: 14, fontWeight: 600,
                       cursor: 'pointer', fontFamily: 'inherit' }}>
@@ -8506,7 +9055,6 @@ export default function AccountantPortal({ onLogout }) {
                   </button>
                 </div>
               </>
-            )}
 
             <div style={{ marginTop: 14, fontSize: 12, color: T.muted, textAlign: 'center' }}>
               Questions? Email <a href="mailto:mym@kaimanco.com" style={{ color: T.accent }}>mym@kaimanco.com</a>

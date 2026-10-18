@@ -10,6 +10,7 @@ import { db, rowToClient, rowToTx } from '../db.js';
 import { authenticate, noEncoder } from '../middleware/auth.js';
 import { calculateIncomeVAT, calculateExpenseVAT } from '../lib/vat.js';
 import { INCOME_CATEGORIES, EXPENSE_CATEGORIES } from '../lib/categories.js';
+import { journalLinesAsTransactions } from '../lib/journal-lines.js';
 import { logAudit } from './audit.js';
 
 const router = Router();
@@ -200,6 +201,20 @@ router.post('/', (req, res, next) => {
 });
 
 // GET /api/transactions?clientId=[&from=YYYY-MM-DD][&to=YYYY-MM-DD]
+// GET /api/transactions/journal-lines?clientId=[&from=][&to=]
+// Read-only rows from journal entries that hit income/expense accounts.
+// Kept separate from GET / so VAT and BIR calculations never see them.
+router.get('/journal-lines', (req, res, next) => {
+  try {
+    const { clientId, from, to } = req.query;
+    if (!clientId) return res.status(400).json({ error: 'clientId query param required' });
+    const client = rowToClient(stmtClientById.get(clientId));
+    if (!client || !canAccess(client, req.userId))
+      return res.status(404).json({ error: 'Client not found' });
+    res.json({ transactions: journalLinesAsTransactions(clientId, { from, to }) });
+  } catch (err) { next(err); }
+});
+
 router.get('/', (req, res, next) => {
   try {
     const { clientId, from, to } = req.query;

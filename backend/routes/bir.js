@@ -11,6 +11,7 @@ import { db, rowToClient, rowToTx } from '../db.js';
 import { authenticate, noEncoder } from '../middleware/auth.js';
 import { getUpcomingDeadlines } from '../lib/bir-deadlines.js';
 import { requireTier } from '../middleware/tierGuard.js';
+import { journalNetByCode, journalSupplierEntries } from '../lib/journal-lines.js';
 
 const router = Router();
 router.use(authenticate);
@@ -129,8 +130,10 @@ router.get('/vat-balance', (req, res, next) => {
       return res.status(404).json({ error: 'Client not found' });
 
     const txns      = stmtTxByClient.all(clientId).map(rowToTx);
-    const inputVAT  = round(sum(txns.filter(t => t.type === 'expense'), 'amount_vat'));
-    const outputVAT = round(sum(txns.filter(t => t.type === 'income'),  'amount_vat'));
+    // Journal VAT lines: 1110 Input VAT (debit), 2010 VAT Payable (credit)
+    const jb        = journalNetByCode(clientId);
+    const inputVAT  = round(sum(txns.filter(t => t.type === 'expense'), 'amount_vat') + (jb['1110']?.net || 0));
+    const outputVAT = round(sum(txns.filter(t => t.type === 'income'),  'amount_vat') - (jb['2010']?.net || 0));
     const net       = round(outputVAT - inputVAT);
 
     res.json({
@@ -269,9 +272,12 @@ router.get('/filing-summary', (req, res, next) => {
 
     // ── 1601EQ — Expanded WHT (quarterly) ────────────────────────────────────
     if (taxTypes.includes('1601EQ')) {
-      const amountDue = round(sum(qTxns.filter(t => t.type === 'expense'), 'ewtAmount'));
-      const hasData   = qTxns.filter(t => (t.ewtAmount || 0) > 0).length > 0;
-      const filed     = filingStatus('1601EQ', qLabel);
+      // Journal-entry withholding (2030 credits) in the same quarter
+      const jeEwt      = journalSupplierEntries(clientId, { year, months: [(q-1)*3+1, (q-1)*3+2, (q-1)*3+3] }).filter(j => j.ewt > 0);
+      const jeEwtTotal = round(jeEwt.reduce((s, j) => s + j.ewt, 0));
+      const amountDue  = round(sum(qTxns.filter(t => t.type === 'expense'), 'ewtAmount') + jeEwtTotal);
+      const hasData    = qTxns.filter(t => (t.ewtAmount || 0) > 0).length > 0 || jeEwt.length > 0;
+      const filed      = filingStatus('1601EQ', qLabel);
       forms.push({
         form: '1601EQ', name: 'Expanded WHT (Quarterly)', period: qLabel,
         periodLabel: `Q${q} ${year}`,
