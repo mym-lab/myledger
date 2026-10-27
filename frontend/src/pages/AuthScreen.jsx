@@ -456,7 +456,7 @@ export default function AuthScreen({ onLogin, adminMode = false }) {
         </div>
 
         <div style={{ textAlign: 'center', marginTop: 20, fontSize: 12, color: T.muted }}>
-          Philippine VAT-compliant bookkeeping · 3 interfaces for every role
+          Simplified BIR compliant accounting | powered by Kaiman &amp; Co.
         </div>
       </div>
     </div>
