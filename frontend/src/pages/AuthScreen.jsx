@@ -413,7 +413,8 @@ export default function AuthScreen({ onLogin, adminMode = false }) {
             <input
               style={{ ...inp, background: inviteLocked ? '#f0f0f0' : '#fafafa',
                        color: inviteLocked ? T.muted : T.text }}
-              type="email" placeholder="Email address" required
+              type={mode === 'login' ? 'text' : 'email'}
+              placeholder={mode === 'login' ? 'Email or User ID' : 'Email address'} required
               value={email}
               onChange={e => { if (!inviteLocked) setEmail(e.target.value); }}
               readOnly={inviteLocked}
