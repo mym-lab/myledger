@@ -76,6 +76,20 @@ export const getMe          = ()                => get('/auth/me',              
 export const getClients        = ()           => get('/clients', true);
 export const getClient         = (id)         => get(`/clients/${id}`, true);
 export const createClient      = (data)       => post('/clients', data, true);
+// Agency creates a business user (User ID + temporary password) for its client
+export const createManagedClient = (data)      => post('/clients/managed', data, true);
+// Change own password. The session token is passed in, since it isn't stored yet
+// during the forced first-login change.
+export async function changeOwnPassword(data, token) {
+  const res = await fetch(BASE + '/auth/change-password', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
+    body: JSON.stringify(data),
+  });
+  const body = await res.json().catch(() => ({}));
+  if (!res.ok) throw new Error(body.error || 'Could not change password');
+  return body;
+}
 export const updateClient      = (id, data)   => put(`/clients/${id}`, data, true);
 export const deleteClient      = (id)         => del(`/clients/${id}`, true);
 export const backupClient      = (id)         => get(`/clients/${id}/backup`, true);
@@ -221,6 +235,7 @@ export const getAdminStats     = ()           => get('/admin/stats',     true);
 export const getSettings       = ()           => get('/admin/settings',  true);
 export const updateSettings    = (data)       => put('/admin/settings',  data, true);
 export const setAccountantTier         = (userId, tier)           => put(`/admin/users/${userId}/set-tier`,     { tier },                 true);
+export const setAccountantPlanLapse    = (userId, lapsed)         => put(`/admin/users/${userId}/plan-lapse`,   { lapsed },               true);
 export const setAccountantBranding     = (userId, firmName, accentColor) =>
   put(`/admin/users/${userId}/set-branding`, { firmName, accentColor },                                                                   true);
 export const setClientSubscriptionTier = (clientId, tier)         => put(`/admin/clients/${clientId}/set-tier`, { tier },                 true);
@@ -429,6 +444,8 @@ export const getTrialStatus = () => get('/auth/trial-status');
 export const getStaff             = ()             => get('/staff',                     true);
 export const createStaff          = (data)         => post('/staff', data,              true);
 export const assignStaff          = (id, clientIds)=> put(`/staff/${id}/assign`, { clientIds }, true);
+export const addStaffClient       = (id, clientId) => post(`/staff/${id}/clients`, { clientId }, true);
+export const removeStaffClient    = (id, clientId) => del(`/staff/${id}/clients/${clientId}`, true);
 export const resetStaffPassword   = (id, password) => put(`/staff/${id}/password`, { password }, true);
 export const deleteStaff          = (id)           => del(`/staff/${id}`,               true);
 

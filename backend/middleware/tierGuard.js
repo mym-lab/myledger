@@ -16,6 +16,7 @@
 
 import { db, rowToUser } from '../db.js';
 import { getTrialStatus } from '../lib/trial.js';
+import { coverageTierFor } from '../lib/plan-lapse.js';
 
 const ACCOUNTANT_TIER_RANK = {
   free:         0,
@@ -37,6 +38,11 @@ const CLIENT_TIER_RANK = {
  * Returns true if the user's effective tier meets the minimum required.
  * During an active trial the effective tier is always 'professional'.
  */
+// Staff work under their agency's plan, so tier checks look at the agency
+function actingUserId(req) {
+  return req.userRole === 'staff' ? req.ownerId : req.userId;
+}
+
 export function userMeetsTier(user, minTier) {
   const trial = getTrialStatus(user);
 
@@ -84,7 +90,7 @@ export function requireTier(minTier, { exemptRoles = ['admin'] } = {}) {
     // Admins always pass
     if (exemptRoles.includes(req.userRole)) return next();
 
-    const row = db.prepare('SELECT * FROM users WHERE id = ?').get(req.userId);
+    const row = db.prepare('SELECT * FROM users WHERE id = ?').get(actingUserId(req));
     if (!row) return res.status(401).json({ error: 'User not found' });
 
     const user = rowToUser(row);
@@ -126,15 +132,15 @@ export function requireClientSlot() {
     if (!req.userId) return next();
     if (req.userRole === 'admin') return next();
 
-    const row = db.prepare('SELECT * FROM users WHERE id = ?').get(req.userId);
+    const row = db.prepare('SELECT * FROM users WHERE id = ?').get(actingUserId(req));
     if (!row) return next();
 
     const user  = rowToUser(row);
     const trial = getTrialStatus(user);
 
     // During trial: professional allows 15 clients
-    const effectiveTier = trial.isTrialActive ? (trial.trialTier || 'professional')
-                                               : (user.accountantTier || 'free');
+    const effectiveTier = coverageTierFor(user) || (trial.isTrialActive ? (trial.trialTier || 'professional')
+                                               : (user.accountantTier || 'free'));
 
     const CLIENT_LIMITS = {
       free:         1,
@@ -151,7 +157,7 @@ export function requireClientSlot() {
     // Count existing clients owned by this accountant
     const { count } = db.prepare(
       "SELECT COUNT(*) as count FROM clients WHERE owner_id = ?"
-    ).get(req.userId);
+    ).get(actingUserId(req));
 
     if (count >= limit) {
       const trial_ = getTrialStatus(user);

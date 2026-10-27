@@ -6,7 +6,7 @@ import { useState, useEffect } from 'react';
 import {
   getAdminStats, getSettings, updateSettings,
   getUpgradeRequests, approveUpgradeRequest, rejectUpgradeRequest,
-  setAccountantTier, setAccountantBranding, setClientSubscriptionTier,
+  setAccountantTier, setAccountantPlanLapse, setAccountantBranding, setClientSubscriptionTier,
   saveSmtpSettings, sendTestEmail, sendBIRReminders,
   getAuditLog,
   getAllReferrals, creditReferral,
@@ -425,6 +425,19 @@ export default function CommandCenter({ onLogout }) {
       setTierMsg(`✓ Tier set to "${tier}"`);
       loadStats();
       setTimeout(() => setTierMsg(''), 3000);
+    } catch (e) { alert(e.message); }
+  }
+
+  async function handleSetPlanLapse(u, lapsed) {
+    const msg = lapsed
+      ? `Mark ${u.email}'s plan as unpaid?\n\nTheir agency access starts a 30-day grace period with reminders to the business owner. After 30 days the accountant access is removed; clients keep their own login and records.`
+      : `Mark ${u.email}'s plan as paid again?\n\nThis ends the grace period.`;
+    if (!confirm(msg)) return;
+    try {
+      await setAccountantPlanLapse(u.id, lapsed);
+      setTierMsg(lapsed ? `Plan marked unpaid for ${u.email}. Grace period started.` : `Plan marked paid for ${u.email}.`);
+      loadStats();
+      setTimeout(() => setTierMsg(''), 5000);
     } catch (e) { alert(e.message); }
   }
 
@@ -1441,6 +1454,21 @@ export default function CommandCenter({ onLogout }) {
                               ) : <span style={{ color: T.border, fontSize: 12 }}>—</span>}
                               {u.role !== 'admin' && (
                                 <div style={{ display: 'flex', flexDirection: 'column', gap: 4, marginTop: 6 }}>
+                                  {isAcct && (
+                                    <>
+                                      {u.planLapsedAt && (
+                                        <span style={{ fontSize: 11, color: '#c2410c', whiteSpace: 'nowrap' }}>
+                                          Plan unpaid · day {Math.floor((Date.now() - new Date(u.planLapsedAt)) / 86400000)} of 30
+                                        </span>
+                                      )}
+                                      <button
+                                        onClick={() => handleSetPlanLapse(u, !u.planLapsedAt)}
+                                        style={{ fontSize: 11, padding: '3px 10px', borderRadius: 6, border: `1px solid ${T.border}`,
+                                          background: 'transparent', color: u.planLapsedAt ? '#15803d' : '#c2410c', cursor: 'pointer', fontFamily: 'inherit', whiteSpace: 'nowrap', textAlign: 'left' }}>
+                                        {u.planLapsedAt ? '✓ Mark plan paid' : '⏸ Mark plan unpaid'}
+                                      </button>
+                                    </>
+                                  )}
                                   <button
                                     onClick={() => handleSetRole(u.id, u.email, u.role)}
                                     style={{ fontSize: 11, padding: '3px 10px', borderRadius: 6, border: `1px solid ${T.border}`,

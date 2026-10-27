@@ -194,6 +194,54 @@ CREATE TABLE IF NOT EXISTS audit_log (
 CREATE INDEX IF NOT EXISTS idx_audit_client ON audit_log(client_id);
 CREATE INDEX IF NOT EXISTS idx_audit_time   ON audit_log(timestamp);
 `);
+
+// ── Migration: users can be created by an accountant (agency) with a User ID ──
+// email becomes optional and new columns are added. SQLite can't drop NOT NULL
+// in place, so rebuild users once, copying every existing column. Other tables
+// reference users(id) by name, so the links survive the rebuild.
+{
+  const cols = db.prepare('PRAGMA table_info(users)').all();
+  const emailCol = cols.find(c => c.name === 'email');
+  const needsRebuild = !cols.some(c => c.name === 'managed_by') || (emailCol && emailCol.notnull === 1);
+  if (needsRebuild) {
+    const have = new Set(cols.map(c => c.name));
+    const defs = cols.map(c => {
+      let d = `${c.name} ${c.type || 'TEXT'}`;
+      if (c.pk) d += ' PRIMARY KEY';
+      else if (c.notnull && c.name !== 'email') d += ' NOT NULL';
+      if (c.dflt_value != null) d += ` DEFAULT ${c.dflt_value}`;
+      return d;
+    });
+    const extra = {
+      username:             'username TEXT',
+      managed_by:           'managed_by TEXT',
+      must_change_password: 'must_change_password INTEGER NOT NULL DEFAULT 0',
+      consent_at:           'consent_at TEXT',
+    };
+    for (const [name, def] of Object.entries(extra)) if (!have.has(name)) defs.push(def);
+
+    db.exec('PRAGMA foreign_keys = OFF;');
+    try {
+      db.exec('BEGIN');
+      db.exec(`CREATE TABLE users_new (${defs.join(', ')})`);
+      const copy = cols.map(c => c.name).join(', ');
+      db.exec(`INSERT INTO users_new (${copy}) SELECT ${copy} FROM users`);
+      db.exec('DROP TABLE users');
+      db.exec('ALTER TABLE users_new RENAME TO users');
+      db.exec('COMMIT');
+    } catch (e) {
+      try { db.exec('ROLLBACK'); } catch (_) {}
+      throw e;
+    } finally {
+      db.exec('PRAGMA foreign_keys = ON;');
+    }
+  }
+  try { db.exec('CREATE UNIQUE INDEX IF NOT EXISTS idx_users_email ON users(email)'); } catch (_) {}
+  try { db.exec('CREATE UNIQUE INDEX IF NOT EXISTS idx_users_username ON users(username COLLATE NOCASE)'); } catch (_) {}
+}
+// Plan-lapse (30-day grace) tracking on accountant accounts
+try { db.exec('ALTER TABLE users ADD COLUMN plan_lapsed_at TEXT'); } catch (_) {}
+try { db.exec('ALTER TABLE users ADD COLUMN lapse_stage INTEGER NOT NULL DEFAULT 0'); } catch (_) {}
 // staff_id column added in v2 — idempotent ALTER (ignored if already exists)
 try { db.exec(`ALTER TABLE audit_log ADD COLUMN staff_id TEXT`); } catch (_) {}
 db.exec(`
@@ -588,6 +636,12 @@ export function rowToUser(r) {
   if (!r) return null;
   return {
     id: r.id, email: r.email, name: r.name, company: r.company,
+    username:         r.username || null,
+    managedBy:        r.managed_by || null,
+    mustChangePassword: r.must_change_password === 1,
+    consentAt:        r.consent_at || null,
+    planLapsedAt:     r.plan_lapsed_at || null,
+    lapseStage:       r.lapse_stage || 0,
     role: r.role, passwordHash: r.password_hash,
     accountantTier: r.accountant_tier,
     firmName: r.firm_name, accentColor: r.accent_color, firmLogo: r.firm_logo,

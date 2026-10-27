@@ -12,6 +12,7 @@
 // Use it as a pre-filled reference when encoding into the eBIRForms offline package.
 // Field labels match BIR form boxes/lines as of 2024 ENCS editions.
 
+import { hasClientAccess } from '../lib/access.js';
 import { Router }          from 'express';
 import { db, rowToClient, rowToTx } from '../db.js';
 import { authenticate, noEncoder } from '../middleware/auth.js';
@@ -32,7 +33,7 @@ const stmtClientById = db.prepare('SELECT * FROM clients WHERE id = ?');
 const stmtTxByClient = db.prepare('SELECT * FROM transactions WHERE client_id=? AND voided_at IS NULL');
 const stmtEmployees  = db.prepare('SELECT * FROM employees WHERE client_id=?');
 
-function canAccess(c, uid) { return c.ownerId === uid || c.accountantId === uid; }
+function canAccess(c, req) { return hasClientAccess(c, req, { allowEncoders: false }); }
 
 // ── Date helpers ──────────────────────────────────────────────────────────────
 function monthBounds(year, month) {
@@ -524,7 +525,7 @@ router.get('/export-xml', (req, res, next) => {
 
     const clientRow = stmtClientById.get(clientId);
     const client    = clientRow ? rowToClient(clientRow) : null;
-    if (!client || !canAccess(client, req.userId))
+    if (!client || !canAccess(client, req))
       return res.status(404).json({ error: 'Client not found' });
 
     const txns = stmtTxByClient.all(clientId).map(rowToTx);

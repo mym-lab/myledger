@@ -4,6 +4,7 @@
 // GET    /api/receipts/:txId/:id      — download a specific attachment
 // DELETE /api/receipts/:txId/:id      — delete an attachment
 
+import { hasRowAccess, actingOwnerId } from '../lib/access.js';
 import { Router } from 'express';
 import multer       from 'multer';
 import { v4 as uuid } from 'uuid';
@@ -50,10 +51,9 @@ try {
 function getTx(txId) {
   return db.prepare('SELECT * FROM transactions WHERE id = ? AND voided_at IS NULL').get(txId);
 }
-function canAccess(clientId, userId) {
-  const client = db.prepare('SELECT * FROM clients WHERE id = ?').get(clientId);
-  if (!client) return false;
-  return client.owner_id === userId || client.accountant_id === userId;
+function canAccess(clientId, req) {
+  const row = db.prepare('SELECT * FROM clients WHERE id = ?').get(clientId);
+  return hasRowAccess(row, req, { allowEncoders: false });
 }
 
 // ── POST /api/receipts/:txId ──────────────────────────────────────────────────
@@ -62,7 +62,7 @@ router.post('/:txId', upload.single('file'), (req, res, next) => {
     const { txId } = req.params;
     const tx = getTx(txId);
     if (!tx) return res.status(404).json({ error: 'Transaction not found' });
-    if (!canAccess(tx.client_id, req.userId)) return res.status(403).json({ error: 'Forbidden' });
+    if (!canAccess(tx.client_id, req)) return res.status(403).json({ error: 'Forbidden' });
     if (!req.file) return res.status(400).json({ error: 'No file uploaded' });
 
     // Max 10 attachments per transaction
@@ -75,7 +75,7 @@ router.post('/:txId', upload.single('file'), (req, res, next) => {
 
     db.prepare(`INSERT INTO transaction_attachments (id, transaction_id, client_id, filename, mimetype, size, data, uploaded_by, created_at)
       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`
-    ).run(id, txId, tx.client_id, req.file.originalname, req.file.mimetype, req.file.size, b64, req.userId, now);
+    ).run(id, txId, tx.client_id, req.file.originalname, req.file.mimetype, req.file.size, b64, actingOwnerId(req), now);
 
     res.status(201).json({
       id, filename: req.file.originalname, mimetype: req.file.mimetype,
@@ -90,7 +90,7 @@ router.get('/:txId', (req, res, next) => {
     const { txId } = req.params;
     const tx = getTx(txId);
     if (!tx) return res.status(404).json({ error: 'Transaction not found' });
-    if (!canAccess(tx.client_id, req.userId)) return res.status(403).json({ error: 'Forbidden' });
+    if (!canAccess(tx.client_id, req)) return res.status(403).json({ error: 'Forbidden' });
 
     const rows = db.prepare(
       'SELECT id, filename, mimetype, size, uploaded_by, created_at FROM transaction_attachments WHERE transaction_id=? ORDER BY created_at ASC'
@@ -109,7 +109,7 @@ router.get('/:txId/:id', (req, res, next) => {
     const { txId, id } = req.params;
     const tx = getTx(txId);
     if (!tx) return res.status(404).json({ error: 'Transaction not found' });
-    if (!canAccess(tx.client_id, req.userId)) return res.status(403).json({ error: 'Forbidden' });
+    if (!canAccess(tx.client_id, req)) return res.status(403).json({ error: 'Forbidden' });
 
     const att = db.prepare('SELECT * FROM transaction_attachments WHERE id=? AND transaction_id=?').get(id, txId);
     if (!att) return res.status(404).json({ error: 'Attachment not found' });
@@ -128,7 +128,7 @@ router.delete('/:txId/:id', (req, res, next) => {
     const { txId, id } = req.params;
     const tx = getTx(txId);
     if (!tx) return res.status(404).json({ error: 'Transaction not found' });
-    if (!canAccess(tx.client_id, req.userId)) return res.status(403).json({ error: 'Forbidden' });
+    if (!canAccess(tx.client_id, req)) return res.status(403).json({ error: 'Forbidden' });
 
     const att = db.prepare('SELECT * FROM transaction_attachments WHERE id=? AND transaction_id=?').get(id, txId);
     if (!att) return res.status(404).json({ error: 'Attachment not found' });

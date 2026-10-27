@@ -168,6 +168,39 @@ router.put('/:id/assign', (req, res, next) => {
   } catch (err) { next(err); }
 });
 
+// ── POST /api/staff/:id/clients — add ONE client, keep the others ─────────────
+// Body: { clientId }
+router.post('/:id/clients', (req, res, next) => {
+  if (!requireOwner(req, res)) return;
+  try {
+    const { id } = req.params;
+    const { clientId } = req.body || {};
+    const staffRow = stmtGetStaff.get(id);
+    if (!staffRow || staffRow.owner_id !== req.userId)
+      return res.status(404).json({ error: 'Staff member not found' });
+    if (!clientId || !stmtCheckClient.get(clientId, req.userId))
+      return res.status(400).json({ error: 'Client not found or not yours' });
+
+    stmtInsertAssignment.run({ staff_id: id, client_id: clientId });
+    const ids = stmtAssignmentsForStaff.all(id).map(r => r.client_id);
+    res.json({ staff: { ...rowToStaff(staffRow), assignedClientIds: ids } });
+  } catch (err) { next(err); }
+});
+
+// ── DELETE /api/staff/:id/clients/:clientId — remove ONE client, keep the others
+router.delete('/:id/clients/:clientId', (req, res, next) => {
+  if (!requireOwner(req, res)) return;
+  try {
+    const { id, clientId } = req.params;
+    const staffRow = stmtGetStaff.get(id);
+    if (!staffRow || staffRow.owner_id !== req.userId)
+      return res.status(404).json({ error: 'Staff member not found' });
+    db.prepare('DELETE FROM staff_assignments WHERE staff_id = ? AND client_id = ?').run(id, clientId);
+    const ids = stmtAssignmentsForStaff.all(id).map(r => r.client_id);
+    res.json({ staff: { ...rowToStaff(staffRow), assignedClientIds: ids } });
+  } catch (err) { next(err); }
+});
+
 // ── DELETE /api/staff/:id — remove a staff member ────────────────────────────
 router.delete('/:id', (req, res, next) => {
   if (!requireOwner(req, res)) return;

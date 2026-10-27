@@ -2,6 +2,7 @@
 import { Router } from 'express';
 import { db, rowToUser, rowToClient, rowToTx, getSetting, setSetting, getAllSettings } from '../db.js';
 import { authenticate, requireAdmin } from '../middleware/auth.js';
+import { setPlanLapse } from '../lib/plan-lapse.js';
 
 const router = Router();
 
@@ -69,6 +70,8 @@ router.get('/stats', (req, res) => {
       id: r.id, email: r.email, name: r.name, company: r.company,
       role: r.role || 'client',
       accountantTier: r.accountant_tier || null,
+      planLapsedAt: r.plan_lapsed_at || null,
+      lapseStage:   r.lapse_stage || 0,
       firmName:    r.firm_name    || null,
       accentColor: r.accent_color || null,
       createdAt: r.created_at,
@@ -304,7 +307,23 @@ router.put('/users/:id/set-tier', (req, res, next) => {
       return res.status(400).json({ error: 'Only accountant accounts have tiers' });
 
     stmtUpdateTier.run({ tier, id: req.params.id });
+    // Setting a paid plan ends any lapse (grace period) for this accountant
+    if (tier !== 'free') setPlanLapse(user.id, false);
     res.json({ message: `Tier set to ${tier}`, user: { id: user.id, email: user.email, accountantTier: tier } });
+  } catch (err) { next(err); }
+});
+
+// PUT /api/admin/users/:id/plan-lapse — mark an accountant's plan unpaid (starts the
+// 30-day grace period with reminders) or paid again (ends it).
+router.put('/users/:id/plan-lapse', (req, res, next) => {
+  try {
+    const user = rowToUser(stmtUserById.get(req.params.id));
+    if (!user) return res.status(404).json({ error: 'User not found' });
+    if (user.role !== 'accountant')
+      return res.status(400).json({ error: 'Only accountant accounts have plans' });
+    const lapsed = req.body?.lapsed === true;
+    setPlanLapse(user.id, lapsed);
+    res.json({ message: lapsed ? 'Plan marked unpaid. Grace period started.' : 'Plan marked paid. Grace period cleared.' });
   } catch (err) { next(err); }
 });
 

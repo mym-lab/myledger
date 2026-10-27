@@ -28,7 +28,7 @@ import {
   getAuditLog,
   getBirDeadlines, getBirVatBalance, getBirFilingSummary, updateBirFilingStatus, getBirPortfolio,
   getIncomeCompare,
-  getJournalEntries, createJournalEntry, updateJournalEntry, deleteJournalEntry,
+  getJournalEntries, createJournalEntry, updateJournalEntry, deleteJournalEntry, createManagedClient,
   assignEncoder, removeEncoder,
   getAssets, createAsset, deleteAsset, getLapsing,
   getContacts, createContact, updateContact, deleteContact,
@@ -37,7 +37,7 @@ import {
   backupClient,
   scanReceipt,
   getMyReferrals,
-  getStaff, createStaff, assignStaff, resetStaffPassword, deleteStaff,
+  getStaff, createStaff, assignStaff, addStaffClient, removeStaffClient, resetStaffPassword, deleteStaff,
   getClientGroups, createClientGroup, updateClientGroup, deleteClientGroup, getConsolidated,
   getBudgets, saveBudget,
   getBills, createBill, payBill, voidBill, deleteBill,
@@ -815,6 +815,104 @@ function TxModal({ clientId, client, onSaved, onClose }) {
 }
 
 // ─── JournalEntryModal (module-level) ────────────────────────────────────────
+// ─── Agency creates a client's login (Firm / Agency plan) ──────────────────
+function ManagedClientModal({ onClose, onDone }) {
+  const isMobile = useMobile();
+  const [f,    setF]    = useState({ tradeName: '', tin: '', type: 'Corporation', name: '', userId: '', email: '', password: '' });
+  const [busy, setBusy] = useState(false);
+  const [err,  setErr]  = useState('');
+  const [made, setMade] = useState(null);
+  const [staffList, setStaffList] = useState([]);
+  const [picked,    setPicked]    = useState([]);
+  useEffect(() => {
+    // Agency sees its staff to pick from; a staff member gets no list and is assigned automatically
+    getStaff().then(r => setStaffList(r.staff || [])).catch(() => setStaffList([]));
+  }, []);
+  const set = k => e => setF(x => ({ ...x, [k]: e.target.value }));
+
+  async function submit(e) {
+    e.preventDefault();
+    setBusy(true); setErr('');
+    try {
+      const r = await createManagedClient({
+        tradeName: f.tradeName, tin: f.tin, type: f.type, name: f.name || undefined,
+        userId: f.userId, email: f.email || undefined, password: f.password, staffIds: picked,
+      });
+      setMade({ userId: r.user.username, password: f.password, tradeName: f.tradeName });
+    } catch (e2) { setErr(e2.message); }
+    finally { setBusy(false); }
+  }
+
+  return (
+    <ModalShell title={made ? 'Client account created' : 'New Client Account'} onClose={onClose} wide>
+      {made ? (
+        <div>
+          <p style={{ fontSize: 14, color: T.muted, lineHeight: 1.6 }}>
+            Give these to {made.tradeName}. They must change the temporary password the first time they sign in.
+          </p>
+          <div style={{ padding: 14, border: `1px solid ${T.border}`, borderRadius: 10, fontFamily: 'monospace', fontSize: 14, lineHeight: 1.8 }}>
+            User ID: <b>{made.userId}</b><br />
+            Temporary password: <b>{made.password}</b>
+          </div>
+          <div style={{ display: 'flex', justifyContent: 'flex-end', marginTop: 16 }}>
+            <Btn onClick={onDone}>Done</Btn>
+          </div>
+        </div>
+      ) : (
+        <form onSubmit={submit}>
+          <div style={{ display: 'grid', gridTemplateColumns: isMobile ? '1fr' : '1fr 1fr', gap: '0 16px' }}>
+            <Fld label="Business name *">
+              <input style={inp} required value={f.tradeName} onChange={set('tradeName')} />
+            </Fld>
+            <Fld label="TIN *">
+              <input style={inp} required value={f.tin} onChange={set('tin')} placeholder="000-000-000-000" />
+            </Fld>
+            <Fld label="Business type">
+              <select style={inp} value={f.type} onChange={set('type')}>
+                <option value="Corporation">Corporation</option>
+                <option value="Sole Proprietor">Sole Proprietor</option>
+              </select>
+            </Fld>
+            <Fld label="Contact person">
+              <input style={inp} value={f.name} onChange={set('name')} />
+            </Fld>
+            <Fld label="User ID for their login *">
+              <input style={inp} required value={f.userId} onChange={set('userId')} placeholder="e.g. juan.sarisari" />
+            </Fld>
+            <Fld label="Temporary password *">
+              <input style={inp} required value={f.password} onChange={set('password')} placeholder="at least 6 characters" />
+            </Fld>
+            <Fld label="Email (optional)">
+              <input style={inp} type="email" value={f.email} onChange={set('email')} />
+            </Fld>
+          </div>
+          <div style={{ fontSize: 12, color: T.muted, marginTop: 4 }}>
+            The business is assigned to your firm as its accountant. Its limits come from the firm's plan, so the client pays nothing.
+          </div>
+          {staffList.length > 0 && (
+            <Fld label="Assign to staff">
+              <div>
+                {staffList.map(s => (
+                  <label key={s.id} style={{ display: 'flex', gap: 8, fontSize: 13, marginBottom: 6, cursor: 'pointer' }}>
+                    <input type="checkbox" checked={picked.includes(s.id)}
+                      onChange={e => setPicked(p => e.target.checked ? [...p, s.id] : p.filter(x => x !== s.id))} />
+                    {s.name} ({s.username || s.email})
+                  </label>
+                ))}
+              </div>
+            </Fld>
+          )}
+          {err && <div style={{ color: T.red, fontSize: 13, marginTop: 10 }}>{err}</div>}
+          <div style={{ display: 'flex', justifyContent: 'flex-end', gap: 10, marginTop: 16 }}>
+            <Btn variant="ghost" onClick={onClose}>Cancel</Btn>
+            <Btn type="submit" disabled={busy}>{busy ? 'Creating…' : 'Create Account'}</Btn>
+          </div>
+        </form>
+      )}
+    </ModalShell>
+  );
+}
+
 // Next posting date after `dateStr` for a frequency. UTC arithmetic so the
 // result never shifts a day in timezones ahead of UTC (matches the server).
 function addJournalPeriod(dateStr, freq) {
@@ -2325,6 +2423,7 @@ export default function AccountantPortal({ onLogout }) {
   const [teamLoading,    setTeamLoading]   = useState(false);
   const [teamError,      setTeamError]     = useState('');
   const [showAddStaff,   setShowAddStaff]  = useState(false);
+  const [showManaged,    setShowManaged]   = useState(false);
   const [newStaffName,   setNewStaffName]  = useState('');
   const [newStaffEmail,  setNewStaffEmail] = useState('');
   const [newStaffUser,   setNewStaffUser]  = useState('');
@@ -8356,6 +8455,7 @@ export default function AccountantPortal({ onLogout }) {
             : '';
           return (
             <div>
+              {showManaged && <ManagedClientModal onClose={() => setShowManaged(false)} onDone={() => { setShowManaged(false); loadPortfolio(); loadClients(); }} />}
               <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: 22, flexWrap: 'wrap', gap: 12 }}>
                 <div>
                   <h2 style={{ margin: 0, fontSize: 22, fontWeight: 600 }}>Portfolio Overview</h2>
@@ -8367,6 +8467,7 @@ export default function AccountantPortal({ onLogout }) {
                   <input type="month" value={portfolioPeriod}
                     onChange={e => { setPortfolioPeriod(e.target.value); loadPortfolio(e.target.value); }}
                     style={{ ...inp, width: 160, padding: '7px 10px' }} />
+                  <Btn size="sm" onClick={() => setShowManaged(true)}>+ New Client Account</Btn>
                   <Btn size="sm" variant="ghost" onClick={() => loadPortfolio()}>↻ Refresh</Btn>
                 </div>
               </div>
@@ -8781,11 +8882,10 @@ export default function AccountantPortal({ onLogout }) {
                         }}>
                           <input type="checkbox" checked={checked} style={{ display: 'none' }}
                             onChange={async () => {
-                              const next = checked
-                                ? [...assignedSet].filter(id => id !== c.id)
-                                : [...assignedSet, c.id];
                               try {
-                                const updated = await assignStaff(member.id, next);
+                                const updated = checked
+                                  ? await removeStaffClient(member.id, c.id)
+                                  : await addStaffClient(member.id, c.id);
                                 setTeamStaff(prev => prev.map(m =>
                                   m.id === member.id
                                     ? { ...m, assignedClientIds: updated.staff.assignedClientIds }

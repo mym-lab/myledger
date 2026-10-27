@@ -12,6 +12,7 @@ import { calculateIncomeVAT, calculateExpenseVAT } from '../lib/vat.js';
 import { INCOME_CATEGORIES, EXPENSE_CATEGORIES } from '../lib/categories.js';
 import { journalLinesAsTransactions } from '../lib/journal-lines.js';
 import { logAudit } from './audit.js';
+import { hasClientAccess, actingOwnerId } from '../lib/access.js';
 
 const router = Router();
 router.use(authenticate);
@@ -62,9 +63,8 @@ const stmtLockCheck = db.prepare(
   'SELECT id FROM locked_periods WHERE client_id=? AND period=?'
 );
 
-function canAccess(client, userId) {
-  return client.ownerId === userId || client.accountantId === userId ||
-         (client.encoderIds || []).includes(userId);
+function canAccess(client, req) {
+  return hasClientAccess(client, req);
 }
 
 function clientIsOPT(client) {
@@ -108,7 +108,7 @@ router.post('/', (req, res, next) => {
 
     const clientRow = stmtClientById.get(clientId);
     const client    = rowToClient(clientRow);
-    if (!client || !canAccess(client, req.userId))
+    if (!client || !canAccess(client, req))
       return res.status(404).json({ error: 'Client not found' });
 
     // Period lock check — use the submitted date if provided
@@ -150,7 +150,7 @@ router.post('/', (req, res, next) => {
     stmtInsertTx.run({
       id,
       client_id:           clientId,
-      user_id:             req.userId,
+      user_id:             actingOwnerId(req),
       type,
       description,
       category:            cat,
@@ -209,7 +209,7 @@ router.get('/journal-lines', (req, res, next) => {
     const { clientId, from, to } = req.query;
     if (!clientId) return res.status(400).json({ error: 'clientId query param required' });
     const client = rowToClient(stmtClientById.get(clientId));
-    if (!client || !canAccess(client, req.userId))
+    if (!client || !canAccess(client, req))
       return res.status(404).json({ error: 'Client not found' });
     res.json({ transactions: journalLinesAsTransactions(clientId, { from, to }) });
   } catch (err) { next(err); }
@@ -221,7 +221,7 @@ router.get('/', (req, res, next) => {
     if (!clientId) return res.status(400).json({ error: 'clientId query param required' });
 
     const client = rowToClient(stmtClientById.get(clientId));
-    if (!client || !canAccess(client, req.userId))
+    if (!client || !canAccess(client, req))
       return res.status(404).json({ error: 'Client not found' });
 
     // Build dynamic SQL with optional date filters
@@ -287,7 +287,7 @@ router.put('/:id', noEncoder, (req, res, next) => {
     if (tx.voidedAt) return res.status(400).json({ error: 'Cannot edit a voided transaction' });
 
     const client = rowToClient(stmtClientById.get(tx.clientId));
-    if (!client || !canAccess(client, req.userId))
+    if (!client || !canAccess(client, req))
       return res.status(403).json({ error: 'Not authorised' });
 
     const {
@@ -362,7 +362,7 @@ router.put('/:id/void', (req, res, next) => {
     if (tx.voidedAt) return res.status(400).json({ error: 'Transaction already voided' });
 
     const client = rowToClient(stmtClientById.get(tx.clientId));
-    if (!client || !canAccess(client, req.userId))
+    if (!client || !canAccess(client, req))
       return res.status(403).json({ error: 'Not authorised' });
 
     // Period lock check on void

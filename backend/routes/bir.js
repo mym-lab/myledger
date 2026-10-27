@@ -5,6 +5,8 @@
 // PUT  /api/bir/filing-status               mark/unmark a filing as filed
 // GET  /api/bir/portfolio?period=YYYY-MM    all clients summary for accountant
 
+import { actingOwnerId } from '../lib/access.js';
+import { hasClientAccess } from '../lib/access.js';
 import { Router } from 'express';
 import { v4 as uuid } from 'uuid';
 import { db, rowToClient, rowToTx } from '../db.js';
@@ -49,8 +51,8 @@ const stmtUpsertFiling = db.prepare(`
     status=@status, filed_at=@filedAt, filed_by=@filedBy, notes=@notes
 `);
 
-function canAccess(client, userId) {
-  return client.ownerId === userId || client.accountantId === userId;
+function canAccess(client, req) {
+  return hasClientAccess(client, req, { allowEncoders: false });
 }
 
 // ── Period helpers ────────────────────────────────────────────────────────────
@@ -111,7 +113,7 @@ router.get('/deadlines', (req, res, next) => {
     if (!clientId) return res.status(400).json({ error: 'clientId query param required' });
 
     const client = rowToClient(stmtClientById.get(clientId));
-    if (!client || !canAccess(client, req.userId))
+    if (!client || !canAccess(client, req))
       return res.status(404).json({ error: 'Client not found' });
 
     const deadlines = getUpcomingDeadlines(client.taxTypes || []);
@@ -126,7 +128,7 @@ router.get('/vat-balance', (req, res, next) => {
     if (!clientId) return res.status(400).json({ error: 'clientId query param required' });
 
     const client = rowToClient(stmtClientById.get(clientId));
-    if (!client || !canAccess(client, req.userId))
+    if (!client || !canAccess(client, req))
       return res.status(404).json({ error: 'Client not found' });
 
     const txns      = stmtTxByClient.all(clientId).map(rowToTx);
@@ -162,7 +164,7 @@ router.get('/filing-summary', (req, res, next) => {
     }
 
     const client = rowToClient(stmtClientById.get(clientId));
-    if (!client || !canAccess(client, req.userId))
+    if (!client || !canAccess(client, req))
       return res.status(404).json({ error: 'Client not found' });
 
     const { year, month } = parseYYYYMM(period);
@@ -370,14 +372,14 @@ router.put('/filing-status', (req, res, next) => {
     if (!['filed', 'pending'].includes(status)) return res.status(400).json({ error: 'status must be filed or pending' });
 
     const client = rowToClient(stmtClientById.get(clientId));
-    if (!client || !canAccess(client, req.userId))
+    if (!client || !canAccess(client, req))
       return res.status(403).json({ error: 'Not authorised' });
 
     stmtUpsertFiling.run({
       id:       uuid(),
       clientId, form, period, status,
       filedAt:  status === 'filed' ? new Date().toISOString() : null,
-      filedBy:  status === 'filed' ? req.userId : null,
+      filedBy:  status === 'filed' ? actingOwnerId(req) : null,
       notes:    notes || null,
     });
 

@@ -5,6 +5,7 @@
 // DELETE /api/coa/:id                      delete custom account (cannot delete system ones)
 // POST   /api/coa/seed/:clientId           seed standard PH COA for a client
 
+import { hasClientAccess } from '../lib/access.js';
 import { Router } from 'express';
 import { v4 as uuid } from 'uuid';
 import { db, rowToClient, rowToCOA, withTransaction } from '../db.js';
@@ -71,15 +72,15 @@ const stmtInsertCOA     = db.prepare(`
 const stmtUpdateCOA     = db.prepare('UPDATE coa SET name=@name, category=@category, normal_balance=@normal_balance WHERE id=@id');
 const stmtDeleteCOA     = db.prepare('DELETE FROM coa WHERE id=?');
 
-function canAccess(client, userId) {
-  return client.ownerId === userId || client.accountantId === userId;
+function canAccess(client, req) {
+  return hasClientAccess(client, req, { allowEncoders: false });
 }
 
 // POST /api/coa/seed/:clientId — seed PH COA for a client (idempotent)
 router.post('/seed/:clientId', (req, res, next) => {
   try {
     const client = rowToClient(stmtClientById.get(req.params.clientId));
-    if (!client || !canAccess(client, req.userId))
+    if (!client || !canAccess(client, req))
       return res.status(404).json({ error: 'Client not found' });
 
     const existing     = stmtCOAByClient.all(req.params.clientId).map(rowToCOA);
@@ -115,7 +116,7 @@ router.get('/', (req, res, next) => {
     if (!clientId) return res.status(400).json({ error: 'clientId required' });
 
     const client = rowToClient(stmtClientById.get(clientId));
-    if (!client || !canAccess(client, req.userId))
+    if (!client || !canAccess(client, req))
       return res.status(404).json({ error: 'Client not found' });
 
     const accounts = stmtCOAByClient.all(clientId).map(rowToCOA);
@@ -135,7 +136,7 @@ router.post('/', (req, res, next) => {
       return res.status(400).json({ error: `category must be one of: ${validCats.join(', ')}` });
 
     const client = rowToClient(stmtClientById.get(clientId));
-    if (!client || !canAccess(client, req.userId))
+    if (!client || !canAccess(client, req))
       return res.status(404).json({ error: 'Client not found' });
 
     if (stmtCOAByCode.get(clientId, code))
@@ -160,7 +161,7 @@ router.put('/:id', (req, res, next) => {
     if (!existing) return res.status(404).json({ error: 'Account not found' });
 
     const client = rowToClient(stmtClientById.get(existing.clientId));
-    if (!client || !canAccess(client, req.userId))
+    if (!client || !canAccess(client, req))
       return res.status(403).json({ error: 'Not authorised' });
 
     const { name, category, normalBalance } = req.body;
@@ -185,7 +186,7 @@ router.delete('/:id', (req, res, next) => {
       return res.status(400).json({ error: 'System accounts cannot be deleted' });
 
     const client = rowToClient(stmtClientById.get(existing.clientId));
-    if (!client || !canAccess(client, req.userId))
+    if (!client || !canAccess(client, req))
       return res.status(403).json({ error: 'Not authorised' });
 
     stmtDeleteCOA.run(req.params.id);

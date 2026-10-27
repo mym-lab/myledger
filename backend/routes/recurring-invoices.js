@@ -10,6 +10,7 @@
 // POST   /api/recurring-invoices/:id/resume Resume (status → active)
 // DELETE /api/recurring-invoices/:id       Cancel (status → cancelled)
 
+import { hasRowAccess, actingOwnerId } from '../lib/access.js';
 import { Router }    from 'express';
 import { v4 as uuid } from 'uuid';
 import { db }         from '../db.js';
@@ -54,12 +55,11 @@ try {
 } catch { /* already exists */ }
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
-function canAccess(clientId, userId, role) {
+function canAccess(clientId, req) {
   const c = db.prepare('SELECT * FROM clients WHERE id=?').get(clientId);
   if (!c) return false;
-  if (role === 'admin') return true;
-  const encoders = JSON.parse(c.encoder_ids || '[]');
-  return c.owner_id === userId || c.accountant_id === userId || encoders.includes(userId);
+  if (req.userRole === 'admin') return true;
+  return hasRowAccess(c, req);
 }
 
 function rowToSchedule(r) {
@@ -93,7 +93,7 @@ router.get('/', (req, res, next) => {
   try {
     const { clientId } = req.query;
     if (!clientId) return res.status(400).json({ error: 'clientId required' });
-    if (!canAccess(clientId, req.userId, req.userRole))
+    if (!canAccess(clientId, req))
       return res.status(403).json({ error: 'Forbidden' });
 
     const rows = db.prepare(
@@ -111,7 +111,7 @@ router.get('/:id', (req, res, next) => {
   try {
     const row = db.prepare('SELECT * FROM recurring_invoices WHERE id=?').get(req.params.id);
     if (!row) return res.status(404).json({ error: 'Not found' });
-    if (!canAccess(row.client_id, req.userId, req.userRole))
+    if (!canAccess(row.client_id, req))
       return res.status(403).json({ error: 'Forbidden' });
     res.json(rowToSchedule(row));
   } catch (err) { next(err); }
@@ -153,7 +153,7 @@ router.post('/', (req, res, next) => {
       return null;
     })();
     if (!targetClientId) return res.status(400).json({ error: 'client_id required' });
-    if (!canAccess(targetClientId, req.userId, req.userRole))
+    if (!canAccess(targetClientId, req))
       return res.status(403).json({ error: 'Forbidden' });
 
     const today         = new Date().toISOString().slice(0, 10);
@@ -170,7 +170,7 @@ router.post('/', (req, res, next) => {
       VALUES
         (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
     `).run(
-      id, targetClientId, req.userId,
+      id, targetClientId, actingOwnerId(req),
       customer_name, customer_email, customer_address, customer_tin,
       invoice_prefix, notes, vat_type, payment_terms,
       Number(due_days) || 30, frequency, next_run_date,
@@ -189,7 +189,7 @@ router.put('/:id', (req, res, next) => {
   try {
     const row = db.prepare('SELECT * FROM recurring_invoices WHERE id=?').get(req.params.id);
     if (!row) return res.status(404).json({ error: 'Not found' });
-    if (!canAccess(row.client_id, req.userId, req.userRole))
+    if (!canAccess(row.client_id, req))
       return res.status(403).json({ error: 'Forbidden' });
 
     const {
@@ -236,7 +236,7 @@ function setStatus(targetStatus) {
     try {
       const row = db.prepare('SELECT * FROM recurring_invoices WHERE id=?').get(req.params.id);
       if (!row) return res.status(404).json({ error: 'Not found' });
-      if (!canAccess(row.client_id, req.userId, req.userRole))
+      if (!canAccess(row.client_id, req))
         return res.status(403).json({ error: 'Forbidden' });
       db.prepare('UPDATE recurring_invoices SET status=?, updated_at=? WHERE id=?')
         .run(targetStatus, new Date().toISOString(), req.params.id);
