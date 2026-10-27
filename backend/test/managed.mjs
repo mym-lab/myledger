@@ -1,6 +1,6 @@
 import { call } from './api.mjs';
 import { DatabaseSync } from 'node:sqlite';
-import bcrypt from '/home/claude/myledger/backend/node_modules/bcryptjs/index.js';
+import bcrypt from 'bcryptjs';
 const DBP = process.env.DB_PATH;
 const raw = new DatabaseSync(DBP);
 const tag = 'm' + Date.now().toString(36);
@@ -64,7 +64,7 @@ const row = raw.prepare('SELECT plan_lapsed_at, lapse_stage FROM users WHERE id=
 ok('grace started (stage 0)', !!row.plan_lapsed_at && row.lapse_stage === 0);
 
 // Run the hourly lapse check with a stub mailer at different times
-const { runPlanLapseCheck } = await import('/home/claude/myledger/backend/lib/plan-lapse.js');
+const { runPlanLapseCheck } = await import('../lib/plan-lapse.js');
 const sent = []; const stub = async m => { sent.push(m.subject); return { sent: true }; };
 const DAY = 86400000, t0 = Date.parse(row.plan_lapsed_at);
 let r = await runPlanLapseCheck({ now: t0 + 1000, send: stub });
