@@ -32,6 +32,7 @@ import referralRoutes        from './routes/referrals.js';
 import invoiceRoutes         from './routes/invoices.js';
 import recurringInvoiceRoutes, { generateDueRecurringInvoices } from './routes/recurring-invoices.js';
 import recurringEntriesRoutes, { generateDueRecurringEntries } from './routes/recurring-entries.js';
+import { runPlanLapseCheck } from './lib/plan-lapse.js';
 import payrollRoutes         from './routes/payroll.js';
 import paymentRoutes         from './routes/payments.js';
 import monitoringRoutes, { trackActivity } from './routes/monitoring.js';
@@ -426,6 +427,9 @@ function runRecurringEntries() {
 }
 runRecurringEntries();
 setInterval(runRecurringEntries, 60 * 60 * 1000);
+
+// Accountant plan lapse: reminders on day 0/15/25, access ends on day 30 (idempotent)
+setInterval(() => runPlanLapseCheck().catch(e => console.error('Plan lapse check failed:', e.message)), 60 * 60 * 1000);
 
 // ── Daily Database Backup ─────────────────────────────────────────────────────
 // Runs daily at 2:00 AM Philippine time (UTC 18:00 previous day).

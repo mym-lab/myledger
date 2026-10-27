@@ -12,6 +12,7 @@ import { db, rowToClient, rowToTx, rowToJE, rowToAsset, rowToContact } from '../
 import { authenticate, noEncoder } from '../middleware/auth.js';
 import { journalLinesAsTransactions, journalNetByCode, journalSupplierEntries } from '../lib/journal-lines.js';
 import { requireTier } from '../middleware/tierGuard.js';
+import { hasClientAccess } from '../lib/access.js';
 
 const router = Router();
 router.use(authenticate);
@@ -49,9 +50,9 @@ function journalAsTransactions(clientId) {
 
 // includeJournal: also count journal entries as P&L items (income,
 // balance, cash flow reports only). Other reports keep transactions only.
-function getClientAndTx(clientId, userId, { includeJournal = false } = {}) {
+function getClientAndTx(clientId, req, { includeJournal = false } = {}) {
   const client = rowToClient(stmtClientById.get(clientId));
-  if (!client || !canAccess(client, userId)) return { client: null, txns: [] };
+  if (!client || !hasClientAccess(client, req, { allowEncoders: false })) return { client: null, txns: [] };
   let txns = stmtTxByClient.all(clientId).map(rowToTx);
   if (includeJournal) txns = txns.concat(journalAsTransactions(clientId));
   return { client, txns };
@@ -71,7 +72,7 @@ router.get('/income', (req, res, next) => {
     const { clientId, from, to, basis } = req.query;
     if (!clientId) return res.status(400).json({ error: 'clientId required' });
     // basis=cash: transactions only (journal accruals excluded). Default includes journal lines.
-    const { client, txns } = getClientAndTx(clientId, req.userId, { includeJournal: basis !== 'cash' });
+    const { client, txns } = getClientAndTx(clientId, req, { includeJournal: basis !== 'cash' });
     if (!client) return res.status(404).json({ error: 'Client not found' });
 
     const filtered = filterByDate(txns, from, to);
@@ -127,7 +128,7 @@ router.get('/balance', (req, res, next) => {
   try {
     const { clientId, asOf } = req.query;
     if (!clientId) return res.status(400).json({ error: 'clientId required' });
-    const { client, txns } = getClientAndTx(clientId, req.userId);
+    const { client, txns } = getClientAndTx(clientId, req);
     if (!client) return res.status(404).json({ error: 'Client not found' });
 
     const filtered = asOf ? txns.filter(t => t.createdAt <= asOf + 'T23:59:59') : txns;
@@ -190,7 +191,7 @@ router.get('/cashflow', (req, res, next) => {
   try {
     const { clientId, from, to } = req.query;
     if (!clientId) return res.status(400).json({ error: 'clientId required' });
-    const { client, txns } = getClientAndTx(clientId, req.userId);
+    const { client, txns } = getClientAndTx(clientId, req);
     if (!client) return res.status(404).json({ error: 'Client not found' });
 
     const filtered = filterByDate(txns, from, to);
@@ -243,7 +244,7 @@ router.get('/books', (req, res, next) => {
     if (!clientId) return res.status(400).json({ error: 'clientId required' });
     if (!type)     return res.status(400).json({ error: 'type required (sales|purchases|receipts|disbursements)' });
 
-    const { client, txns } = getClientAndTx(clientId, req.userId);
+    const { client, txns } = getClientAndTx(clientId, req);
     if (!client) return res.status(404).json({ error: 'Client not found' });
 
     const filtered = filterByDate(txns, from, to);
@@ -340,7 +341,7 @@ router.get('/slsp', (req, res, next) => {
     if (!clientId || !year || !quarter)
       return res.status(400).json({ error: 'clientId, year and quarter are required' });
 
-    const { client, txns } = getClientAndTx(clientId, req.userId);
+    const { client, txns } = getClientAndTx(clientId, req);
     if (!client) return res.status(404).json({ error: 'Client not found' });
 
     const contacts = stmtContactsByClient.all(clientId).map(rowToContact);
@@ -439,7 +440,7 @@ router.get('/general-journal', (req, res, next) => {
   try {
     const { clientId, from, to } = req.query;
     if (!clientId) return res.status(400).json({ error: 'clientId required' });
-    const { client, txns } = getClientAndTx(clientId, req.userId);
+    const { client, txns } = getClientAndTx(clientId, req);
     if (!client) return res.status(404).json({ error: 'Client not found' });
 
     const filtered = filterByDate(txns, from, to);
@@ -501,7 +502,7 @@ router.get('/general-ledger', (req, res, next) => {
   try {
     const { clientId, from, to, account: filterAccount } = req.query;
     if (!clientId) return res.status(400).json({ error: 'clientId required' });
-    const { client, txns } = getClientAndTx(clientId, req.userId);
+    const { client, txns } = getClientAndTx(clientId, req);
     if (!client) return res.status(404).json({ error: 'Client not found' });
 
     const filtered = filterByDate(txns, from, to);
@@ -595,7 +596,7 @@ router.get('/income-compare', (req, res, next) => {
       period = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}`;
     }
 
-    const { client, txns } = getClientAndTx(clientId, req.userId, { includeJournal: true });
+    const { client, txns } = getClientAndTx(clientId, req, { includeJournal: true });
     if (!client) return res.status(404).json({ error: 'Client not found' });
 
     const [y, m] = period.split('-').map(Number);
@@ -694,7 +695,7 @@ router.get('/cashflow-forecast', requireTier('solo'), (req, res, next) => {
   try {
     const { clientId, days: daysParam = '90' } = req.query;
     if (!clientId) return res.status(400).json({ error: 'clientId required' });
-    const { client, txns } = getClientAndTx(clientId, req.userId);
+    const { client, txns } = getClientAndTx(clientId, req);
     if (!client) return res.status(404).json({ error: 'Client not found' });
 
     const days = Math.min(180, Math.max(7, parseInt(daysParam) || 90));

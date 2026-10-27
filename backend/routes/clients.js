@@ -2,6 +2,9 @@
 import { Router } from 'express';
 import { v4 as uuid } from 'uuid';
 import { db, rowToClient, rowToTx, withTransaction, getSetting } from '../db.js';
+import { hasClientAccess } from '../lib/access.js';
+import { logAudit } from './audit.js';
+import bcrypt from 'bcryptjs';
 import { sendEmail } from '../email.js';
 import { authenticate, noEncoder } from '../middleware/auth.js';
 import { requireClientSlot } from '../middleware/tierGuard.js';
@@ -65,7 +68,7 @@ function isStaffAssigned(clientId, staffId) {
   return !!row;
 }
 function anyAccess(client, userId, userRole) {
-  if (userRole === 'staff') return isStaffAssigned(client.id, userId);
+  if (userRole === 'staff') return hasClientAccess(client, { userId, userRole }, { allowEncoders: false });
   return canAccess(client, userId) || canEncode(client, userId);
 }
 
@@ -79,7 +82,7 @@ router.get('/', (req, res, next) => {
       );
       const clients = stmtAllClients.all()
         .map(rowToClient)
-        .filter(c => assignedIds.has(c.id))
+        .filter(c => hasClientAccess(c, req, { allowEncoders: false }))
         .sort((a, b) => new Date(b.createdAt) - new Date(a.createdAt));
       return res.json({ clients });
     }
@@ -142,6 +145,80 @@ router.post('/', requireClientSlot(), (req, res, next) => {
 
     const client = rowToClient(stmtClientById.get(id));
     res.status(201).json({ client });
+  } catch (err) { next(err); }
+});
+
+// POST /api/clients/managed — an agency (Firm or Agency plan) creates a business
+// user for its client. The client gets a User ID and a temporary password, the
+// agency is assigned as accountant, and the agency's plan covers the client.
+const MANAGED_PLANS = ['firm', 'agency'];
+const stmtLoginTaken = db.prepare(
+  'SELECT 1 FROM users WHERE LOWER(email) = LOWER(?) OR LOWER(username) = LOWER(?)'
+);
+const stmtStaffLoginTaken = db.prepare(
+  'SELECT 1 FROM accountant_staff WHERE LOWER(email) = LOWER(?) OR LOWER(username) = LOWER(?)'
+);
+const stmtInsertManagedUser = db.prepare(`
+  INSERT INTO users (id, email, username, name, company, role, password_hash, managed_by,
+                     must_change_password, created_at)
+  VALUES (@id, @email, @username, @name, @company, 'client', @password_hash, @managed_by, 1, @created_at)
+`);
+
+router.post('/managed', async (req, res, next) => {
+  try {
+    const agency = db.prepare('SELECT * FROM users WHERE id = ?').get(req.userId);
+    if (!agency || agency.role !== 'accountant' || !MANAGED_PLANS.includes(agency.accountant_tier))
+      return res.status(403).json({ error: 'Creating client accounts needs the Firm or Agency plan' });
+
+    const { tradeName, tin, type, address = '', name, userId, email, password } = req.body || {};
+    const loginId = String(userId || '').trim();
+    const mail    = String(email || '').trim().toLowerCase() || null;
+
+    if (!tradeName || !tin || !loginId || !password)
+      return res.status(400).json({ error: 'Business name, TIN, User ID and temporary password are required' });
+    if (!/^[A-Za-z0-9._-]{3,30}$/.test(loginId))
+      return res.status(400).json({ error: 'User ID must be 3–30 characters: letters, numbers, dot, dash or underscore' });
+    if (mail && !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(mail))
+      return res.status(400).json({ error: 'Email address is not valid' });
+    if (String(password).length < 6)
+      return res.status(400).json({ error: 'Temporary password must be at least 6 characters' });
+
+    for (const v of [loginId, mail].filter(Boolean)) {
+      if (stmtLoginTaken.get(v, v) || stmtStaffLoginTaken.get(v, v))
+        return res.status(409).json({ error: `"${v}" is already in use. Choose another User ID or email.` });
+    }
+
+    const userRowId = uuid();
+    const clientId  = uuid();
+    const now       = new Date().toISOString();
+    const hash      = await bcrypt.hash(String(password), 10);
+
+    withTransaction(() => {
+      stmtInsertManagedUser.run({
+        id: userRowId, email: mail, username: loginId, name: name || tradeName,
+        company: tradeName, password_hash: hash, managed_by: agency.id, created_at: now,
+      });
+      stmtInsertClient.run({
+        id: clientId, owner_id: userRowId, accountant_id: agency.id, encoder_ids: '[]',
+        trade_name: tradeName, tin, address,
+        zip_code: null, telephone: null, rdo_code: null,
+        business_type: '', type: type || 'Corporation', tax_regime: 'vat', opt_rate: 0.03,
+        birthday: null, incorporation_date: null, civil_status: 'Single', spouse_tin: null,
+        tax_option: 'graduated', is_msme: 0, subscription_tier: 'free', tax_types: '[]',
+        created_at: now,
+      });
+    });
+
+    logAudit({
+      clientId, userId: agency.id, staffId: null,
+      action: 'CREATE_MANAGED_CLIENT', entity: 'client', entityId: clientId,
+      detail: `Client login ${loginId} created by ${agency.email || agency.name}`,
+    });
+
+    res.status(201).json({
+      client: rowToClient(stmtClientById.get(clientId)),
+      user:   { id: userRowId, username: loginId, email: mail, mustChangePassword: true },
+    });
   } catch (err) { next(err); }
 });
 

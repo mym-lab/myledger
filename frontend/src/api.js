@@ -76,6 +76,20 @@ export const getMe          = ()                => get('/auth/me',              
 export const getClients        = ()           => get('/clients', true);
 export const getClient         = (id)         => get(`/clients/${id}`, true);
 export const createClient      = (data)       => post('/clients', data, true);
+// Agency creates a business user (User ID + temporary password) for its client
+export const createManagedClient = (data)      => post('/clients/managed', data, true);
+// Change own password. The session token is passed in, since it isn't stored yet
+// during the forced first-login change.
+export async function changeOwnPassword(data, token) {
+  const res = await fetch(BASE + '/auth/change-password', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
+    body: JSON.stringify(data),
+  });
+  const body = await res.json().catch(() => ({}));
+  if (!res.ok) throw new Error(body.error || 'Could not change password');
+  return body;
+}
 export const updateClient      = (id, data)   => put(`/clients/${id}`, data, true);
 export const deleteClient      = (id)         => del(`/clients/${id}`, true);
 export const backupClient      = (id)         => get(`/clients/${id}/backup`, true);

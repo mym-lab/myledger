@@ -28,7 +28,7 @@ import {
   getAuditLog,
   getBirDeadlines, getBirVatBalance, getBirFilingSummary, updateBirFilingStatus, getBirPortfolio,
   getIncomeCompare,
-  getJournalEntries, createJournalEntry, updateJournalEntry, deleteJournalEntry,
+  getJournalEntries, createJournalEntry, updateJournalEntry, deleteJournalEntry, createManagedClient,
   assignEncoder, removeEncoder,
   getAssets, createAsset, deleteAsset, getLapsing,
   getContacts, createContact, updateContact, deleteContact,
@@ -815,6 +815,85 @@ function TxModal({ clientId, client, onSaved, onClose }) {
 }
 
 // ─── JournalEntryModal (module-level) ────────────────────────────────────────
+// ─── Agency creates a client's login (Firm / Agency plan) ──────────────────
+function ManagedClientModal({ onClose, onDone }) {
+  const isMobile = useMobile();
+  const [f,    setF]    = useState({ tradeName: '', tin: '', type: 'Corporation', name: '', userId: '', email: '', password: '' });
+  const [busy, setBusy] = useState(false);
+  const [err,  setErr]  = useState('');
+  const [made, setMade] = useState(null);
+  const set = k => e => setF(x => ({ ...x, [k]: e.target.value }));
+
+  async function submit(e) {
+    e.preventDefault();
+    setBusy(true); setErr('');
+    try {
+      const r = await createManagedClient({
+        tradeName: f.tradeName, tin: f.tin, type: f.type, name: f.name || undefined,
+        userId: f.userId, email: f.email || undefined, password: f.password,
+      });
+      setMade({ userId: r.user.username, password: f.password, tradeName: f.tradeName });
+    } catch (e2) { setErr(e2.message); }
+    finally { setBusy(false); }
+  }
+
+  return (
+    <ModalShell title={made ? 'Client account created' : 'New Client Account'} onClose={onClose} wide>
+      {made ? (
+        <div>
+          <p style={{ fontSize: 14, color: T.muted, lineHeight: 1.6 }}>
+            Give these to {made.tradeName}. They must change the temporary password the first time they sign in.
+          </p>
+          <div style={{ padding: 14, border: `1px solid ${T.border}`, borderRadius: 10, fontFamily: 'monospace', fontSize: 14, lineHeight: 1.8 }}>
+            User ID: <b>{made.userId}</b><br />
+            Temporary password: <b>{made.password}</b>
+          </div>
+          <div style={{ display: 'flex', justifyContent: 'flex-end', marginTop: 16 }}>
+            <Btn onClick={onDone}>Done</Btn>
+          </div>
+        </div>
+      ) : (
+        <form onSubmit={submit}>
+          <div style={{ display: 'grid', gridTemplateColumns: isMobile ? '1fr' : '1fr 1fr', gap: '0 16px' }}>
+            <Fld label="Business name *">
+              <input style={inp} required value={f.tradeName} onChange={set('tradeName')} />
+            </Fld>
+            <Fld label="TIN *">
+              <input style={inp} required value={f.tin} onChange={set('tin')} placeholder="000-000-000-000" />
+            </Fld>
+            <Fld label="Business type">
+              <select style={inp} value={f.type} onChange={set('type')}>
+                <option value="Corporation">Corporation</option>
+                <option value="Sole Proprietor">Sole Proprietor</option>
+              </select>
+            </Fld>
+            <Fld label="Contact person">
+              <input style={inp} value={f.name} onChange={set('name')} />
+            </Fld>
+            <Fld label="User ID for their login *">
+              <input style={inp} required value={f.userId} onChange={set('userId')} placeholder="e.g. juan.sarisari" />
+            </Fld>
+            <Fld label="Temporary password *">
+              <input style={inp} required value={f.password} onChange={set('password')} placeholder="at least 6 characters" />
+            </Fld>
+            <Fld label="Email (optional)">
+              <input style={inp} type="email" value={f.email} onChange={set('email')} />
+            </Fld>
+          </div>
+          <div style={{ fontSize: 12, color: T.muted, marginTop: 4 }}>
+            The business is assigned to you as its accountant. Its limits come from your plan, so the client pays nothing.
+          </div>
+          {err && <div style={{ color: T.red, fontSize: 13, marginTop: 10 }}>{err}</div>}
+          <div style={{ display: 'flex', justifyContent: 'flex-end', gap: 10, marginTop: 16 }}>
+            <Btn variant="ghost" onClick={onClose}>Cancel</Btn>
+            <Btn type="submit" disabled={busy}>{busy ? 'Creating…' : 'Create Account'}</Btn>
+          </div>
+        </form>
+      )}
+    </ModalShell>
+  );
+}
+
 // Next posting date after `dateStr` for a frequency. UTC arithmetic so the
 // result never shifts a day in timezones ahead of UTC (matches the server).
 function addJournalPeriod(dateStr, freq) {
@@ -2325,6 +2404,7 @@ export default function AccountantPortal({ onLogout }) {
   const [teamLoading,    setTeamLoading]   = useState(false);
   const [teamError,      setTeamError]     = useState('');
   const [showAddStaff,   setShowAddStaff]  = useState(false);
+  const [showManaged,    setShowManaged]   = useState(false);
   const [newStaffName,   setNewStaffName]  = useState('');
   const [newStaffEmail,  setNewStaffEmail] = useState('');
   const [newStaffUser,   setNewStaffUser]  = useState('');
@@ -8356,6 +8436,7 @@ export default function AccountantPortal({ onLogout }) {
             : '';
           return (
             <div>
+              {showManaged && <ManagedClientModal onClose={() => setShowManaged(false)} onDone={() => { setShowManaged(false); loadPortfolio(); loadClients(); }} />}
               <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: 22, flexWrap: 'wrap', gap: 12 }}>
                 <div>
                   <h2 style={{ margin: 0, fontSize: 22, fontWeight: 600 }}>Portfolio Overview</h2>
@@ -8367,6 +8448,7 @@ export default function AccountantPortal({ onLogout }) {
                   <input type="month" value={portfolioPeriod}
                     onChange={e => { setPortfolioPeriod(e.target.value); loadPortfolio(e.target.value); }}
                     style={{ ...inp, width: 160, padding: '7px 10px' }} />
+                  <Btn size="sm" onClick={() => setShowManaged(true)}>+ New Client Account</Btn>
                   <Btn size="sm" variant="ghost" onClick={() => loadPortfolio()}>↻ Refresh</Btn>
                 </div>
               </div>

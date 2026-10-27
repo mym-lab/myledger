@@ -8,6 +8,7 @@ import { v4 as uuid } from 'uuid';
 import { db, rowToClient, rowToJE } from '../db.js';
 import { authenticate, noEncoder } from '../middleware/auth.js';
 import { logAudit } from './audit.js';
+import { hasClientAccess, actingOwnerId } from '../lib/access.js';
 
 const router = Router();
 router.use(authenticate);
@@ -58,8 +59,8 @@ function cleanCounterparty(counterparty) {
   } : null;
 }
 
-function canAccess(client, userId) {
-  return client.ownerId === userId || client.accountantId === userId;
+function canAccess(client, req) {
+  return hasClientAccess(client, req, { allowEncoders: false });
 }
 
 // POST /api/journal-entries
@@ -71,7 +72,7 @@ router.post('/', (req, res, next) => {
     if (!entries.length)  return res.status(400).json({ error: 'At least one entry line is required' });
 
     const client = rowToClient(stmtClientById.get(clientId));
-    if (!client || !canAccess(client, req.userId))
+    if (!client || !canAccess(client, req))
       return res.status(404).json({ error: 'Client not found' });
 
     // Validate: total debits must equal total credits
@@ -100,7 +101,7 @@ router.post('/', (req, res, next) => {
     stmtInsertJE.run({
       id,
       client_id:    clientId,
-      user_id:      req.userId,
+      user_id:      actingOwnerId(req),
       date:         jeDate,
       description,
       reference_no: referenceNo,
@@ -128,7 +129,7 @@ router.get('/', (req, res, next) => {
     if (!clientId) return res.status(400).json({ error: 'clientId query param required' });
 
     const client = rowToClient(stmtClientById.get(clientId));
-    if (!client || !canAccess(client, req.userId))
+    if (!client || !canAccess(client, req))
       return res.status(404).json({ error: 'Client not found' });
 
     const codes   = codeSet(clientId);
@@ -146,7 +147,7 @@ router.put('/:id', (req, res, next) => {
     const je = rowToJE(stmtJEById.get(req.params.id));
     if (!je) return res.status(404).json({ error: 'Journal entry not found' });
     const client = rowToClient(stmtClientById.get(je.clientId));
-    if (!client || !canAccess(client, req.userId))
+    if (!client || !canAccess(client, req))
       return res.status(403).json({ error: 'Not authorised' });
 
     const { date, description, referenceNo = '', entries = [], counterparty = null } = req.body || {};
@@ -195,7 +196,7 @@ router.delete('/:id', (req, res, next) => {
     if (!je) return res.status(404).json({ error: 'Journal entry not found' });
 
     const client = rowToClient(stmtClientById.get(je.clientId));
-    if (!client || !canAccess(client, req.userId))
+    if (!client || !canAccess(client, req))
       return res.status(403).json({ error: 'Not authorised' });
 
     stmtDeleteJE.run(req.params.id);

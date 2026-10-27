@@ -16,6 +16,7 @@
 
 import { db, rowToUser } from '../db.js';
 import { getTrialStatus } from '../lib/trial.js';
+import { coverageTierFor } from '../lib/plan-lapse.js';
 
 const ACCOUNTANT_TIER_RANK = {
   free:         0,
@@ -133,8 +134,8 @@ export function requireClientSlot() {
     const trial = getTrialStatus(user);
 
     // During trial: professional allows 15 clients
-    const effectiveTier = trial.isTrialActive ? (trial.trialTier || 'professional')
-                                               : (user.accountantTier || 'free');
+    const effectiveTier = coverageTierFor(user) || (trial.isTrialActive ? (trial.trialTier || 'professional')
+                                               : (user.accountantTier || 'free'));
 
     const CLIENT_LIMITS = {
       free:         1,

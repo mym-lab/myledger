@@ -4,7 +4,7 @@
 // Handles ?reset=TOKEN URL param: shows reset-password form
 
 import { useState, useEffect } from 'react';
-import { login, signup, getInvite, getPublicSettings, forgotPassword, resetPassword } from '../api.js';
+import { login, signup, getInvite, getPublicSettings, forgotPassword, resetPassword, changeOwnPassword } from '../api.js';
 
 const T = {
   bg:      '#f5f5f7',
@@ -26,6 +26,7 @@ const inp = {
 
 export default function AuthScreen({ onLogin, adminMode = false }) {
   const [mode,        setMode]       = useState('login');
+  const [forced,      setForced]     = useState(null); // first-login password change
   const [role,        setRole]       = useState('client');
   const [email,       setEmail]      = useState('');
   const [pass,        setPass]       = useState('');
@@ -107,6 +108,10 @@ export default function AuthScreen({ onLogin, adminMode = false }) {
         : await signup({ email, password: pass, name, company, role,
                          inviteToken: inviteToken || undefined,
                          refCode: refCode || undefined });
+      if (res.user?.mustChangePassword) {
+        setForced({ token: res.token, user: res.user, current: pass });
+        return;
+      }
       onLogin(res.token, res.user);
     } catch (e) { setErr(e.message); }
     finally { setLoad(false); }
@@ -286,6 +291,7 @@ export default function AuthScreen({ onLogin, adminMode = false }) {
   }
 
   // ─── Render: Normal login / signup card ───────────────────────────────────
+  if (forced) return <ForcedPasswordChange session={forced} onDone={u => onLogin(forced.token, u)} />;
   return (
     <div style={{ minHeight: '100vh', background: T.bg, display: 'flex', alignItems: 'center',
       justifyContent: 'center', padding: 20,
@@ -453,6 +459,55 @@ export default function AuthScreen({ onLogin, adminMode = false }) {
           Philippine VAT-compliant bookkeeping · 3 interfaces for every role
         </div>
       </div>
+    </div>
+  );
+}
+
+// ─── First sign-in: change the temporary password (accounts an accountant created) ─
+function ForcedPasswordChange({ session, onDone }) {
+  const [next,    setNext]    = useState('');
+  const [again,   setAgain]   = useState('');
+  const [consent, setConsent] = useState(false);
+  const [busy,    setBusy]    = useState(false);
+  const [err,     setErr]     = useState('');
+
+  async function submit(e) {
+    e.preventDefault();
+    if (next.length < 6) return setErr('New password must be at least 6 characters.');
+    if (next !== again)  return setErr('The new passwords do not match.');
+    if (!consent)        return setErr('Please accept the statement below to continue.');
+    setBusy(true); setErr('');
+    try {
+      await changeOwnPassword({ currentPassword: session.current, newPassword: next, consent: true }, session.token);
+      onDone({ ...session.user, mustChangePassword: false });
+    } catch (e2) { setErr(e2.message); setBusy(false); }
+  }
+
+  return (
+    <div style={{ minHeight: '100vh', background: T.bg, display: 'flex', alignItems: 'center',
+      justifyContent: 'center', padding: 16, fontFamily: '-apple-system, BlinkMacSystemFont, sans-serif' }}>
+      <form onSubmit={submit} style={{ width: '100%', maxWidth: 420, background: T.surface, borderRadius: 18,
+        padding: 28, boxShadow: '0 2px 16px rgba(0,0,0,0.08)' }}>
+        <h2 style={{ margin: '0 0 6px', fontSize: 20, color: T.text }}>Set your password</h2>
+        <p style={{ margin: '0 0 18px', fontSize: 14, color: T.muted, lineHeight: 1.5 }}>
+          Your accountant set up this account for you. Choose a password only you know before you continue.
+        </p>
+        <input style={inp} type="password" placeholder="New password" value={next}
+          onChange={e => setNext(e.target.value)} required />
+        <input style={inp} type="password" placeholder="Confirm new password" value={again}
+          onChange={e => setAgain(e.target.value)} required />
+        <label style={{ display: 'flex', gap: 10, fontSize: 13, color: T.text, lineHeight: 1.5, margin: '4px 0 6px', cursor: 'pointer' }}>
+          <input type="checkbox" checked={consent} onChange={e => setConsent(e.target.checked)} style={{ marginTop: 3 }} />
+          <span>I understand the accountant who set up this account can see and manage my books in MyLedger.
+            I can settle with them or choose another accountant at any time. My records stay mine.</span>
+        </label>
+        {err && <div style={{ color: T.red, fontSize: 13, margin: '8px 0' }}>{err}</div>}
+        <button type="submit" disabled={busy} style={{ width: '100%', marginTop: 12, padding: 13, border: 'none',
+          borderRadius: 12, background: T.accent, color: '#fff', fontSize: 15, fontWeight: 600,
+          cursor: busy ? 'not-allowed' : 'pointer', opacity: busy ? 0.7 : 1, fontFamily: 'inherit' }}>
+          {busy ? 'Saving…' : 'Continue'}
+        </button>
+      </form>
     </div>
   );
 }

@@ -26,7 +26,8 @@ export const trackActivity = (req, res, next) => {
   if (token) {
     try {
       const decoded = jwt.verify(token, JWT_SECRET);
-      userId = decoded.userId;
+      // Staff sub-users have no users row (activity is per user), so skip them
+      if (decoded.role !== 'staff') userId = decoded.userId;
     } catch { /* unauthenticated request — skip tracking */ }
   }
 

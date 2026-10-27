@@ -24,6 +24,8 @@ function logAttempt(email, ip, success, role = null) {
 }
 
 const stmtFindByEmail      = db.prepare('SELECT * FROM users WHERE email = ?');
+// Login accepts an email or a User ID (users created by an accountant)
+const stmtFindByLogin      = db.prepare('SELECT * FROM users WHERE email = ? OR username = ? COLLATE NOCASE');
 const stmtFindStaffByEmail = db.prepare(
   'SELECT * FROM accountant_staff WHERE email = ? COLLATE NOCASE OR username = ? COLLATE NOCASE'
 );
@@ -151,7 +153,7 @@ router.post('/login', async (req, res, next) => {
 
     // ── Check main users table first ─────────────────────────────────────────
     const ip  = req.headers['x-forwarded-for']?.split(',')[0]?.trim() || req.socket?.remoteAddress || null;
-    const row = stmtFindByEmail.get(login);
+    const row = stmtFindByLogin.get(login, login);
     if (row) {
       if (!(await bcrypt.compare(password, row.password_hash))) {
         logAttempt(email, ip, false, row.role);
@@ -165,6 +167,7 @@ router.post('/login', async (req, res, next) => {
         token,
         user: {
           id: user.id, email: user.email, name: user.name, company: user.company,
+          username: user.username, mustChangePassword: user.mustChangePassword,
           role: user.role, accountantTier: user.accountantTier || undefined,
           firmName:    user.firmName    || null,
           accentColor: user.accentColor || null,
@@ -305,6 +308,37 @@ router.get('/trial-status', authenticate, (req, res) => {
 try {
   db.exec("ALTER TABLE users ADD COLUMN firm_logo TEXT");
 } catch { /* column already exists */ }
+
+// POST /api/auth/change-password — a signed-in user changes their own password.
+// Used for the forced first-login change on accounts an accountant created.
+router.post('/change-password', authenticate, async (req, res, next) => {
+  try {
+    if (req.userRole === 'staff')
+      return res.status(403).json({ error: 'Staff passwords are managed by your accountant' });
+
+    const { currentPassword, newPassword, consent } = req.body || {};
+    if (!currentPassword || !newPassword)
+      return res.status(400).json({ error: 'Current and new password are required' });
+    if (String(newPassword).length < 6)
+      return res.status(400).json({ error: 'New password must be at least 6 characters' });
+
+    const row = db.prepare('SELECT * FROM users WHERE id = ?').get(req.userId);
+    if (!row || !(await bcrypt.compare(currentPassword, row.password_hash)))
+      return res.status(401).json({ error: 'Current password is incorrect' });
+
+    const mustChange = row.must_change_password === 1;
+    if (mustChange && consent !== true)
+      return res.status(400).json({ error: 'Please accept the consent statement to continue' });
+
+    const now = new Date().toISOString();
+    db.prepare('UPDATE users SET password_hash = ?, must_change_password = 0 WHERE id = ?')
+      .run(await bcrypt.hash(newPassword, 10), req.userId);
+    if (mustChange)
+      db.prepare('UPDATE users SET consent_at = COALESCE(consent_at, ?) WHERE id = ?').run(now, req.userId);
+
+    res.json({ ok: true, mustChangePassword: false });
+  } catch (err) { next(err); }
+});
 
 // PUT /api/auth/profile — update firm branding (agency tier only)
 router.put('/profile', authenticate, requireTier('agency'), (req, res, next) => {
