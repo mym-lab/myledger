@@ -37,7 +37,7 @@ import {
   backupClient,
   scanReceipt,
   getMyReferrals,
-  getStaff, createStaff, assignStaff, resetStaffPassword, deleteStaff,
+  getStaff, createStaff, assignStaff, addStaffClient, removeStaffClient, resetStaffPassword, deleteStaff,
   getClientGroups, createClientGroup, updateClientGroup, deleteClientGroup, getConsolidated,
   getBudgets, saveBudget,
   getBills, createBill, payBill, voidBill, deleteBill,
@@ -822,6 +822,12 @@ function ManagedClientModal({ onClose, onDone }) {
   const [busy, setBusy] = useState(false);
   const [err,  setErr]  = useState('');
   const [made, setMade] = useState(null);
+  const [staffList, setStaffList] = useState([]);
+  const [picked,    setPicked]    = useState([]);
+  useEffect(() => {
+    // Agency sees its staff to pick from; a staff member gets no list and is assigned automatically
+    getStaff().then(r => setStaffList(r.staff || [])).catch(() => setStaffList([]));
+  }, []);
   const set = k => e => setF(x => ({ ...x, [k]: e.target.value }));
 
   async function submit(e) {
@@ -830,7 +836,7 @@ function ManagedClientModal({ onClose, onDone }) {
     try {
       const r = await createManagedClient({
         tradeName: f.tradeName, tin: f.tin, type: f.type, name: f.name || undefined,
-        userId: f.userId, email: f.email || undefined, password: f.password,
+        userId: f.userId, email: f.email || undefined, password: f.password, staffIds: picked,
       });
       setMade({ userId: r.user.username, password: f.password, tradeName: f.tradeName });
     } catch (e2) { setErr(e2.message); }
@@ -881,8 +887,21 @@ function ManagedClientModal({ onClose, onDone }) {
             </Fld>
           </div>
           <div style={{ fontSize: 12, color: T.muted, marginTop: 4 }}>
-            The business is assigned to you as its accountant. Its limits come from your plan, so the client pays nothing.
+            The business is assigned to your firm as its accountant. Its limits come from the firm's plan, so the client pays nothing.
           </div>
+          {staffList.length > 0 && (
+            <Fld label="Assign to staff">
+              <div>
+                {staffList.map(s => (
+                  <label key={s.id} style={{ display: 'flex', gap: 8, fontSize: 13, marginBottom: 6, cursor: 'pointer' }}>
+                    <input type="checkbox" checked={picked.includes(s.id)}
+                      onChange={e => setPicked(p => e.target.checked ? [...p, s.id] : p.filter(x => x !== s.id))} />
+                    {s.name} ({s.username || s.email})
+                  </label>
+                ))}
+              </div>
+            </Fld>
+          )}
           {err && <div style={{ color: T.red, fontSize: 13, marginTop: 10 }}>{err}</div>}
           <div style={{ display: 'flex', justifyContent: 'flex-end', gap: 10, marginTop: 16 }}>
             <Btn variant="ghost" onClick={onClose}>Cancel</Btn>
@@ -8863,11 +8882,10 @@ export default function AccountantPortal({ onLogout }) {
                         }}>
                           <input type="checkbox" checked={checked} style={{ display: 'none' }}
                             onChange={async () => {
-                              const next = checked
-                                ? [...assignedSet].filter(id => id !== c.id)
-                                : [...assignedSet, c.id];
                               try {
-                                const updated = await assignStaff(member.id, next);
+                                const updated = checked
+                                  ? await removeStaffClient(member.id, c.id)
+                                  : await addStaffClient(member.id, c.id);
                                 setTeamStaff(prev => prev.map(m =>
                                   m.id === member.id
                                     ? { ...m, assignedClientIds: updated.staff.assignedClientIds }

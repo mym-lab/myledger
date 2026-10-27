@@ -164,13 +164,40 @@ const stmtInsertManagedUser = db.prepare(`
   VALUES (@id, @email, @username, @name, @company, 'client', @password_hash, @managed_by, 1, @created_at)
 `);
 
+const stmtStaffOfAgency = db.prepare('SELECT id FROM accountant_staff WHERE id = ? AND owner_id = ?');
+const stmtAssignStaff   = db.prepare(
+  "INSERT OR IGNORE INTO staff_assignments (staff_id, client_id, assigned_at) VALUES (?, ?, datetime('now'))"
+);
+
 router.post('/managed', async (req, res, next) => {
   try {
-    const agency = db.prepare('SELECT * FROM users WHERE id = ?').get(req.userId);
+    // The agency creates the account itself, or one of its staff creates it for the agency
+    let agencyId = req.userId;
+    let creatorStaffId = null;
+    if (req.userRole === 'staff') {
+      const st = db.prepare('SELECT id, owner_id FROM accountant_staff WHERE id = ?').get(req.userId);
+      if (!st) return res.status(403).json({ error: 'Not allowed' });
+      creatorStaffId = st.id;
+      agencyId = st.owner_id;
+    }
+    const agency = db.prepare('SELECT * FROM users WHERE id = ?').get(agencyId);
     if (!agency || agency.role !== 'accountant' || !MANAGED_PLANS.includes(agency.accountant_tier))
       return res.status(403).json({ error: 'Creating client accounts needs the Firm or Agency plan' });
 
-    const { tradeName, tin, type, address = '', name, userId, email, password } = req.body || {};
+    const { tradeName, tin, type, address = '', name, userId, email, password, staffIds = [] } = req.body || {};
+
+    // Who will work on the new client: the creating staff member, or the staff the agency picked
+    let assignTo = [];
+    if (creatorStaffId) {
+      assignTo = [creatorStaffId];
+    } else {
+      const picked = Array.isArray(staffIds) ? [...new Set(staffIds)] : [];
+      for (const sid of picked) {
+        if (!stmtStaffOfAgency.get(sid, agency.id))
+          return res.status(400).json({ error: 'Choose only staff who belong to your firm' });
+      }
+      assignTo = picked;
+    }
     const loginId = String(userId || '').trim();
     const mail    = String(email || '').trim().toLowerCase() || null;
 
@@ -207,17 +234,20 @@ router.post('/managed', async (req, res, next) => {
         tax_option: 'graduated', is_msme: 0, subscription_tier: 'free', tax_types: '[]',
         created_at: now,
       });
+      // Assign after the client row exists (staff_assignments references clients)
+      for (const sid of assignTo) stmtAssignStaff.run(sid, clientId);
     });
 
     logAudit({
-      clientId, userId: agency.id, staffId: null,
+      clientId, userId: agency.id, staffId: creatorStaffId,
       action: 'CREATE_MANAGED_CLIENT', entity: 'client', entityId: clientId,
-      detail: `Client login ${loginId} created by ${agency.email || agency.name}`,
+      detail: `Client login ${loginId} created for ${agency.company || agency.email || agency.name}`,
     });
 
     res.status(201).json({
       client: rowToClient(stmtClientById.get(clientId)),
       user:   { id: userRowId, username: loginId, email: mail, mustChangePassword: true },
+      assignedStaffIds: assignTo,
     });
   } catch (err) { next(err); }
 });

@@ -443,6 +443,8 @@ export const getTrialStatus = () => get('/auth/trial-status');
 export const getStaff             = ()             => get('/staff',                     true);
 export const createStaff          = (data)         => post('/staff', data,              true);
 export const assignStaff          = (id, clientIds)=> put(`/staff/${id}/assign`, { clientIds }, true);
+export const addStaffClient       = (id, clientId) => post(`/staff/${id}/clients`, { clientId }, true);
+export const removeStaffClient    = (id, clientId) => del(`/staff/${id}/clients/${clientId}`, true);
 export const resetStaffPassword   = (id, password) => put(`/staff/${id}/password`, { password }, true);
 export const deleteStaff          = (id)           => del(`/staff/${id}`,               true);
 
