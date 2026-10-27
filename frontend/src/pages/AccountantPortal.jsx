@@ -2327,6 +2327,7 @@ export default function AccountantPortal({ onLogout }) {
   const [showAddStaff,   setShowAddStaff]  = useState(false);
   const [newStaffName,   setNewStaffName]  = useState('');
   const [newStaffEmail,  setNewStaffEmail] = useState('');
+  const [newStaffUser,   setNewStaffUser]  = useState('');
   const [newStaffPw,     setNewStaffPw]    = useState('');
   const [newStaffPwShow, setNewStaffPwShow]= useState(false);
   const [newStaffBusy,   setNewStaffBusy]  = useState(false);
@@ -8637,7 +8638,10 @@ export default function AccountantPortal({ onLogout }) {
                   <input placeholder="Full name" value={newStaffName}
                     onChange={e => setNewStaffName(e.target.value)}
                     style={{ ...inp, flex: '1 1 160px' }} />
-                  <input placeholder="Email address" type="email" value={newStaffEmail}
+                  <input placeholder="User ID (for login)" value={newStaffUser}
+                    onChange={e => setNewStaffUser(e.target.value)}
+                    style={{ ...inp, flex: '1 1 160px' }} />
+                  <input placeholder="Email (optional)" type="email" value={newStaffEmail}
                     onChange={e => setNewStaffEmail(e.target.value)}
                     style={{ ...inp, flex: '1 1 200px' }} />
                   <div style={{ position: 'relative', flex: '1 1 180px' }}>
@@ -8652,12 +8656,12 @@ export default function AccountantPortal({ onLogout }) {
                     </button>
                   </div>
                   <Btn disabled={newStaffBusy} onClick={async () => {
-                    if (!newStaffName || !newStaffEmail || !newStaffPw)
-                      return setNewStaffErr('All fields are required.');
+                    if (!newStaffName || !newStaffUser || !newStaffPw)
+                      return setNewStaffErr('Name, User ID and password are required.');
                     setNewStaffBusy(true); setNewStaffErr('');
                     try {
-                      await createStaff({ name: newStaffName, email: newStaffEmail, password: newStaffPw });
-                      setNewStaffName(''); setNewStaffEmail(''); setNewStaffPw('');
+                      await createStaff({ name: newStaffName, username: newStaffUser, email: newStaffEmail, password: newStaffPw });
+                      setNewStaffName(''); setNewStaffUser(''); setNewStaffEmail(''); setNewStaffPw('');
                       setShowAddStaff(false);
                       loadTeam();
                     } catch (e) { setNewStaffErr(e.message); }
@@ -8691,7 +8695,7 @@ export default function AccountantPortal({ onLogout }) {
                   <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: 12 }}>
                     <div>
                       <div style={{ fontWeight: 600, fontSize: 15 }}>{member.name}</div>
-                      <div style={{ fontSize: 12, color: T.muted }}>{member.email}</div>
+                      <div style={{ fontSize: 12, color: T.muted }}>{member.username || member.email}</div>
                       <div style={{ fontSize: 11, color: T.muted, marginTop: 2 }}>
                         Staff · {assignedSet.size} client{assignedSet.size !== 1 ? 's' : ''} assigned
                       </div>

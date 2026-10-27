@@ -382,12 +382,48 @@ try { db.exec(`
     id            TEXT PRIMARY KEY,
     owner_id      TEXT NOT NULL,
     name          TEXT NOT NULL,
-    email         TEXT UNIQUE NOT NULL,
+    email         TEXT UNIQUE,
+    username      TEXT,
     password_hash TEXT NOT NULL,
     created_at    TEXT NOT NULL DEFAULT (datetime('now')),
     FOREIGN KEY (owner_id) REFERENCES users(id)
   )
 `); } catch (_) { /* already exists */ }
+
+// ── Migration: staff log in with a User ID or email, so email is optional ──
+// SQLite can't drop NOT NULL in place, so rebuild accountant_staff once (only if still old).
+{
+  const cols = db.prepare('PRAGMA table_info(accountant_staff)').all();
+  const emailCol = cols.find(c => c.name === 'email');
+  const needsRebuild = !cols.some(c => c.name === 'username') || (emailCol && emailCol.notnull === 1);
+  if (needsRebuild) {
+    db.exec('PRAGMA foreign_keys = OFF;');
+    try {
+      db.exec('BEGIN');
+      db.exec(`CREATE TABLE accountant_staff_new (
+        id            TEXT PRIMARY KEY,
+        owner_id      TEXT NOT NULL,
+        name          TEXT NOT NULL,
+        email         TEXT UNIQUE,
+        username      TEXT,
+        password_hash TEXT NOT NULL,
+        created_at    TEXT NOT NULL DEFAULT (datetime('now')),
+        FOREIGN KEY (owner_id) REFERENCES users(id)
+      )`);
+      db.exec(`INSERT INTO accountant_staff_new (id, owner_id, name, email, username, password_hash, created_at)
+               SELECT id, owner_id, name, email, NULL, password_hash, created_at FROM accountant_staff`);
+      db.exec('DROP TABLE accountant_staff');
+      db.exec('ALTER TABLE accountant_staff_new RENAME TO accountant_staff');
+      db.exec('COMMIT');
+    } catch (e) {
+      try { db.exec('ROLLBACK'); } catch (_) {}
+      throw e;
+    } finally {
+      db.exec('PRAGMA foreign_keys = ON;');
+    }
+  }
+  try { db.exec('CREATE UNIQUE INDEX IF NOT EXISTS idx_staff_username ON accountant_staff(username COLLATE NOCASE)'); } catch (_) {}
+}
 
 try { db.exec(`
   CREATE TABLE IF NOT EXISTS staff_assignments (
@@ -662,6 +698,7 @@ export function rowToStaff(r) {
     ownerId:   r.owner_id,
     name:      r.name,
     email:     r.email,
+    username:  r.username || null,
     createdAt: r.created_at,
     // passwordHash intentionally omitted from API responses
   };

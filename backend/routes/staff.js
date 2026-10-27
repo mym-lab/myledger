@@ -21,9 +21,15 @@ const stmtOwnerTier    = db.prepare('SELECT accountant_tier FROM users WHERE id 
 const stmtCountStaff   = db.prepare('SELECT COUNT(*) AS cnt FROM accountant_staff WHERE owner_id = ?');
 
 const stmtInsertStaff = db.prepare(`
-  INSERT INTO accountant_staff (id, owner_id, name, email, password_hash, created_at)
-  VALUES (@id, @owner_id, @name, @email, @password_hash, datetime('now'))
+  INSERT INTO accountant_staff (id, owner_id, name, email, username, password_hash, created_at)
+  VALUES (@id, @owner_id, @name, @email, @username, @password_hash, datetime('now'))
 `);
+
+// A User ID or email must not match any user account or other staff login
+const stmtUserEmailTaken  = db.prepare('SELECT 1 FROM users WHERE LOWER(email) = LOWER(?)');
+const stmtStaffIdentTaken = db.prepare(
+  'SELECT 1 FROM accountant_staff WHERE LOWER(email) = LOWER(?) OR LOWER(username) = LOWER(?)'
+);
 
 const stmtListStaff = db.prepare(
   'SELECT * FROM accountant_staff WHERE owner_id = ? ORDER BY created_at ASC'
@@ -80,12 +86,23 @@ function staffWithAssignments(staffRows, ownerId) {
 router.post('/', async (req, res, next) => {
   if (!requireOwner(req, res)) return;
   try {
-    const { name, email, password } = req.body;
-    if (!name || !email || !password)
-      return res.status(400).json({ error: 'name, email and password are required' });
+    const { name, username, email, password } = req.body;
+    const loginId = String(username || '').trim();
+    const mail    = String(email || '').trim().toLowerCase() || null;
 
-    if (stmtFindStaffByEmail.get(email))
-      return res.status(409).json({ error: 'A staff member with that email already exists' });
+    if (!name || !loginId || !password)
+      return res.status(400).json({ error: 'name, User ID and password are required' });
+    if (!/^[A-Za-z0-9._-]{3,30}$/.test(loginId))
+      return res.status(400).json({ error: 'User ID must be 3–30 characters: letters, numbers, dot, dash or underscore' });
+    if (mail && !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(mail))
+      return res.status(400).json({ error: 'Email address is not valid' });
+    if (String(password).length < 6)
+      return res.status(400).json({ error: 'Password must be at least 6 characters' });
+
+    for (const v of [loginId, mail].filter(Boolean)) {
+      if (stmtUserEmailTaken.get(v) || stmtStaffIdentTaken.get(v, v))
+        return res.status(409).json({ error: `"${v}" is already in use. Choose another User ID or email.` });
+    }
 
     // Enforce per-tier staff limit (from admin-editable settings)
     const staffLimits = getSetting('staffLimits') || {};
@@ -103,7 +120,7 @@ router.post('/', async (req, res, next) => {
     const password_hash = await bcrypt.hash(password, 10);
     const id = uuid();
 
-    stmtInsertStaff.run({ id, owner_id: req.userId, name, email, password_hash });
+    stmtInsertStaff.run({ id, owner_id: req.userId, name, email: mail, username: loginId, password_hash });
 
     const staff = rowToStaff(stmtGetStaff.get(id));
     res.status(201).json({ staff: { ...staff, assignedClientIds: [] } });

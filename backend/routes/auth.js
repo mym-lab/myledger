@@ -24,7 +24,9 @@ function logAttempt(email, ip, success, role = null) {
 }
 
 const stmtFindByEmail      = db.prepare('SELECT * FROM users WHERE email = ?');
-const stmtFindStaffByEmail = db.prepare('SELECT * FROM accountant_staff WHERE email = ?');
+const stmtFindStaffByEmail = db.prepare(
+  'SELECT * FROM accountant_staff WHERE email = ? COLLATE NOCASE OR username = ? COLLATE NOCASE'
+);
 const stmtInsertUser   = db.prepare(`
   INSERT INTO users (id, email, name, company, role, password_hash, accountant_tier, firm_name, accent_color, trial_started_at, trial_tier, trial_drip_sent, created_at)
   VALUES (@id, @email, @name, @company, @role, @password_hash, @accountant_tier, @firm_name, @accent_color, @trial_started_at, @trial_tier, @trial_drip_sent, @created_at)
@@ -142,12 +144,14 @@ router.post('/signup', async (req, res, next) => {
 router.post('/login', async (req, res, next) => {
   try {
     const { email, password } = req.body;
-    if (!email || !password)
-      return res.status(400).json({ error: 'email and password are required' });
+    // The one login field accepts an email (users, staff) or a staff User ID
+    const login = String(email || '').trim();
+    if (!login || !password)
+      return res.status(400).json({ error: 'Email or User ID and password are required' });
 
     // ── Check main users table first ─────────────────────────────────────────
     const ip  = req.headers['x-forwarded-for']?.split(',')[0]?.trim() || req.socket?.remoteAddress || null;
-    const row = stmtFindByEmail.get(email);
+    const row = stmtFindByEmail.get(login);
     if (row) {
       if (!(await bcrypt.compare(password, row.password_hash))) {
         logAttempt(email, ip, false, row.role);
@@ -169,7 +173,7 @@ router.post('/login', async (req, res, next) => {
     }
 
     // ── Fall through: check accountant_staff table ────────────────────────────
-    const staffRow = stmtFindStaffByEmail.get(email);
+    const staffRow = stmtFindStaffByEmail.get(login, login);
     if (!staffRow || !(await bcrypt.compare(password, staffRow.password_hash))) {
       logAttempt(email, ip, false, 'staff');
       return res.status(401).json({ error: 'Invalid credentials' });
