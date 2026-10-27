@@ -39,8 +39,8 @@ const stmtAssetsByClient= db.prepare(`SELECT * FROM assets WHERE client_id=? AND
 const stmtJEsByClient   = db.prepare(`SELECT * FROM journal_entries WHERE client_id=? ORDER BY date ASC`);
 const stmtContactsByClient = db.prepare('SELECT * FROM contacts WHERE client_id=?');
 
-function canAccess(client, userId) {
-  return client.ownerId === userId || client.accountantId === userId;
+function canAccess(client, req) {
+  return hasClientAccess(client, req, { allowEncoders: false });
 }
 
 // Journal lines (income/expense accounts) shared with the Transactions screen
@@ -877,7 +877,7 @@ router.get('/aged-ar', (req, res, next) => {
     const { clientId } = req.query;
     if (!clientId) return res.status(400).json({ error: 'clientId required' });
     const client = rowToClient(stmtClientById.get(clientId));
-    if (!client || !canAccess(client, req.user.userId)) return res.status(403).json({ error: 'Forbidden' });
+    if (!client || !canAccess(client, req)) return res.status(403).json({ error: 'Forbidden' });
 
     const today = new Date().toISOString().substring(0, 10);
 
@@ -932,7 +932,7 @@ router.get('/aged-ap', (req, res, next) => {
     const { clientId } = req.query;
     if (!clientId) return res.status(400).json({ error: 'clientId required' });
     const client = rowToClient(stmtClientById.get(clientId));
-    if (!client || !canAccess(client, req.user.userId)) return res.status(403).json({ error: 'Forbidden' });
+    if (!client || !canAccess(client, req)) return res.status(403).json({ error: 'Forbidden' });
 
     const today = new Date().toISOString().substring(0, 10);
 

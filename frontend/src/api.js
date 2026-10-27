@@ -235,6 +235,7 @@ export const getAdminStats     = ()           => get('/admin/stats',     true);
 export const getSettings       = ()           => get('/admin/settings',  true);
 export const updateSettings    = (data)       => put('/admin/settings',  data, true);
 export const setAccountantTier         = (userId, tier)           => put(`/admin/users/${userId}/set-tier`,     { tier },                 true);
+export const setAccountantPlanLapse    = (userId, lapsed)         => put(`/admin/users/${userId}/plan-lapse`,   { lapsed },               true);
 export const setAccountantBranding     = (userId, firmName, accentColor) =>
   put(`/admin/users/${userId}/set-branding`, { firmName, accentColor },                                                                   true);
 export const setClientSubscriptionTier = (clientId, tier)         => put(`/admin/clients/${clientId}/set-tier`, { tier },                 true);

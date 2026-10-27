@@ -1,4 +1,5 @@
 import express from 'express';
+import { hasRowAccess, actingOwnerId } from '../lib/access.js';
 import { v4 as uuidv4 } from 'uuid';
 import { db } from '../db.js';
 import { authenticate } from '../middleware/auth.js';
@@ -90,14 +91,11 @@ function calcTotals(items, vatType = 'vatable') {
 }
 
 // Verify the requesting user can access the given client record
-function canAccessClient(clientId, userId, userRole) {
-  const client = db.prepare(`SELECT * FROM clients WHERE id = ?`).get(clientId);
-  if (!client) return false;
-  if (userRole === 'admin') return true;
-  const encoderIds = JSON.parse(client.encoder_ids || '[]');
-  return client.owner_id === userId ||
-         client.accountant_id === userId ||
-         encoderIds.includes(userId);
+function canAccessClient(clientId, req) {
+  const row = db.prepare(`SELECT * FROM clients WHERE id = ?`).get(clientId);
+  if (!row) return false;
+  if (req.userRole === 'admin') return true;
+  return hasRowAccess(row, req);
 }
 
 // For client users: get their own client record id
@@ -119,7 +117,7 @@ router.get('/', (req, res) => {
 
     if (!clientId) return res.status(400).json({ error: 'client_id is required' });
 
-    if (!canAccessClient(clientId, req.userId, req.userRole)) {
+    if (!canAccessClient(clientId, req)) {
       return res.status(403).json({ error: 'Forbidden' });
     }
 
@@ -155,7 +153,7 @@ router.get('/:id', (req, res) => {
     const invoice = db.prepare(`SELECT * FROM invoices WHERE id = ?`).get(req.params.id);
     if (!invoice) return res.status(404).json({ error: 'Invoice not found' });
 
-    if (!canAccessClient(invoice.client_id, req.userId, req.userRole)) {
+    if (!canAccessClient(invoice.client_id, req)) {
       return res.status(403).json({ error: 'Forbidden' });
     }
 
@@ -195,7 +193,7 @@ router.post('/', (req, res) => {
     }
     if (!targetClientId) return res.status(400).json({ error: 'client_id is required' });
 
-    if (!canAccessClient(targetClientId, req.userId, req.userRole)) {
+    if (!canAccessClient(targetClientId, req)) {
       return res.status(403).json({ error: 'Forbidden' });
     }
 
@@ -218,7 +216,7 @@ router.post('/', (req, res) => {
       customer_name, customer_email, customer_address, customer_tin,
       issue_date || now.slice(0, 10), due_date, payment_terms, notes, vat_type,
       subtotal, reimbursement_total, vat_amount, total,
-      shareToken, req.userId, now, now
+      shareToken, actingOwnerId(req), now, now
     );
 
     const insertItem = db.prepare(`
@@ -259,7 +257,7 @@ router.put('/:id', (req, res) => {
     if (!invoice) return res.status(404).json({ error: 'Invoice not found' });
     if (invoice.status !== 'draft') return res.status(400).json({ error: 'Only draft invoices can be edited' });
 
-    if (!canAccessClient(invoice.client_id, req.userId, req.userRole)) {
+    if (!canAccessClient(invoice.client_id, req)) {
       return res.status(403).json({ error: 'Forbidden' });
     }
 
@@ -324,7 +322,7 @@ router.post('/:id/send', (req, res) => {
     if (!invoice) return res.status(404).json({ error: 'Invoice not found' });
     if (invoice.status === 'void') return res.status(400).json({ error: 'Cannot send a voided invoice' });
 
-    if (!canAccessClient(invoice.client_id, req.userId, req.userRole)) {
+    if (!canAccessClient(invoice.client_id, req)) {
       return res.status(403).json({ error: 'Forbidden' });
     }
 
@@ -353,7 +351,7 @@ router.post('/:id/pay', (req, res) => {
     if (invoice.status === 'paid') return res.status(400).json({ error: 'Invoice already paid' });
     if (invoice.status === 'void') return res.status(400).json({ error: 'Cannot mark a voided invoice as paid' });
 
-    if (!canAccessClient(invoice.client_id, req.userId, req.userRole)) {
+    if (!canAccessClient(invoice.client_id, req)) {
       return res.status(403).json({ error: 'Forbidden' });
     }
 
@@ -377,7 +375,7 @@ router.post('/:id/pay', (req, res) => {
     `).run(
       txId,
       invoice.client_id,
-      req.userId,
+      actingOwnerId(req),
       `Invoice ${invoice.invoice_number} — ${invoice.customer_name}`,
       invoice.vat_type,
       settlement,
@@ -416,7 +414,7 @@ router.post('/:id/void', (req, res) => {
     if (!invoice) return res.status(404).json({ error: 'Invoice not found' });
     if (invoice.status === 'void') return res.status(400).json({ error: 'Invoice already voided' });
 
-    if (!canAccessClient(invoice.client_id, req.userId, req.userRole)) {
+    if (!canAccessClient(invoice.client_id, req)) {
       return res.status(403).json({ error: 'Forbidden' });
     }
 
@@ -442,7 +440,7 @@ router.post('/:id/void', (req, res) => {
       `).run(
         reversalTxId,
         invoice.client_id,
-        req.userId,
+        actingOwnerId(req),
         `VOID: Invoice ${invoice.invoice_number} — ${invoice.customer_name}`,
         invoice.vat_type,
         `VOID-${invoice.invoice_number}`,
@@ -459,7 +457,7 @@ router.post('/:id/void', (req, res) => {
         status = 'void', void_reason = ?, voided_by = ?, voided_at = ?,
         reversal_transaction_id = ?, updated_at = ?
       WHERE id = ?
-    `).run(void_reason, req.userId, now, reversalTxId, now, req.params.id);
+    `).run(void_reason, actingOwnerId(req), now, reversalTxId, now, req.params.id);
 
     logAudit({
       clientId: invoice.client_id,
@@ -483,7 +481,7 @@ router.delete('/:id', (req, res) => {
     if (!invoice) return res.status(404).json({ error: 'Invoice not found' });
     if (invoice.status !== 'draft') return res.status(400).json({ error: 'Only draft invoices can be deleted' });
 
-    if (!canAccessClient(invoice.client_id, req.userId, req.userRole)) {
+    if (!canAccessClient(invoice.client_id, req)) {
       return res.status(403).json({ error: 'Forbidden' });
     }
 

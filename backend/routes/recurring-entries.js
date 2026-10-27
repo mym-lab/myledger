@@ -17,6 +17,7 @@
 // so accumulated depreciation never exceeds the depreciable base. So editing
 // the asset's cost or life automatically corrects future postings.
 
+import { hasRowAccess, actingOwnerId } from '../lib/access.js';
 import { Router } from 'express';
 import { v4 as uuid } from 'uuid';
 import { db, withTransaction } from '../db.js';
@@ -62,12 +63,11 @@ try { db.exec('CREATE INDEX IF NOT EXISTS idx_recje_due ON recurring_entries(sta
 try { db.exec("ALTER TABLE recurring_entries ADD COLUMN counterparty TEXT NOT NULL DEFAULT 'null'"); } catch (_) {}
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
-function canAccess(clientId, userId, role) {
+function canAccess(clientId, req) {
   const c = db.prepare('SELECT * FROM clients WHERE id=?').get(clientId);
   if (!c) return false;
-  if (role === 'admin') return true;
-  const encoders = JSON.parse(c.encoder_ids || '[]');
-  return c.owner_id === userId || c.accountant_id === userId || encoders.includes(userId);
+  if (req.userRole === 'admin') return true;
+  return hasRowAccess(c, req);
 }
 
 function rowToSchedule(r) {
@@ -305,7 +305,7 @@ router.post('/', (req, res, next) => {
     if (!startDate) return res.status(400).json({ error: 'startDate is required' });
     if (!['weekly', 'monthly', 'quarterly', 'annual'].includes(frequency))
       return res.status(400).json({ error: 'frequency must be weekly, monthly, quarterly or annual' });
-    if (!canAccess(clientId, req.userId, req.userRole))
+    if (!canAccess(clientId, req))
       return res.status(404).json({ error: 'Client not found' });
 
     const { lines, error } = normaliseLines(entries);
@@ -326,7 +326,7 @@ router.post('/', (req, res, next) => {
     `).run({
       id,
       client_id:     clientId,
-      created_by:    req.userId,
+      created_by:    actingOwnerId(req),
       name,
       description:   description || name,
       reference_no:  referenceNo,
@@ -355,7 +355,7 @@ router.post('/from-asset/:assetId', (req, res, next) => {
   try {
     const asset = db.prepare('SELECT * FROM assets WHERE id=?').get(req.params.assetId);
     if (!asset) return res.status(404).json({ error: 'Asset not found' });
-    if (!canAccess(asset.client_id, req.userId, req.userRole))
+    if (!canAccess(asset.client_id, req))
       return res.status(403).json({ error: 'Not authorised' });
 
     const existing = db.prepare(
@@ -402,7 +402,7 @@ router.post('/from-asset/:assetId', (req, res, next) => {
     `).run({
       id,
       client_id:     asset.client_id,
-      created_by:    req.userId,
+      created_by:    actingOwnerId(req),
       name:          `Depreciation — ${asset.name}`,
       description:   `Monthly depreciation — ${asset.name}`,
       entries:       JSON.stringify(lines),
@@ -436,7 +436,7 @@ router.post('/from-asset/:assetId', (req, res, next) => {
 router.post('/from-entry/:jeId', (req, res, next) => {
   try {
     const je = db.prepare('SELECT * FROM journal_entries WHERE id=?').get(req.params.jeId);
-    if (!je || !canAccess(je.client_id, req.userId, req.userRole))
+    if (!je || !canAccess(je.client_id, req))
       return res.status(404).json({ error: 'Journal entry not found' });
 
     const { frequency = 'monthly', endDate = null } = req.body || {};
@@ -465,7 +465,7 @@ router.post('/from-entry/:jeId', (req, res, next) => {
     `).run({
       id,
       client_id:     je.client_id,
-      created_by:    req.userId,
+      created_by:    actingOwnerId(req),
       name:          je.description || 'Recurring entry',
       description:   je.description || '',
       reference_no:  je.reference_no || '',
@@ -487,7 +487,7 @@ router.get('/', (req, res, next) => {
   try {
     const { clientId } = req.query;
     if (!clientId) return res.status(400).json({ error: 'clientId required' });
-    if (!canAccess(clientId, req.userId, req.userRole))
+    if (!canAccess(clientId, req))
       return res.status(404).json({ error: 'Client not found' });
 
     const rows = db.prepare(
@@ -505,7 +505,7 @@ router.get('/:id', (req, res, next) => {
   try {
     const row = db.prepare('SELECT * FROM recurring_entries WHERE id=?').get(req.params.id);
     if (!row) return res.status(404).json({ error: 'Not found' });
-    if (!canAccess(row.client_id, req.userId, req.userRole))
+    if (!canAccess(row.client_id, req))
       return res.status(403).json({ error: 'Forbidden' });
     res.json({ schedule: rowToSchedule(row) });
   } catch (err) { next(err); }
@@ -518,7 +518,7 @@ router.put('/:id', (req, res, next) => {
   try {
     const row = db.prepare('SELECT * FROM recurring_entries WHERE id=?').get(req.params.id);
     if (!row) return res.status(404).json({ error: 'Not found' });
-    if (!canAccess(row.client_id, req.userId, req.userRole))
+    if (!canAccess(row.client_id, req))
       return res.status(403).json({ error: 'Forbidden' });
 
     const {
@@ -586,7 +586,7 @@ router.delete('/:id', (req, res, next) => {
   try {
     const row = db.prepare('SELECT * FROM recurring_entries WHERE id=?').get(req.params.id);
     if (!row) return res.status(404).json({ error: 'Not found' });
-    if (!canAccess(row.client_id, req.userId, req.userRole))
+    if (!canAccess(row.client_id, req))
       return res.status(403).json({ error: 'Forbidden' });
 
     db.prepare('DELETE FROM recurring_entries WHERE id=?').run(req.params.id);
@@ -604,7 +604,7 @@ router.post('/:id/run', (req, res, next) => {
   try {
     const row = db.prepare('SELECT * FROM recurring_entries WHERE id=?').get(req.params.id);
     if (!row) return res.status(404).json({ error: 'Not found' });
-    if (!canAccess(row.client_id, req.userId, req.userRole))
+    if (!canAccess(row.client_id, req))
       return res.status(403).json({ error: 'Forbidden' });
 
     const postingDate = req.body?.postingDate || new Date().toISOString().slice(0, 10);
@@ -617,7 +617,7 @@ router.post('/:id/run', (req, res, next) => {
     if (locked)
       return res.status(409).json({ error: `Period ${period} is locked` });
 
-    const result = postSchedule(row, postingDate, req.userId);
+    const result = postSchedule(row, postingDate, actingOwnerId(req));
     if (result.skipped)
       return res.status(409).json({ error: result.skipped });
 

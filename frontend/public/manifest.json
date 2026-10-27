@@ -1,7 +1,7 @@
 {
   "name": "MyLedger",
   "short_name": "MyLedger",
-  "description": "Philippine VAT-compliant bookkeeping for SMBs",
+  "description": "Simplified BIR compliant accounting, powered by Kaiman & Co.",
   "start_url": "/",
   "display": "standalone",
   "orientation": "portrait-primary",

@@ -5,6 +5,7 @@
 // DELETE /api/assets/:id                delete asset
 // GET    /api/assets/:id/lapsing        straight-line lapsing schedule
 
+import { hasClientAccess } from '../lib/access.js';
 import { Router } from 'express';
 import { v4 as uuid } from 'uuid';
 import { db, rowToClient, rowToAsset } from '../db.js';
@@ -32,8 +33,8 @@ const stmtUpdateAsset    = db.prepare(`
 `);
 const stmtDeleteAsset = db.prepare('DELETE FROM assets WHERE id=?');
 
-function canAccess(client, userId) {
-  return client.ownerId === userId || client.accountantId === userId;
+function canAccess(client, req) {
+  return hasClientAccess(client, req, { allowEncoders: false });
 }
 
 // POST /api/assets
@@ -52,7 +53,7 @@ router.post('/', (req, res, next) => {
       return res.status(400).json({ error: 'usefulLifeMonths must be at least 1' });
 
     const client = rowToClient(stmtClientById.get(clientId));
-    if (!client || !canAccess(client, req.userId))
+    if (!client || !canAccess(client, req))
       return res.status(404).json({ error: 'Client not found' });
 
     const id = uuid();
@@ -81,7 +82,7 @@ router.get('/', (req, res, next) => {
     if (!clientId) return res.status(400).json({ error: 'clientId required' });
 
     const client = rowToClient(stmtClientById.get(clientId));
-    if (!client || !canAccess(client, req.userId))
+    if (!client || !canAccess(client, req))
       return res.status(404).json({ error: 'Client not found' });
 
     const assets = stmtAssetsByClient.all(clientId).map(rowToAsset);
@@ -114,7 +115,7 @@ router.put('/:id', (req, res, next) => {
     if (!existing) return res.status(404).json({ error: 'Asset not found' });
 
     const client = rowToClient(stmtClientById.get(existing.clientId));
-    if (!client || !canAccess(client, req.userId))
+    if (!client || !canAccess(client, req))
       return res.status(403).json({ error: 'Not authorised' });
 
     const { name, category, cost, salvageValue, usefulLifeMonths, startDate, status } = req.body;
@@ -142,7 +143,7 @@ router.delete('/:id', (req, res, next) => {
     if (!asset) return res.status(404).json({ error: 'Asset not found' });
 
     const client = rowToClient(stmtClientById.get(asset.clientId));
-    if (!client || !canAccess(client, req.userId))
+    if (!client || !canAccess(client, req))
       return res.status(403).json({ error: 'Not authorised' });
 
     stmtDeleteAsset.run(req.params.id);
@@ -157,7 +158,7 @@ router.get('/:id/lapsing', (req, res, next) => {
     if (!asset) return res.status(404).json({ error: 'Asset not found' });
 
     const client = rowToClient(stmtClientById.get(asset.clientId));
-    if (!client || !canAccess(client, req.userId))
+    if (!client || !canAccess(client, req))
       return res.status(403).json({ error: 'Not authorised' });
 
     const depPerMonth = (asset.cost - asset.salvageValue) / asset.usefulLifeMonths;

@@ -70,6 +70,8 @@ router.get('/stats', (req, res) => {
       id: r.id, email: r.email, name: r.name, company: r.company,
       role: r.role || 'client',
       accountantTier: r.accountant_tier || null,
+      planLapsedAt: r.plan_lapsed_at || null,
+      lapseStage:   r.lapse_stage || 0,
       firmName:    r.firm_name    || null,
       accentColor: r.accent_color || null,
       createdAt: r.created_at,

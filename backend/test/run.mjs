@@ -10,7 +10,7 @@ const here = dirname(fileURLToPath(import.meta.url));
 const backend = join(here, '..');
 const dir = mkdtempSync(join(tmpdir(), 'myledger-test-'));
 const env = { ...process.env, DB_PATH: join(dir, 'test.db'), JWT_SECRET: 'testsecret', PORT: '5055', NODE_ENV: 'development' };
-const suites = ['baseline', 'boundaries', 'managed', 'flow', 'staffcreate', 'addremove'];
+const suites = ['baseline', 'boundaries', 'managed', 'flow', 'staffcreate', 'addremove', 'staff-scope'];
 
 const server = spawn(process.execPath, ['app.js'], { cwd: backend, env, stdio: ['ignore', 'pipe', 'pipe'] });
 let serverErrors = '';

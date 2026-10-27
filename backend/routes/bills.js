@@ -6,6 +6,7 @@
 // POST   /api/bills/:id/void — void
 // DELETE /api/bills/:id
 
+import { hasClientAccess, actingOwnerId } from '../lib/access.js';
 import { Router } from 'express';
 import { db, rowToClient } from '../db.js';
 import { authenticate, noEncoder } from '../middleware/auth.js';
@@ -17,8 +18,8 @@ router.use(noEncoder);
 
 const stmtClientById = db.prepare('SELECT * FROM clients WHERE id = ?');
 
-function canAccess(client, userId) {
-  return client.ownerId === userId || client.accountantId === userId;
+function canAccess(client, req) {
+  return hasClientAccess(client, req, { allowEncoders: false });
 }
 
 function rowToBill(r) {
@@ -49,7 +50,7 @@ router.get('/', (req, res, next) => {
     const { clientId, status } = req.query;
     if (!clientId) return res.status(400).json({ error: 'clientId required' });
     const client = rowToClient(stmtClientById.get(clientId));
-    if (!client || !canAccess(client, req.user.userId)) return res.status(403).json({ error: 'Forbidden' });
+    if (!client || !canAccess(client, req)) return res.status(403).json({ error: 'Forbidden' });
 
     let sql = 'SELECT * FROM bills WHERE client_id = ?';
     const args = [clientId];
@@ -70,7 +71,7 @@ router.post('/', (req, res, next) => {
       return res.status(400).json({ error: 'clientId, vendorName, billDate, dueDate required' });
 
     const client = rowToClient(stmtClientById.get(clientId));
-    if (!client || !canAccess(client, req.user.userId)) return res.status(403).json({ error: 'Forbidden' });
+    if (!client || !canAccess(client, req)) return res.status(403).json({ error: 'Forbidden' });
 
     const id = uuid();
     db.prepare(`
@@ -78,7 +79,7 @@ router.post('/', (req, res, next) => {
         category, notes, amount_net, amount_vat, amount_gross, status, paid_at, created_by, created_at)
       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'unpaid', '', ?, datetime('now'))
     `).run(id, clientId, vendorName, vendorEmail, billNumber, billDate, dueDate,
-           category, notes, +amountNet, +amountVat, +amountGross, req.user.userId);
+           category, notes, +amountNet, +amountVat, +amountGross, actingOwnerId(req));
 
     const bill = rowToBill(db.prepare('SELECT * FROM bills WHERE id = ?').get(id));
     res.status(201).json({ bill });
@@ -93,7 +94,7 @@ router.put('/:id', (req, res, next) => {
     if (row.status !== 'unpaid') return res.status(400).json({ error: 'Cannot edit a paid or voided bill' });
 
     const client = rowToClient(stmtClientById.get(row.client_id));
-    if (!client || !canAccess(client, req.user.userId)) return res.status(403).json({ error: 'Forbidden' });
+    if (!client || !canAccess(client, req)) return res.status(403).json({ error: 'Forbidden' });
 
     const { vendorName = row.vendor_name, vendorEmail = row.vendor_email, billNumber = row.bill_number,
             billDate = row.bill_date, dueDate = row.due_date, category = row.category,
@@ -118,7 +119,7 @@ router.post('/:id/pay', (req, res, next) => {
     if (row.status !== 'unpaid') return res.status(400).json({ error: 'Bill is already paid or voided' });
 
     const client = rowToClient(stmtClientById.get(row.client_id));
-    if (!client || !canAccess(client, req.user.userId)) return res.status(403).json({ error: 'Forbidden' });
+    if (!client || !canAccess(client, req)) return res.status(403).json({ error: 'Forbidden' });
 
     const paidAt = new Date().toISOString().substring(0, 10);
     db.prepare("UPDATE bills SET status='paid', paid_at=? WHERE id=?").run(paidAt, req.params.id);
@@ -133,7 +134,7 @@ router.post('/:id/void', (req, res, next) => {
     if (!row) return res.status(404).json({ error: 'Bill not found' });
 
     const client = rowToClient(stmtClientById.get(row.client_id));
-    if (!client || !canAccess(client, req.user.userId)) return res.status(403).json({ error: 'Forbidden' });
+    if (!client || !canAccess(client, req)) return res.status(403).json({ error: 'Forbidden' });
 
     db.prepare("UPDATE bills SET status='void' WHERE id=?").run(req.params.id);
     res.json({ message: 'Bill voided' });
@@ -147,7 +148,7 @@ router.delete('/:id', (req, res, next) => {
     if (!row) return res.status(404).json({ error: 'Bill not found' });
 
     const client = rowToClient(stmtClientById.get(row.client_id));
-    if (!client || !canAccess(client, req.user.userId)) return res.status(403).json({ error: 'Forbidden' });
+    if (!client || !canAccess(client, req)) return res.status(403).json({ error: 'Forbidden' });
 
     db.prepare('DELETE FROM bills WHERE id = ?').run(req.params.id);
     res.json({ message: 'Bill deleted' });

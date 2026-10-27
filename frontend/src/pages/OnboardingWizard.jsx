@@ -18,7 +18,7 @@ function ClientSteps(name) {
     {
       emoji: '👋',
       title: `Welcome to MyLedger${name ? ', ' + name : ''}!`,
-      subtitle: 'Your Philippine VAT-compliant bookkeeping system',
+      subtitle: 'Your simplified BIR compliant accounting system',
       body: (
         <div>
           <p style={{ margin: '0 0 16px', fontSize: 14, color: T.muted, lineHeight: 1.7 }}>

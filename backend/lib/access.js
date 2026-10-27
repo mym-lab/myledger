@@ -29,3 +29,14 @@ export function actingOwnerId(req) {
   const staff = stmtStaffOwner.get(req.userId);
   return staff ? staff.owner_id : null;
 }
+
+// Same check for a raw database row (snake_case columns, e.g. owner_id)
+export function hasRowAccess(row, req, opts) {
+  if (!row) return false;
+  return hasClientAccess({
+    id: row.id,
+    ownerId: row.owner_id,
+    accountantId: row.accountant_id,
+    encoderIds: JSON.parse(row.encoder_ids || '[]'),
+  }, req, opts);
+}

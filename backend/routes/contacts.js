@@ -4,6 +4,8 @@
 // PUT    /api/contacts/:id              update contact
 // DELETE /api/contacts/:id             delete contact
 
+import { actingOwnerId } from '../lib/access.js';
+import { hasClientAccess } from '../lib/access.js';
 import { Router } from 'express';
 import { v4 as uuid } from 'uuid';
 import { db, rowToClient, rowToContact } from '../db.js';
@@ -27,8 +29,8 @@ const stmtUpdateContact    = db.prepare(`
 `);
 const stmtDeleteContact = db.prepare('DELETE FROM contacts WHERE id=?');
 
-function canAccess(client, userId) {
-  return client.ownerId === userId || client.accountantId === userId;
+function canAccess(client, req) {
+  return hasClientAccess(client, req, { allowEncoders: false });
 }
 
 // POST /api/contacts
@@ -45,14 +47,14 @@ router.post('/', (req, res, next) => {
       return res.status(400).json({ error: 'type must be customer, supplier, or both' });
 
     const client = rowToClient(stmtClientById.get(clientId));
-    if (!client || !canAccess(client, req.userId))
+    if (!client || !canAccess(client, req))
       return res.status(404).json({ error: 'Client not found' });
 
     const id = uuid();
     stmtInsertContact.run({
       id,
       client_id: clientId,
-      user_id:   req.userId,
+      user_id:   actingOwnerId(req),
       name:      name.trim(),
       type,
       tin:       tin.trim(),
@@ -75,7 +77,7 @@ router.get('/', (req, res, next) => {
     if (!clientId) return res.status(400).json({ error: 'clientId required' });
 
     const client = rowToClient(stmtClientById.get(clientId));
-    if (!client || !canAccess(client, req.userId))
+    if (!client || !canAccess(client, req))
       return res.status(404).json({ error: 'Client not found' });
 
     let contacts = stmtContactsByClient.all(clientId).map(rowToContact);
@@ -100,7 +102,7 @@ router.put('/:id', (req, res, next) => {
     if (!existing) return res.status(404).json({ error: 'Contact not found' });
 
     const client = rowToClient(stmtClientById.get(existing.clientId));
-    if (!client || !canAccess(client, req.userId))
+    if (!client || !canAccess(client, req))
       return res.status(403).json({ error: 'Not authorised' });
 
     const { name, type, tin, address, phone, email, notes } = req.body;
@@ -128,7 +130,7 @@ router.delete('/:id', (req, res, next) => {
     if (!contact) return res.status(404).json({ error: 'Contact not found' });
 
     const client = rowToClient(stmtClientById.get(contact.clientId));
-    if (!client || !canAccess(client, req.userId))
+    if (!client || !canAccess(client, req))
       return res.status(403).json({ error: 'Not authorised' });
 
     stmtDeleteContact.run(req.params.id);

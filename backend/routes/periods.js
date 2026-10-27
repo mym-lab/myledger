@@ -3,6 +3,8 @@
 // POST   /api/periods/lock              lock a period { clientId, period: 'YYYY-MM' }
 // POST   /api/periods/unlock            unlock a period { clientId, period: 'YYYY-MM' }
 
+import { actingOwnerId } from '../lib/access.js';
+import { hasClientAccess } from '../lib/access.js';
 import { Router } from 'express';
 import { v4 as uuid } from 'uuid';
 import { db, rowToClient } from '../db.js';
@@ -22,8 +24,8 @@ const stmtInsertPeriod    = db.prepare(`
 `);
 const stmtDeletePeriod    = db.prepare('DELETE FROM locked_periods WHERE client_id=? AND period=?');
 
-function canAccess(client, userId) {
-  return client.ownerId === userId || client.accountantId === userId;
+function canAccess(client, req) {
+  return hasClientAccess(client, req, { allowEncoders: false });
 }
 
 function isValidPeriod(p) {
@@ -37,7 +39,7 @@ router.get('/', (req, res, next) => {
     if (!clientId) return res.status(400).json({ error: 'clientId required' });
 
     const client = rowToClient(stmtClientById.get(clientId));
-    if (!client || !canAccess(client, req.userId))
+    if (!client || !canAccess(client, req))
       return res.status(404).json({ error: 'Client not found' });
 
     const periods = stmtPeriodsByClient.all(clientId).map(r => ({
@@ -56,7 +58,7 @@ router.post('/lock', (req, res, next) => {
     if (!isValidPeriod(period)) return res.status(400).json({ error: 'period must be YYYY-MM format' });
 
     const client = rowToClient(stmtClientById.get(clientId));
-    if (!client || !canAccess(client, req.userId))
+    if (!client || !canAccess(client, req))
       return res.status(404).json({ error: 'Client not found' });
 
     if (stmtFindPeriod.get(clientId, period))
@@ -64,7 +66,7 @@ router.post('/lock', (req, res, next) => {
 
     const id       = uuid();
     const lockedAt = new Date().toISOString();
-    stmtInsertPeriod.run({ id, client_id: clientId, period, locked_by: req.userId, locked_at: lockedAt });
+    stmtInsertPeriod.run({ id, client_id: clientId, period, locked_by: actingOwnerId(req), locked_at: lockedAt });
 
     logAudit({ clientId, userId: req.userRole === 'staff' ? req.ownerId : req.userId, staffId: req.userRole === 'staff' ? req.userId : null, action: 'LOCK_PERIOD', entity: 'period', entityId: period, detail: `Period ${period} locked` });
     res.json({ message: `Period ${period} locked`, lock: { id, clientId, period, lockedBy: req.userId, lockedAt } });
@@ -78,7 +80,7 @@ router.post('/unlock', (req, res, next) => {
     if (!clientId || !period) return res.status(400).json({ error: 'clientId and period are required' });
 
     const client = rowToClient(stmtClientById.get(clientId));
-    if (!client || !canAccess(client, req.userId))
+    if (!client || !canAccess(client, req))
       return res.status(404).json({ error: 'Client not found' });
 
     if (!stmtFindPeriod.get(clientId, period))
