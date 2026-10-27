@@ -5,7 +5,8 @@
   "scripts": {
     "start": "node --env-file=.env app.js",
     "dev": "node --env-file=.env --watch app.js",
-    "migrate": "node migrate-from-lowdb.js"
+    "migrate": "node migrate-from-lowdb.js",
+    "test": "node test/run.mjs"
   },
   "dependencies": {
     "express": "^4.18.2",
